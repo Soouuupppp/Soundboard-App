@@ -234,24 +234,40 @@ function appIconPath() {
   return path.join(__dirname, "assets", file);
 }
 
+// Hosts allowed to navigate inside the window even when they aren't the
+// soundboard origin — needed so OAuth (Discord) completes in-app and the
+// session cookie lands on the right origin.
+const OAUTH_HOSTS = new Set(["discord.com", "discordapp.com"]);
+
+function isAllowedNav(url) {
+  const o = originOf(url);
+  if (!o) return false;
+  if (o === currentOrigin) return true;
+  try {
+    return OAUTH_HOSTS.has(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 // Lock down a freshly-created BrowserWindow's navigation surface:
-//   - any same-origin nav inside the window is allowed
+//   - same-origin nav and OAuth provider nav stay in the window
 //   - any other nav is opened in the user's external browser
-//   - all window.open / target=_blank goes to the external browser too
+//   - window.open / target=_blank for non-OAuth hosts goes external
 //   - block any attempt to grant elevated webPreferences via new windows
 function lockdownWindow(win) {
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedNav(url)) return { action: "allow" };
     const o = originOf(url);
     if (o) shell.openExternal(url).catch(() => {});
     return { action: "deny" };
   });
 
   win.webContents.on("will-navigate", (event, url) => {
+    if (isAllowedNav(url)) return;
+    event.preventDefault();
     const o = originOf(url);
-    if (!o || o !== currentOrigin) {
-      event.preventDefault();
-      if (o) shell.openExternal(url).catch(() => {});
-    }
+    if (o) shell.openExternal(url).catch(() => {});
   });
 
   // Defense-in-depth: refuse to attach to webviews and refuse permission
@@ -387,6 +403,7 @@ app.on("window-all-closed", () => {
 // BrowserWindow without going through createWindow().
 app.on("web-contents-created", (_event, contents) => {
   contents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedNav(url)) return { action: "allow" };
     const o = originOf(url);
     if (o) shell.openExternal(url).catch(() => {});
     return { action: "deny" };
