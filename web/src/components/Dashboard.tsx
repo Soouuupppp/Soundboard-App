@@ -1,0 +1,453 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square } from "lucide-react";
+import { formatBytes } from "@/lib/utils";
+import { useAudioOutput } from "@/lib/audio-output";
+
+type Sound = {
+  id: string;
+  name: string;
+  sizeBytes: number;
+  isPublic: boolean;
+  ownerId: string;
+};
+type Entry = {
+  entry: { id: string; soundId: string; label: string | null; keybind: string | null; position: number };
+  sound: Sound;
+  ownerName: string | null;
+};
+type Limits = { maxFileSize: number; maxTotalStorage: number };
+
+export function Dashboard({
+  limits,
+  used: initialUsed,
+  user,
+}: {
+  limits: Limits;
+  used: number;
+  user: { name: string; role: string | null };
+}) {
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [used, setUsed] = useState(initialUsed);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [capturingFor, setCapturingFor] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [b, s] = await Promise.all([
+      fetch("/api/board").then((r) => r.json()),
+      fetch("/api/sounds").then((r) => r.json()),
+    ]);
+    setEntries(b.entries ?? []);
+    setUsed(s.used ?? 0);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // --- Per-entry volume (persisted in localStorage) ---
+  const [volumes, setVolumes] = useState<Record<string, number>>({});
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("soundboard:volumes");
+      if (raw) setVolumes(JSON.parse(raw));
+    } catch {}
+  }, []);
+  // --- Audio playback (allows overlap: new Audio per trigger) ---
+  const audio = useAudioOutput();
+  const { play: audioPlay, updateEntryVolume } = audio;
+  const setVolume = useCallback((entryId: string, v: number) => {
+    setVolumes((prev) => {
+      const next = { ...prev, [entryId]: v };
+      try { localStorage.setItem("soundboard:volumes", JSON.stringify(next)); } catch {}
+      return next;
+    });
+    updateEntryVolume(entryId, v);
+  }, [updateEntryVolume]);
+
+  const playEntry = useCallback((entryId: string, soundId: string) => {
+    audioPlay(soundId, volumes[entryId] ?? 1, entryId);
+  }, [audioPlay, volumes]);
+
+  // --- In-browser keybind capture and listener ---
+  const keybindByCombo = useMemo(() => {
+    const map = new Map<string, { entryId: string; soundId: string }>(); // combo -> entry
+    for (const e of entries) {
+      if (e.entry.keybind) map.set(normalizeCombo(e.entry.keybind), { entryId: e.entry.id, soundId: e.sound.id });
+    }
+    return map;
+  }, [entries]);
+
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if (capturingFor) return; // don't trigger while capturing
+      const target = ev.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      const combo = comboFromEvent(ev);
+      const hit = keybindByCombo.get(combo);
+      if (hit) {
+        ev.preventDefault();
+        playEntry(hit.entryId, hit.soundId);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [keybindByCombo, capturingFor, playEntry]);
+
+  // Listen for OS-level global shortcut events forwarded by the Electron preload.
+  useEffect(() => {
+    function onGlobal(ev: Event) {
+      const detail = (ev as CustomEvent<{ combo: string }>).detail;
+      const hit = keybindByCombo.get(normalizeCombo(detail.combo));
+      if (hit) playEntry(hit.entryId, hit.soundId);
+    }
+    window.addEventListener("soundboard:globalKey", onGlobal as EventListener);
+    return () => window.removeEventListener("soundboard:globalKey", onGlobal as EventListener);
+  }, [keybindByCombo, playEntry]);
+
+  // Tell the Electron host (if any) which keybinds to register globally.
+  useEffect(() => {
+    const api = (window as unknown as { soundboard?: { registerKeybinds?: (combos: string[]) => void } }).soundboard;
+    if (api?.registerKeybinds) {
+      api.registerKeybinds([...keybindByCombo.keys()]);
+    }
+  }, [keybindByCombo]);
+
+  // --- Upload ---
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [makePublic, setMakePublic] = useState(false);
+
+  async function onUpload(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setErr(null);
+    const f = fileRef.current?.files?.[0];
+    if (!f) return;
+    if (f.size > limits.maxFileSize) {
+      setErr(`File too large. Max ${formatBytes(limits.maxFileSize)}.`);
+      return;
+    }
+    setBusy(true);
+    const fd = new FormData();
+    fd.append("file", f);
+    fd.append("isPublic", String(makePublic));
+    const res = await fetch("/api/sounds", { method: "POST", body: fd });
+    setBusy(false);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setErr(j.error ?? "Upload failed");
+      return;
+    }
+    if (fileRef.current) fileRef.current.value = "";
+    refresh();
+  }
+
+  async function setKeybind(entryId: string, combo: string | null) {
+    await fetch(`/api/board/${entryId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keybind: combo }),
+    });
+    refresh();
+  }
+
+  async function removeEntry(entryId: string) {
+    await fetch(`/api/board/${entryId}`, { method: "DELETE" });
+    refresh();
+  }
+
+  async function deleteSound(soundId: string) {
+    if (!confirm("Delete this sound? It will be removed from every board.")) return;
+    await fetch(`/api/sounds/${soundId}`, { method: "DELETE" });
+    refresh();
+  }
+
+  async function togglePublic(soundId: string, next: boolean) {
+    await fetch(`/api/sounds/${soundId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isPublic: next }),
+    });
+    refresh();
+  }
+
+  return (
+    <div className="space-y-8">
+      <ControlPanel audio={audio} />
+      <section className="card">
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <h2 className="font-semibold mb-1">Storage</h2>
+            <p className="text-sm text-muted">
+              {formatBytes(used)} / {formatBytes(limits.maxTotalStorage)} used
+              <span className="ml-3">Max per file: {formatBytes(limits.maxFileSize)}</span>
+            </p>
+            <div className="w-64 h-2 bg-bg rounded mt-2 overflow-hidden">
+              <div
+                className="h-full bg-accent"
+                style={{ width: `${Math.min(100, (used / limits.maxTotalStorage) * 100)}%` }}
+              />
+            </div>
+          </div>
+          <form onSubmit={onUpload} className="flex flex-wrap items-center gap-2 ml-auto">
+            <input ref={fileRef} type="file" accept="audio/mpeg,.mp3" className="input max-w-xs" />
+            <label className="text-sm flex items-center gap-2">
+              <input type="checkbox" checked={makePublic} onChange={(e) => setMakePublic(e.target.checked)} />
+              Public
+            </label>
+            <button className="btn-primary" disabled={busy}>
+              <Upload size={16} className="mr-1" /> {busy ? "Uploading…" : "Upload"}
+            </button>
+          </form>
+        </div>
+        {err && <p className="text-red-400 text-sm mt-3">{err}</p>}
+      </section>
+
+      <section>
+        <h2 className="font-semibold mb-3">Your board</h2>
+        {entries.length === 0 ? (
+          <p className="text-muted">No sounds yet. Upload one above or browse the public list.</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {entries.map((e) => (
+              <SoundCard
+                key={e.entry.id}
+                entry={e}
+                isOwner={e.sound.ownerId === e.entry.soundId /* not used */}
+                capturing={capturingFor === e.entry.id}
+                isPlaying={audio.playingSoundIds.has(e.sound.id)}
+                onPlay={() => playEntry(e.entry.id, e.sound.id)}
+                onCancel={() => audio.cancelSound(e.sound.id)}
+                volume={volumes[e.entry.id] ?? 1}
+                onVolumeChange={(v) => setVolume(e.entry.id, v)}
+                onCaptureStart={() => setCapturingFor(e.entry.id)}
+                onCaptureCancel={() => setCapturingFor(null)}
+                onCaptured={(combo) => {
+                  setCapturingFor(null);
+                  setKeybind(e.entry.id, combo);
+                }}
+                onClearKey={() => setKeybind(e.entry.id, null)}
+                onRemove={() => removeEntry(e.entry.id)}
+                onDeleteSound={() => deleteSound(e.sound.id)}
+                onTogglePublic={(next) => togglePublic(e.sound.id, next)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function SoundCard(props: {
+  entry: Entry;
+  isOwner: boolean;
+  capturing: boolean;
+  isPlaying: boolean;
+  onPlay: () => void;
+  onCancel: () => void;
+  onCaptureStart: () => void;
+  onCaptureCancel: () => void;
+  onCaptured: (combo: string) => void;
+  onClearKey: () => void;
+  onRemove: () => void;
+  onDeleteSound: () => void;
+  onTogglePublic: (next: boolean) => void;
+  volume: number;
+  onVolumeChange: (v: number) => void;
+}) {
+  const { entry, capturing } = props;
+  const { sound, ownerName } = entry;
+
+  // Capture next keypress
+  useEffect(() => {
+    if (!capturing) return;
+    function onKey(ev: KeyboardEvent) {
+      ev.preventDefault();
+      if (ev.key === "Escape") {
+        props.onCaptureCancel();
+        return;
+      }
+      // Ignore modifier-only presses
+      if (["Control", "Shift", "Alt", "Meta"].includes(ev.key)) return;
+      props.onCaptured(comboFromEvent(ev));
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [capturing, props]);
+
+  return (
+    <div className="card flex flex-col gap-2">
+      <div className="flex">
+        <button
+          className="btn-primary flex-1 text-left rounded-r-none min-w-0"
+          onClick={props.onPlay}
+        >
+          <Play size={16} className="mr-1 shrink-0" />
+          <span className="truncate">{entry.entry.label || sound.name}</span>
+        </button>
+        {props.isPlaying && (
+          <button
+            className="btn-primary rounded-l-none border-l border-black/30 px-2"
+            onClick={(e) => { e.stopPropagation(); props.onCancel(); }}
+            title="Stop all instances of this clip"
+            aria-label="Stop clip"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+      <div className="text-xs text-muted truncate">by {ownerName ?? "unknown"}</div>
+
+      <div className="flex items-center gap-2 mt-1">
+        <button
+          className="btn-ghost flex-1 text-xs"
+          onClick={capturing ? props.onCaptureCancel : props.onCaptureStart}
+          title="Click then press a key combination"
+        >
+          <Keyboard size={14} className="mr-1" />
+          {capturing ? "Press keys…" : entry.entry.keybind || "Set keybind"}
+        </button>
+        {entry.entry.keybind && !capturing && (
+          <button className="btn-ghost text-xs" onClick={props.onClearKey} title="Clear">×</button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 mt-1" title={`Volume ${Math.round(props.volume * 100)}%`}>
+        <Volume2 size={14} className="text-muted shrink-0" />
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={props.volume}
+          onChange={(e) => props.onVolumeChange(Number(e.target.value))}
+          className="flex-1 accent-accent"
+          aria-label="Volume"
+        />
+        <span className="text-xs text-muted w-8 text-right">{Math.round(props.volume * 100)}</span>
+      </div>
+
+      <div className="flex items-center justify-between mt-1">
+        <button
+          className="btn-ghost text-xs"
+          onClick={() => props.onTogglePublic(!sound.isPublic)}
+          title="Toggle public"
+        >
+          {sound.isPublic ? <Globe size={14} /> : <Lock size={14} />}
+          <span className="ml-1">{sound.isPublic ? "Public" : "Private"}</span>
+        </button>
+        <div className="flex gap-1">
+          <button className="btn-ghost text-xs" onClick={props.onRemove} title="Remove from board">
+            Remove
+          </button>
+          <button className="btn-danger text-xs" onClick={props.onDeleteSound} title="Delete the file">
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ControlPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
+  const labelsHidden = audio.devices.some((d) => !d.label);
+
+  return (
+    <section className="card">
+      <div className="flex items-center gap-2 mb-4">
+        <Settings size={16} />
+        <h2 className="font-semibold">Control Panel</h2>
+        <button
+          className="btn-ghost text-xs ml-auto disabled:opacity-50"
+          onClick={() => audio.cancelAll()}
+          disabled={!audio.anyPlaying}
+          title="Stop every sound that's currently playing"
+        >
+          <Square size={14} className="mr-1" />
+          Cancel all sounds
+        </button>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="text-sm block mb-1">Output device</label>
+          {audio.supportsSinkId ? (
+            <>
+              <select
+                className="input w-full"
+                value={audio.deviceId}
+                onChange={(e) => audio.setDeviceId(e.target.value)}
+              >
+                <option value="default">System default</option>
+                {audio.devices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Output ${d.deviceId.slice(0, 6)}`}
+                  </option>
+                ))}
+              </select>
+              {labelsHidden && (
+                <button
+                  type="button"
+                  className="btn-ghost text-xs mt-2"
+                  onClick={() => audio.requestLabelsPermission()}
+                >
+                  Show device names (grants mic permission once)
+                </button>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-muted">
+              This browser doesn&apos;t support per-element output selection. Use OS audio settings.
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="text-sm block mb-1" title={`Master volume ${Math.round(audio.masterVolume * 100)}%`}>
+            Master volume
+          </label>
+          <div className="flex items-center gap-2">
+            <Volume2 size={14} className="text-muted shrink-0" />
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={audio.masterVolume}
+              onChange={(e) => audio.setMasterVolume(Number(e.target.value))}
+              className="flex-1 accent-accent"
+              aria-label="Master volume"
+            />
+            <span className="text-xs text-muted w-8 text-right">
+              {Math.round(audio.masterVolume * 100)}
+            </span>
+          </div>
+          <p className="text-xs text-muted mt-2">Applied on top of each sound&apos;s per-button volume.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// --- Key combo helpers ---
+
+function comboFromEvent(ev: KeyboardEvent): string {
+  const parts: string[] = [];
+  if (ev.ctrlKey) parts.push("Ctrl");
+  if (ev.altKey) parts.push("Alt");
+  if (ev.shiftKey) parts.push("Shift");
+  if (ev.metaKey) parts.push("Meta");
+  let key = ev.key;
+  if (key === " ") key = "Space";
+  if (key.length === 1) key = key.toUpperCase();
+  parts.push(key);
+  return parts.join("+");
+}
+
+function normalizeCombo(s: string): string {
+  return s
+    .split("+")
+    .map((p) => p.trim())
+    .map((p) => (p.length === 1 ? p.toUpperCase() : p))
+    .join("+");
+}

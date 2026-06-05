@@ -1,0 +1,59 @@
+{
+  "name": "soundboard-electron",
+  "productName": "Soundboard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Discord-authenticated soundboard with OS-level global hotkeys",
+  "author": "you <you@example.com>",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "bake": "node scripts/bake-url.js",
+    "dist": "pnpm bake && electron-builder",
+    "dist:win": "pnpm bake && electron-builder --win",
+    "dist:portable": "pnpm bake && electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.soundboard.app",
+    "productName": "Soundboard",
+    "files": [
+      "main.js",
+      "preload.js",
+      "prompt-preload.js",
+      "package.json",
+      "baked.json",
+      "assets/**"
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Soundboard"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.entertainment"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "AudioVideo"
+    }
+  }
+}
