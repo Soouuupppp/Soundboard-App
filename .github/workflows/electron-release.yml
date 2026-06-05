@@ -1,5 +1,12 @@
 name: Electron Release
 
+# Bump `version` in electron/package.json and push to main. If the corresponding
+# `electron-vX.Y.Z` tag doesn't already exist as a published GitHub release,
+# this workflow builds the Windows binaries, lets electron-builder publish a
+# draft release (with the latest.yml manifest the auto-updater reads), then
+# flips that draft to a published "latest" release so installed clients pick it
+# up on next launch.
+
 on:
   push:
     branches: [main]
@@ -11,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
       should_release: ${{ steps.v.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
@@ -20,9 +28,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=$(node -p "require('./electron/package.json').version")
+          tag="electron-v$version"
           echo "version=$version" >> $GITHUB_OUTPUT
-          if gh release view "electron-v$version" >/dev/null 2>&1; then
-            echo "Release electron-v$version already exists — skipping."
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          # A published release with this tag means we've already shipped it.
+          # Drafts are fine to overwrite (a previous attempt didn't finish).
+          if gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null | grep -qx false; then
+            echo "Release $tag already published — skipping."
             echo "should_release=false" >> $GITHUB_OUTPUT
           else
             echo "should_release=true" >> $GITHUB_OUTPUT
@@ -31,11 +43,9 @@ jobs:
   build:
     needs: check
     if: needs.check.outputs.should_release == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -50,35 +60,34 @@ jobs:
 
       - run: pnpm install --frozen-lockfile --filter electron...
 
-      - name: Build
+      - name: Build & publish draft release
         working-directory: electron
         env:
           SOUNDBOARD_URL: ${{ vars.SOUNDBOARD_URL }}
+          # electron-builder reads GH_TOKEN to create/append the draft release.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm dist
+        # `--publish always` makes electron-builder upload the nsis installer,
+        # the portable .exe, and `latest.yml` (the manifest the auto-updater
+        # polls) to a draft GitHub release tagged from electron/package.json.
+        run: pnpm bake && pnpm exec electron-builder --win --publish always
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: electron-${{ matrix.os }}
-          path: |
-            electron/dist/*.exe
-            electron/dist/*.dmg
-            electron/dist/*.AppImage
-
-  release:
+  publish:
     needs: [check, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
+      - uses: actions/checkout@v4
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: electron-v${{ needs.check.outputs.version }}
-          name: Soundboard ${{ needs.check.outputs.version }}
-          files: artifacts/*
-          generate_release_notes: true
+      - name: Flip draft release to published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+          VERSION: ${{ needs.check.outputs.version }}
+        # `--latest` makes this the release the auto-updater will see at
+        # /releases/latest/download/latest.yml.
+        run: |
+          gh release edit "$TAG" \
+            --draft=false \
+            --latest \
+            --title "Soundboard $VERSION"

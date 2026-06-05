@@ -1,11 +1,15 @@
 # Soundboard
 
-Discord-authenticated soundboard dashboard. Users upload mp3s, organize them on a board, assign keybinds, and share publicly. Comes with an Electron wrapper that registers OS-level global shortcuts so keybinds work when the browser isn't focused.
+> 🎉 **Public & free instance available at [soundboard.soouuuppp.com](https://soundboard.soouuuppp.com)** — log in with Discord and start building your board, no setup required.
+
+Discord-authenticated soundboard dashboard. Upload mp3s, organize them on a board, assign keybinds, and share publicly. Ships with an Electron wrapper that registers OS-level global shortcuts so keybinds work even when the browser isn't focused.
+
+**Author:** Soouuupppp · [soouuupppp.com](https://soouuupppp.com) · [soouuuppppgames@gmail.com](mailto:soouuuppppgames@gmail.com) · [github.com/Soouuupppp](https://github.com/Soouuupppp)
 
 ## Stack
 
-- **web/** — Next.js 15 (App Router, TS), Tailwind + shadcn-style UI, Auth.js (Discord), Drizzle ORM, Postgres
-- **electron/** — Electron wrapper around the web app, `globalShortcut` → IPC → renderer event
+- **web/** — Next.js 15 (App Router, TS), Tailwind glassy dark UI, Auth.js (Discord), Drizzle ORM, Postgres
+- **electron/** — Electron wrapper around the web app; passthrough low-level keyboard hook (`uiohook-napi`) → IPC → renderer event (keys still reach whatever app currently has focus)
 - **Postgres** — official `postgres:16-alpine` image
 - **docker compose** — `web` and `db` services, each their own image. Bind-mount volumes: `./data_public` (uploads) and `./data_db` (postgres). Both gitignored.
 
@@ -45,9 +49,14 @@ The Electron app reads keybinds from the logged-in user's board (via an exposed 
 ## Roles & quotas
 
 - Two seeded roles: `user` (default), `admin`. Custom roles are creatable in `/admin`.
-- Each role has `defaultMaxFileSize` and `defaultMaxTotalStorage` (bytes).
+- Each role has `defaultMaxFileSize` and `defaultMaxTotalStorage` (bytes — the admin UI accepts human sizes like `5 MB`, `1.5 GB`).
 - Each user can have individual overrides (`maxFileSizeOverride`, `maxTotalStorageOverride`) editable from `/admin`.
 - Quota resolution: user override → role default → env `DEFAULT_*`.
+
+## Public sounds
+
+- Sounds flipped to **Public** appear in `/public` for every other user to browse, play, and add to their own board.
+- Authors are filtered out of their own public listing — you can't re-add a clip you already own. Your uploads are auto-placed on your board.
 
 ## Storage layout
 
@@ -60,3 +69,7 @@ data_db/
 ```
 
 Public sounds added to another user's board are stored as **references** in `board_entries`, not copied — they don't count against the adder's quota. If the owner deletes the file, references show as unavailable.
+
+## License
+
+Unlicensed / all rights reserved. Contact the author for usage permissions.

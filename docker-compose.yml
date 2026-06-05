@@ -8,8 +8,12 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - ./data_db:/var/lib/postgresql/data
+    # Bind Postgres to localhost only — there's no reason for the host network
+    # to reach the DB. The `web` service still talks to it over the compose
+    # network using hostname "db". Drop the `ports:` entry entirely if you
+    # don't need host-side psql/admin access.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -32,7 +36,6 @@ services:
       AUTH_SECRET: ${AUTH_SECRET}
       AUTH_URL: ${AUTH_URL}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
-      AUTH_TRUST_HOST: "true"
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
       DISCORD_ADMIN_IDS: ${DISCORD_ADMIN_IDS}

@@ -1,7 +1,22 @@
 {
   "name": "soundboard-monorepo",
   "private": true,
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "description": "Discord-authenticated soundboard with web dashboard, public sharing, and an Electron wrapper for OS-level global hotkeys.",
+  "author": {
+    "name": "Soouuupppp",
+    "email": "soouuuppppgames@gmail.com",
+    "url": "https://soouuupppp.com"
+  },
+  "homepage": "https://soouuupppp.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Soouuupppp/soundboard_website.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Soouuupppp/soundboard_website/issues"
+  },
+  "license": "UNLICENSED",
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",

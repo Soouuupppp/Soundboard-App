@@ -174,25 +174,34 @@ export function Dashboard({
 
   return (
     <div className="space-y-8">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">
+          Hey, {user.name.split(" ")[0]} 👋
+        </h1>
+        <p className="text-muted mt-1">Trigger your sounds, organize your board, and tweak playback.</p>
+      </div>
+
       <ControlPanel audio={audio} />
       <section className="card">
-        <div className="flex flex-wrap gap-4 items-end">
-          <div>
-            <h2 className="font-semibold mb-1">Storage</h2>
+        <div className="flex flex-wrap gap-6 items-end">
+          <div className="flex-1 min-w-[240px]">
+            <h2 className="font-semibold mb-1 flex items-center gap-2">Storage</h2>
             <p className="text-sm text-muted">
-              {formatBytes(used)} / {formatBytes(limits.maxTotalStorage)} used
-              <span className="ml-3">Max per file: {formatBytes(limits.maxFileSize)}</span>
+              <span className="text-white font-medium">{formatBytes(used)}</span>
+              <span className="mx-1">/</span>
+              {formatBytes(limits.maxTotalStorage)} used
+              <span className="ml-3 chip">Max per file: {formatBytes(limits.maxFileSize)}</span>
             </p>
-            <div className="w-64 h-2 bg-bg rounded mt-2 overflow-hidden">
+            <div className="w-full h-2 bg-white/[0.06] rounded-full mt-3 overflow-hidden">
               <div
-                className="h-full bg-accent"
+                className="h-full bg-accent-grad transition-[width] duration-500"
                 style={{ width: `${Math.min(100, (used / limits.maxTotalStorage) * 100)}%` }}
               />
             </div>
           </div>
           <form onSubmit={onUpload} className="flex flex-wrap items-center gap-2 ml-auto">
-            <input ref={fileRef} type="file" accept="audio/mpeg,.mp3" className="input max-w-xs" />
-            <label className="text-sm flex items-center gap-2">
+            <input ref={fileRef} type="file" accept="audio/mpeg,.mp3" className="input max-w-xs file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-white file:text-xs" />
+            <label className="text-sm flex items-center gap-2 chip !text-white">
               <input type="checkbox" checked={makePublic} onChange={(e) => setMakePublic(e.target.checked)} />
               Public
             </label>
@@ -201,11 +210,11 @@ export function Dashboard({
             </button>
           </form>
         </div>
-        {err && <p className="text-red-400 text-sm mt-3">{err}</p>}
+        {err && <p className="text-red-300 text-sm mt-3">{err}</p>}
       </section>
 
       <section>
-        <h2 className="font-semibold mb-3">Your board</h2>
+        <h2 className="section-title mb-4">Your board</h2>
         {entries.length === 0 ? (
           <p className="text-muted">No sounds yet. Upload one above or browse the public list.</p>
         ) : (
@@ -271,7 +280,20 @@ function SoundCard(props: {
       }
       // Ignore modifier-only presses
       if (["Control", "Shift", "Alt", "Meta"].includes(ev.key)) return;
-      props.onCaptured(comboFromEvent(ev));
+      const combo = comboFromEvent(ev);
+      const risk = comboRisk(combo);
+      if (risk) {
+        const ok = window.confirm(
+          `"${combo}" ${risk}\n\n` +
+            `It still won't block other apps (we listen passively), but every ` +
+            `time you press it the soundboard will fire too. Use it anyway?`
+        );
+        if (!ok) {
+          props.onCaptureCancel();
+          return;
+        }
+      }
+      props.onCaptured(combo);
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -450,4 +472,41 @@ function normalizeCombo(s: string): string {
     .map((p) => p.trim())
     .map((p) => (p.length === 1 ? p.toUpperCase() : p))
     .join("+");
+}
+
+// Returns a short human description of *why* a combo is risky, or null if it's
+// safe. "Risky" = no modifier and the main key is something the user almost
+// certainly uses for normal typing or system shortcuts.
+const SYSTEM_KEYS = new Set([
+  "Space",
+  "Enter",
+  "Tab",
+  "Backspace",
+  "Delete",
+  "Escape",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+]);
+function comboRisk(combo: string): string | null {
+  const parts = combo.split("+").map((p) => p.trim());
+  const hasModifier = parts.some((p) => p === "Ctrl" || p === "Alt" || p === "Shift" || p === "Meta");
+  if (hasModifier) return null;
+  const main = parts[parts.length - 1];
+  if (!main) return null;
+  if (/^[A-Za-z0-9]$/.test(main)) {
+    return `is just a normal typing key — it'll trigger every time you type "${main}".`;
+  }
+  if (SYSTEM_KEYS.has(main)) {
+    return `is a system key — most apps use it for navigation or editing.`;
+  }
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(main)) {
+    return `is a plain function key — apps like browsers and editors use these too.`;
+  }
+  return null;
 }

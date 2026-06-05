@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { createReadStream, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative as pathRelative, resolve, sep } from "node:path";
 
 export const UPLOADS_DIR = process.env.UPLOADS_DIR || "/data_public";
 
@@ -17,13 +17,18 @@ export async function ensureUserDir(discordId: string) {
 }
 
 export function resolveStoragePath(relative: string) {
-  // Prevent path traversal — must resolve inside UPLOADS_DIR.
-  const abs = resolve(UPLOADS_DIR, relative);
-  const root = resolve(UPLOADS_DIR);
-  if (!abs.startsWith(root + (root.endsWith("/") || root.endsWith("\\") ? "" : "/")) && abs !== root) {
-    // On Windows the separator differs — do a relaxed check too.
-    const rel = abs.slice(root.length).replace(/^[\\/]/, "");
-    if (rel.includes("..")) throw new Error("Path traversal blocked");
+  // Reject anything that looks absolute up-front (covers `/etc/passwd`, `C:\...`, UNC paths).
+  if (!relative || isAbsolute(relative) || /^[a-zA-Z]:[\\/]/.test(relative) || relative.startsWith("\\\\")) {
+    throw new Error("Path traversal blocked");
+  }
+  // Turbopack's static tracer can't see through process.env, and would otherwise
+  // try to bundle the whole project. UPLOADS_DIR is intentionally runtime-only.
+  const root = resolve(/* turbopackIgnore: true */ UPLOADS_DIR);
+  const abs = resolve(root, relative);
+  // After resolve(), a safe path will be either == root or strictly under it.
+  const rel = pathRelative(root, abs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("..")) {
+    throw new Error("Path traversal blocked");
   }
   return abs;
 }

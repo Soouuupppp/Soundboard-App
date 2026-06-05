@@ -2,10 +2,22 @@
   "name": "soundboard-electron",
   "productName": "Soundboard",
   "private": true,
-  "version": "0.1.0",
-  "description": "Discord-authenticated soundboard with OS-level global hotkeys",
-  "author": "you <you@example.com>",
+  "version": "1.0.0",
+  "description": "Desktop wrapper for the Soundboard web app with OS-level global hotkeys.",
+  "author": {
+    "name": "Soouuupppp",
+    "email": "soouuuppppgames@gmail.com",
+    "url": "https://soouuupppp.com"
+  },
+  "homepage": "https://soouuupppp.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Soouuupppp/soundboard_website.git",
+    "directory": "electron"
+  },
+  "license": "UNLICENSED",
   "main": "main.js",
+  "soundboardUrl": "",
   "scripts": {
     "start": "electron .",
     "bake": "node scripts/bake-url.js",
@@ -13,13 +25,18 @@
     "dist:win": "pnpm bake && electron-builder --win",
     "dist:portable": "pnpm bake && electron-builder --win portable"
   },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "uiohook-napi": "^1.5.4"
+  },
   "devDependencies": {
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.soundboard.app",
+    "appId": "com.soouuupppp.soundboard",
     "productName": "Soundboard",
+    "copyright": "Copyright © Soouuupppp",
     "files": [
       "main.js",
       "preload.js",
@@ -54,6 +71,14 @@
     "linux": {
       "target": ["AppImage"],
       "category": "AudioVideo"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Soouuupppp",
+        "repo": "soundboard_website",
+        "releaseType": "draft"
+      }
+    ]
   }
 }

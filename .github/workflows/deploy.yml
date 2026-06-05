@@ -11,11 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy .env from VPS
-        run: cp ~/soundboard.env .env
-
       - name: Rebuild and restart containers
         run: |
-          docker compose pull || true
-          docker compose up -d --build
+          docker compose --env-file /home/soundboard/.env pull || true
+          docker compose --env-file /home/soundboard/.env up -d --build
           docker image prune -f
