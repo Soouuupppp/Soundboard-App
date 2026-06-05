@@ -1,6 +1,6 @@
 name: Electron Release
 
-# Bump `version` in electron/package.json and push to main. If the corresponding
+# Bump `version` in electron/package.json and push to master. If the corresponding
 # `electron-vX.Y.Z` tag doesn't already exist as a published GitHub release,
 # this workflow builds the Windows binaries, lets electron-builder publish a
 # draft release (with the latest.yml manifest the auto-updater reads), then
@@ -9,7 +9,7 @@ name: Electron Release
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths: [electron/package.json]
   workflow_dispatch:
 
