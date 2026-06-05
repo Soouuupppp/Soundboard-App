@@ -38,8 +38,10 @@
     "appId": "com.soouuupppp.soundboard",
     "productName": "Soundboard",
     "copyright": "Copyright © Soouuupppp",
+    "npmRebuild": false,
     "files": [
       "main.js",
+      "hotkeys.js",
       "preload.js",
       "prompt-preload.js",
       "package.json",
