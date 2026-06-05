@@ -9,7 +9,7 @@
     "email": "soouuuppppgames@gmail.com",
     "url": "https://soouuupppp.com"
   },
-  "homepage": "https://soouuupppp.com",
+  "homepage": "https://soundboard.soouuupppp.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/Soouuupppp/soundboard_website.git",
@@ -23,7 +23,8 @@
     "bake": "node scripts/bake-url.js",
     "dist": "pnpm bake && electron-builder",
     "dist:win": "pnpm bake && electron-builder --win",
-    "dist:portable": "pnpm bake && electron-builder --win portable"
+    "dist:portable": "pnpm bake && electron-builder --win portable",
+    "release:win": "pnpm bake && electron-builder --win --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",

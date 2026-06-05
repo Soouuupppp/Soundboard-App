@@ -58,7 +58,10 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile --filter electron...
+      # No --filter: install all workspace deps so electron's devDependencies
+      # (electron-builder) are reliably linked into electron/node_modules/.bin
+      # on Windows. Filtered installs have been flaky for pnpm exec on Windows.
+      - run: pnpm install --frozen-lockfile
 
       - name: Build & publish draft release
         working-directory: electron
@@ -66,10 +69,12 @@ jobs:
           SOUNDBOARD_URL: ${{ vars.SOUNDBOARD_URL }}
           # electron-builder reads GH_TOKEN to create/append the draft release.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # `--publish always` makes electron-builder upload the nsis installer,
-        # the portable .exe, and `latest.yml` (the manifest the auto-updater
-        # polls) to a draft GitHub release tagged from electron/package.json.
-        run: pnpm bake && pnpm exec electron-builder --win --publish always
+        # `release:win` runs `bake` then `electron-builder --win --publish always`,
+        # uploading the nsis installer, the portable .exe, and `latest.yml`
+        # (the manifest the auto-updater polls) to a draft GitHub release
+        # tagged from electron/package.json. Invoking as an npm script ensures
+        # node_modules/.bin is on PATH (more reliable than `pnpm exec` on Windows).
+        run: pnpm release:win
 
   publish:
     needs: [check, build]
