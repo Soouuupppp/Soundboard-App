@@ -2,7 +2,7 @@
   "name": "soundboard-electron",
   "productName": "Soundboard",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Desktop wrapper for the Soundboard web app with OS-level global hotkeys.",
   "author": {
     "name": "Soouuupppp",
@@ -12,12 +12,12 @@
   "homepage": "https://soundboard.soouuupppp.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Soouuupppp/soundboard_website.git",
+    "url": "https://github.com/Soouuupppp/Soundboard-App.git",
     "directory": "electron"
   },
   "license": "UNLICENSED",
   "main": "main.js",
-  "soundboardUrl": "",
+  "soundboardUrl": "https://soundboard.soouuupppp.com",
   "scripts": {
     "start": "electron .",
     "bake": "node scripts/bake-url.js",
@@ -79,7 +79,7 @@
       {
         "provider": "github",
         "owner": "Soouuupppp",
-        "repo": "soundboard_website",
+        "repo": "Soundboard-App",
         "releaseType": "draft"
       }
     ]
