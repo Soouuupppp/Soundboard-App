@@ -44,8 +44,8 @@ SOUNDBOARD_URL=https://soundboard.example.com pnpm --filter electron dist:win
 
 Outputs to `electron/dist/`:
 
-- `Soundboard-1.0.0-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
-- `Soundboard-1.0.0-x64-portable.exe` — single-file executable, no install.
+- `Soundboard-1.0.1-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
+- `Soundboard-1.0.1-x64-portable.exe` — single-file executable, no install.
 
 Send one of these to your friends. They open it, log in with Discord, done.
 Power users can still change the URL later via **File → Change server URL…**
@@ -71,7 +71,7 @@ for a `latest.yml` manifest written by `electron-builder`.
 To ship a new version:
 
 1. Bump `"version"` in `electron/package.json` (semver).
-2. Commit and push to `main`. The `Electron Release` workflow:
+2. Commit and push to `master`. The `Electron Release` workflow:
    - builds the Windows NSIS installer and portable .exe,
    - publishes them along with `latest.yml` to a draft GitHub release tagged
      `electron-v<version>`,
