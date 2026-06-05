@@ -7,7 +7,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - ./data_db:/var/lib/postgresql/data
+      # DATA_DB_DIR points at the host directory that holds the postgres data.
+      # On prod set it to /home/soundboard/data_db in the env file so the data
+      # lives outside the runner workspace (otherwise actions/checkout's clean
+      # step EACCESes on the postgres-owned files). Defaults to ./data_db for
+      # local dev.
+      - ${DATA_DB_DIR:-./data_db}:/var/lib/postgresql/data
     # Bind Postgres to localhost only — there's no reason for the host network
     # to reach the DB. The `web` service still talks to it over the compose
     # network using hostname "db". Drop the `ports:` entry entirely if you
@@ -43,6 +48,8 @@ services:
       DEFAULT_MAX_FILE_SIZE: ${DEFAULT_MAX_FILE_SIZE}
       DEFAULT_MAX_TOTAL_STORAGE: ${DEFAULT_MAX_TOTAL_STORAGE}
     volumes:
-      - ./data_public:/data_public
+      # DATA_PUBLIC_DIR — same idea as DATA_DB_DIR above. Set to
+      # /home/soundboard/data_public on prod; defaults to ./data_public locally.
+      - ${DATA_PUBLIC_DIR:-./data_public}:/data_public
     ports:
       - "5050:5050"
