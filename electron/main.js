@@ -1,13 +1,15 @@
 const {
   app,
   BrowserWindow,
-  globalShortcut,
+  dialog,
   ipcMain,
   Menu,
-  dialog,
+  shell,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const hotkeys = require("./hotkeys");
+const { autoUpdater } = require("electron-updater");
 
 // --- Settings persistence ---------------------------------------------------
 // Stored in userData (per-OS app data dir) so each friend keeps their own URL.
@@ -51,6 +53,18 @@ function resolveUrl() {
   return readBakedUrl();
 }
 
+// Validate that a server URL is well-formed and uses http(s). Returns a
+// canonical Origin string ("https://example.com") or null.
+function originOf(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
 async function promptForUrl(current) {
   const win = new BrowserWindow({
     width: 520,
@@ -64,6 +78,7 @@ async function promptForUrl(current) {
       preload: path.join(__dirname, "prompt-preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   const safeCurrent = String(current || "").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -108,6 +123,12 @@ async function promptForUrl(current) {
       ipcMain.removeHandler("soundboard:submitUrl");
       ipcMain.removeHandler("soundboard:cancelUrl");
       if (!win.isDestroyed()) win.close();
+      // Reject anything that isn't an http(s) URL.
+      if (val && !originOf(val)) {
+        console.warn("[soundboard] rejecting non-http(s) URL from prompt");
+        resolve(null);
+        return;
+      }
       resolve(val);
     };
     ipcMain.handle("soundboard:submitUrl", (_e, value) => done(value || null));
@@ -116,54 +137,131 @@ async function promptForUrl(current) {
   });
 }
 
+// --- Auto-update ------------------------------------------------------------
+// Windows-only, GitHub-hosted, unsigned. Linux/macOS builds, dev runs, and the
+// portable .exe (no install location to update) all skip silently.
+
+function updaterSupported() {
+  if (!app.isPackaged) return false;
+  if (process.platform !== "win32") return false;
+  // electron-builder sets this for the portable target at runtime.
+  if (process.env.PORTABLE_EXECUTABLE_FILE) return false;
+  return true;
+}
+
+let updateCheckInFlight = null;
+
+function wireUpdaterLogs() {
+  autoUpdater.logger = {
+    info: (...a) => console.log("[updater]", ...a),
+    warn: (...a) => console.warn("[updater]", ...a),
+    error: (...a) => console.error("[updater]", ...a),
+    debug: (...a) => console.log("[updater:debug]", ...a),
+  };
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+}
+
+// Background check on startup — silent unless an update is found.
+function checkForUpdatesInBackground() {
+  if (!updaterSupported()) return;
+  autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    console.warn("[updater] background check failed:", err?.message || err);
+  });
+}
+
+// Menu-driven check — surfaces a dialog with the outcome.
+async function checkForUpdatesInteractive() {
+  if (!updaterSupported()) {
+    dialog.showMessageBox({
+      type: "info",
+      message: "Auto-update is not available for this build.",
+      detail:
+        process.platform !== "win32"
+          ? "Auto-update is currently Windows-only."
+          : process.env.PORTABLE_EXECUTABLE_FILE
+          ? "The portable build can't self-update. Download a new version from the releases page."
+          : "Auto-update only runs in packaged builds.",
+    });
+    return;
+  }
+  if (updateCheckInFlight) return updateCheckInFlight;
+  updateCheckInFlight = (async () => {
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      const info = result?.updateInfo;
+      if (!info || info.version === app.getVersion()) {
+        await dialog.showMessageBox({
+          type: "info",
+          message: "You're up to date.",
+          detail: `Current version: ${app.getVersion()}`,
+        });
+      }
+      // If a newer version exists, electron-updater handles downloading and the
+      // update-downloaded event below prompts the user to restart.
+    } catch (err) {
+      await dialog.showMessageBox({
+        type: "error",
+        message: "Couldn't check for updates.",
+        detail: String(err?.message || err),
+      });
+    } finally {
+      updateCheckInFlight = null;
+    }
+  })();
+  return updateCheckInFlight;
+}
+
+autoUpdater.on("update-downloaded", async (info) => {
+  const { response } = await dialog.showMessageBox({
+    type: "info",
+    buttons: ["Restart now", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    message: `Soundboard ${info.version} is ready to install.`,
+    detail: "Restart to apply the update.",
+  });
+  if (response === 0) autoUpdater.quitAndInstall();
+});
+
 // --- Main window + keybinds -------------------------------------------------
 
 let mainWindow = null;
-const registered = new Set();
-
-function toElectronAccelerator(combo) {
-  return combo
-    .split("+")
-    .map((p) => p.trim())
-    .map((p) => {
-      if (p === "Ctrl") return "CommandOrControl";
-      if (p === "Meta") return "Super";
-      if (p === "Space") return "Space";
-      return p;
-    })
-    .join("+");
-}
-
-function registerCombos(combos) {
-  for (const acc of [...registered]) {
-    if (!combos.has(acc)) {
-      try { globalShortcut.unregister(acc); } catch {}
-      registered.delete(acc);
-    }
-  }
-  for (const combo of combos) {
-    const acc = toElectronAccelerator(combo);
-    if (registered.has(acc)) continue;
-    try {
-      const ok = globalShortcut.register(acc, () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send("soundboard:globalKey", { combo });
-        }
-      });
-      if (ok) registered.add(acc);
-      else console.warn("[soundboard] failed to register", combo);
-    } catch (e) {
-      console.warn("[soundboard] register error", combo, e?.message);
-    }
-  }
-}
+let currentOrigin = null; // canonical origin of the loaded server URL
 
 function appIconPath() {
   const file = process.platform === "win32" ? "icon.ico" : "icon.png";
   return path.join(__dirname, "assets", file);
 }
 
+// Lock down a freshly-created BrowserWindow's navigation surface:
+//   - any same-origin nav inside the window is allowed
+//   - any other nav is opened in the user's external browser
+//   - all window.open / target=_blank goes to the external browser too
+//   - block any attempt to grant elevated webPreferences via new windows
+function lockdownWindow(win) {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    const o = originOf(url);
+    if (o) shell.openExternal(url).catch(() => {});
+    return { action: "deny" };
+  });
+
+  win.webContents.on("will-navigate", (event, url) => {
+    const o = originOf(url);
+    if (!o || o !== currentOrigin) {
+      event.preventDefault();
+      if (o) shell.openExternal(url).catch(() => {});
+    }
+  });
+
+  // Defense-in-depth: refuse to attach to webviews and refuse permission
+  // requests (notifications, geolocation, media, etc.) from the remote site.
+  win.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+}
+
 function createWindow(url) {
+  currentOrigin = originOf(url);
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -173,8 +271,10 @@ function createWindow(url) {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
+  lockdownWindow(mainWindow);
   mainWindow.loadURL(url);
 }
 
@@ -192,9 +292,14 @@ function buildMenu() {
             const next = await promptForUrl(current);
             if (next) {
               writeSettings({ ...readSettings(), url: next });
+              currentOrigin = originOf(next);
               if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(next);
             }
           },
+        },
+        {
+          label: "Check for updates…",
+          click: () => { checkForUpdatesInteractive(); },
         },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
@@ -216,6 +321,7 @@ function buildMenu() {
 }
 
 app.whenReady().then(async () => {
+  wireUpdaterLogs();
   buildMenu();
 
   let url = resolveUrl();
@@ -228,12 +334,42 @@ app.whenReady().then(async () => {
     writeSettings({ url });
   }
 
+  // Reject non-http(s) URLs from settings/baked/env too.
+  if (!originOf(url)) {
+    console.error("[soundboard] refusing to load non-http(s) URL:", url);
+    app.quit();
+    return;
+  }
+
   createWindow(url);
 
+  // Defer a few seconds so the window is up before any update toast appears.
+  setTimeout(checkForUpdatesInBackground, 4000);
+
+  // Start the passthrough keyboard hook. Each match is forwarded to the
+  // renderer the same way the old globalShortcut path did.
+  hotkeys.start({
+    onMatch: (combo) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("soundboard:globalKey", { combo });
+      }
+    },
+  });
+
   ipcMain.handle("soundboard:registerKeybinds", (_evt, combos) => {
-    if (!Array.isArray(combos)) return false;
-    registerCombos(new Set(combos));
-    return true;
+    if (!Array.isArray(combos)) return { ok: false, error: "not an array" };
+    // Cap how many combos a remote page can ever register at once.
+    if (combos.length > 200) return { ok: false, error: "too many combos" };
+    // Validate each one server-side so the renderer can't slip through junk.
+    const accepted = [];
+    const rejected = [];
+    for (const c of combos) {
+      const v = hotkeys.validateCombo(c);
+      if (v.ok) accepted.push(c);
+      else rejected.push({ combo: c, reason: v.reason });
+    }
+    hotkeys.setCombos(accepted);
+    return { ok: true, accepted: accepted.length, rejected };
   });
 
   app.on("activate", () => {
@@ -241,7 +377,18 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("will-quit", () => globalShortcut.unregisterAll());
+app.on("will-quit", () => hotkeys.stop());
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+// Disallow any non-existing webContents from creating new windows or
+// navigating elsewhere — belt-and-braces in case a future code path opens a
+// BrowserWindow without going through createWindow().
+app.on("web-contents-created", (_event, contents) => {
+  contents.setWindowOpenHandler(({ url }) => {
+    const o = originOf(url);
+    if (o) shell.openExternal(url).catch(() => {});
+    return { action: "deny" };
+  });
 });

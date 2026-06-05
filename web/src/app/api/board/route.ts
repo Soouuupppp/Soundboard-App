@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { boardEntries, sounds, users } from "@/db/schema";
+import { PostBoardEntryBody } from "@/lib/validation";
+import { clientKey, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -27,18 +29,32 @@ export async function GET() {
 }
 
 // POST /api/board — add an existing sound to the user's board (own or public).
-// Body: { soundId: string, keybind?: string, label?: string }
 export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const body = await req.json();
-  const soundId = String(body.soundId ?? "");
-  if (!soundId) return NextResponse.json({ error: "missing soundId" }, { status: 400 });
+
+  const rl = rateLimit(`board-mut:${clientKey(req, session.user.id)}`, {
+    capacity: 60,
+    refillPerSec: 2,
+  });
+  if (!rl.ok) return tooManyRequests(rl.retryAfter);
+
+  const parsed = PostBoardEntryBody.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json({ error: "invalid body", issues: parsed.error.issues }, { status: 400 });
+  }
+  const { soundId, label, keybind } = parsed.data;
 
   const [s] = await db.select().from(sounds).where(eq(sounds.id, soundId)).limit(1);
   if (!s) return NextResponse.json({ error: "sound not found" }, { status: 404 });
   if (s.ownerId !== session.user.id && !s.isPublic) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  // Authors already own their clips — they shouldn't re-add them via the
+  // public browser. They can still upload and have it auto-placed on their
+  // own board through the regular upload flow.
+  if (s.ownerId === session.user.id) {
+    return NextResponse.json({ error: "cannot add your own clip from public" }, { status: 400 });
   }
 
   const [row] = await db
@@ -46,8 +62,8 @@ export async function POST(req: Request) {
     .values({
       userId: session.user.id,
       soundId: s.id,
-      label: typeof body.label === "string" ? body.label : null,
-      keybind: typeof body.keybind === "string" ? body.keybind : null,
+      label: label ?? null,
+      keybind: keybind ?? null,
     })
     .returning();
   return NextResponse.json({ entry: row });

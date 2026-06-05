@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { sounds, users } from "@/db/schema";
@@ -23,7 +23,7 @@ export async function GET() {
     })
     .from(sounds)
     .innerJoin(users, eq(users.id, sounds.ownerId))
-    .where(eq(sounds.isPublic, true))
+    .where(and(eq(sounds.isPublic, true), ne(sounds.ownerId, session.user.id)))
     .orderBy(desc(sounds.createdAt));
 
   return NextResponse.json({ sounds: rows });

@@ -50,20 +50,31 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en">
       <body>
-        <header className="border-b border-border bg-panel/60 backdrop-blur sticky top-0 z-20">
+        <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+          <div className="absolute -top-32 -left-32 h-[480px] w-[480px] rounded-full bg-accent/20 blur-3xl animate-floatSlow" />
+          <div className="absolute top-1/3 -right-40 h-[520px] w-[520px] rounded-full bg-fuchsia-500/15 blur-3xl animate-floatSlow" style={{ animationDelay: "3s" }} />
+          <div className="absolute bottom-[-200px] left-1/3 h-[420px] w-[420px] rounded-full bg-cyan-400/10 blur-3xl animate-floatSlow" style={{ animationDelay: "6s" }} />
+        </div>
+
+        <header className="sticky top-0 z-20 border-b border-white/5 bg-black/30 backdrop-blur-xl">
           <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
-            <Link href="/" className="font-semibold">🔊 Soundboard</Link>
+            <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-accent-grad shadow-glow">
+                <span className="text-sm">🔊</span>
+              </span>
+              <span>Soundboard</span>
+            </Link>
             {session?.user && (
-              <nav className="flex items-center gap-4 text-sm text-muted">
-                <Link href="/dashboard" className="hover:text-white">My board</Link>
-                <Link href="/public" className="hover:text-white">Public</Link>
-                {isAdmin && <Link href="/admin" className="hover:text-white">Admin</Link>}
+              <nav className="flex items-center gap-1 text-sm">
+                <NavLink href="/dashboard">My board</NavLink>
+                <NavLink href="/public">Public</NavLink>
+                {isAdmin && <NavLink href="/admin">Admin</NavLink>}
               </nav>
             )}
             <div className="ml-auto flex items-center gap-3 text-sm">
               {session?.user ? (
                 <>
-                  <span className="text-muted">{session.user.name}</span>
+                  <span className="text-muted hidden sm:inline">{session.user.name}</span>
                   <form
                     action={async () => {
                       "use server";
@@ -86,8 +97,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </div>
         </header>
-        <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
+        <main className="max-w-6xl mx-auto px-4 py-10">{children}</main>
       </body>
     </html>
+  );
+}
+
+function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="px-3 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/[0.06] transition"
+    >
+      {children}
+    </Link>
   );
 }

@@ -18,7 +18,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     verificationTokensTable: verificationTokens,
   }),
   session: { strategy: "database" },
-  trustHost: true,
   providers: [
     Discord({
       clientId: process.env.DISCORD_CLIENT_ID,
@@ -31,16 +30,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const discordId = account.providerAccountId ?? (profile?.id as string | undefined);
       if (!discordId) return;
 
-      // Resolve role: admin if discordId matches env list, else "user".
-      const wantedRole = adminIds.includes(discordId) ? "admin" : "user";
-      const [role] = await db.select().from(roles).where(eq(roles.name, wantedRole)).limit(1);
+      // Look up current user state so we don't clobber custom role assignments.
+      const [current] = await db
+        .select({ roleId: users.roleId })
+        .from(users)
+        .where(eq(users.id, user.id))
+        .limit(1);
+
+      const isEligibleAdmin = adminIds.includes(discordId);
+      let nextRoleId: string | undefined;
+
+      if (isEligibleAdmin) {
+        // Promote to admin if eligible — overrides whatever they had.
+        const [adminRole] = await db.select().from(roles).where(eq(roles.name, "admin")).limit(1);
+        if (adminRole && current?.roleId !== adminRole.id) nextRoleId = adminRole.id;
+      } else if (!current?.roleId) {
+        // First-time user with no role yet — seed default "user".
+        const [defaultRole] = await db.select().from(roles).where(eq(roles.name, "user")).limit(1);
+        if (defaultRole) nextRoleId = defaultRole.id;
+      }
+      // Otherwise: leave roleId alone (preserves custom roles assigned via admin UI).
 
       await db
         .update(users)
         .set({
           discordId,
-          // Only set roleId if user has none yet, OR promote to admin if eligible.
-          ...(role ? { roleId: role.id } : {}),
+          ...(nextRoleId ? { roleId: nextRoleId } : {}),
         })
         .where(eq(users.id, user.id));
     },
