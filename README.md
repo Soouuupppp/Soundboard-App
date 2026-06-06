@@ -1,15 +1,15 @@
 # Soundboard
 
-> 🎉 **Public & free instance available at [soundboard.soouuuppp.com](https://soundboard.soouuuppp.com)** — log in with Discord and start building your board, no setup required.
+> 🎉 **Public & free instance available at [soundboard.soouuupppp.com](https://soundboard.soouuupppp.com)** — log in with Discord and start building your board, no setup required.
 
-Discord-authenticated soundboard dashboard. Upload mp3s, organize them on a board, assign keybinds, and share publicly. Ships with an Electron wrapper that registers OS-level global shortcuts so keybinds work even when the browser isn't focused.
+Discord-authenticated soundboard dashboard. Upload mp3s, organize them on a board, assign keybinds, and share publicly. **Virtual Mic mode** mixes your mics and the soundboard into a virtual cable so clips come through as your mic in games and calls. Ships with a Windows Electron wrapper that registers OS-level global shortcuts so keybinds work even when the browser isn't focused.
 
 **Author:** Soouuupppp · [soouuupppp.com](https://soouuupppp.com) · [soouuuppppgames@gmail.com](mailto:soouuuppppgames@gmail.com) · [github.com/Soouuupppp](https://github.com/Soouuupppp)
 
 ## Stack
 
-- **web/** — Next.js 15 (App Router, TS), Tailwind glassy dark UI, Auth.js (Discord), Drizzle ORM, Postgres
-- **electron/** — Electron wrapper around the web app; passthrough low-level keyboard hook (`uiohook-napi`) → IPC → renderer event (keys still reach whatever app currently has focus)
+- **web/** — Next.js 15 (App Router, TS), Tailwind glassy dark UI, Auth.js (Discord), Drizzle ORM, Postgres. In-browser Virtual Mic mixer built on the Web Audio API (`setSinkId` routing).
+- **electron/** — Windows wrapper around the web app; passthrough low-level keyboard hook (`uiohook-napi`) → IPC → renderer event (keys still reach whatever app currently has focus)
 - **Postgres** — official `postgres:16-alpine` image
 - **docker compose** — `web` and `db` services, each their own image. Bind-mount volumes: `./data_public` (uploads) and `./data_db` (postgres). Both gitignored.
 
@@ -57,6 +57,16 @@ The Electron app reads keybinds from the logged-in user's board (via an exposed 
 
 - Sounds flipped to **Public** appear in `/public` for every other user to browse, play, and add to their own board.
 - Authors are filtered out of their own public listing — you can't re-add a clip you already own. Your uploads are auto-placed on your board.
+
+## Virtual Mic mode
+
+Toggle it on the dashboard to route sounds into a call or game as if they were your mic.
+
+- **Sources → virtual mic.** Every capture device Windows reports — mics, virtual cables (VB-Audio, VoiceMeeter), GoXLR mix buses — plus the soundboard get summed into one **output device**. Pick that device's recording side as your mic in-game and the mix comes through.
+- **Want an app's audio in the mic?** Send it to a virtual cable or GoXLR bus in Windows; it then shows up here as a capture device. That's the only routing path — there's no system loopback or per-app capture (a deliberate choice; see notes below).
+- **Monitor.** Choose one device to hear locally and tick which live lines play on it. Your own mic stays off the monitor by default so you don't hear yourself echoed back.
+
+It's all in the browser (Web Audio API + `setSinkId`), so it works on the website too — no Electron required. Mixing into a virtual cable does need cables/GoXLR set up on Windows, though.
 
 ## Storage layout
 

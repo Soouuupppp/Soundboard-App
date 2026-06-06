@@ -44,8 +44,8 @@ SOUNDBOARD_URL=https://soundboard.example.com pnpm --filter electron dist:win
 
 Outputs to `electron/dist/`:
 
-- `Soundboard-1.0.2-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
-- `Soundboard-1.0.2-x64-portable.exe` — single-file executable, no install.
+- `Soundboard-1.1.0-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
+- `Soundboard-1.1.0-x64-portable.exe` — single-file executable, no install.
 
 Send one of these to your friends. They open it, log in with Discord, done.
 Power users can still change the URL later via **File → Change server URL…**
@@ -54,13 +54,9 @@ if you ever move the server.
 If you skip setting `SOUNDBOARD_URL`, the build still works but the app will
 prompt the user for a URL on first launch.
 
-### Other platforms
-
-```bash
-pnpm --filter electron dist            # current OS
-pnpm --filter electron exec electron-builder --mac    # .dmg (must be run on macOS, requires signing for distribution)
-pnpm --filter electron exec electron-builder --linux  # .AppImage
-```
+> **Windows only.** The mac/Linux build targets were removed — the desktop
+> wrapper ships for Windows. The website itself (including Virtual Mic mode)
+> still runs in any modern browser on any OS.
 
 ## Releasing a new version (auto-update)
 
@@ -119,9 +115,6 @@ electron-builder's [code signing docs](https://www.electron.build/code-signing).
 - Because hotkeys are passthrough, dangerous combos (e.g. just `A`) will
   trigger playback every time you type that key. The web UI shows a warning
   when you assign one.
-- On macOS, `uiohook-napi` requires Accessibility permission for the app the
-  first time it runs. On Linux the X server build is supported; Wayland is
-  not.
 - Audio plays through the Electron renderer, so the app must be running
   (windowed or minimized — focus is not required).
 - For friends to use your binary, your server must be reachable from their

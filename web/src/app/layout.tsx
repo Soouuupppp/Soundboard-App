@@ -5,7 +5,7 @@ import { auth, signIn, signOut } from "@/lib/auth";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://soundboard.example.com";
 const TITLE = "Soundboard";
-const DESCRIPTION = "Discord-authenticated soundboard dashboard — upload, organize, and trigger sounds with global hotkeys.";
+const DESCRIPTION = "Upload your sounds, set keybinds, and play them anywhere — even straight into your mic. Log in with Discord and build your board.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

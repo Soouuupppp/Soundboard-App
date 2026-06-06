@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useAudioOutput } from "@/lib/audio-output";
 
@@ -374,13 +374,25 @@ function SoundCard(props: {
 }
 
 function ControlPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
+  const [open, setOpen] = useState(true);
   const labelsHidden = audio.devices.some((d) => !d.label);
 
   return (
     <section className="card">
-      <div className="flex items-center gap-2 mb-4">
-        <Settings size={16} />
-        <h2 className="font-semibold">Control Panel</h2>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-2 text-left min-w-0"
+          aria-expanded={open}
+        >
+          <Settings size={16} />
+          <h2 className="font-semibold">Control Panel</h2>
+          <ChevronDown
+            size={16}
+            className={`text-muted transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
+          />
+        </button>
         <button
           className="btn-ghost text-xs ml-auto disabled:opacity-50"
           onClick={() => audio.cancelAll()}
@@ -391,63 +403,346 @@ function ControlPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
           Cancel all sounds
         </button>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="text-sm block mb-1">Output device</label>
-          {audio.supportsSinkId ? (
-            <>
-              <select
-                className="input w-full"
-                value={audio.deviceId}
-                onChange={(e) => audio.setDeviceId(e.target.value)}
-              >
-                <option value="default">System default</option>
-                {audio.devices.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || `Output ${d.deviceId.slice(0, 6)}`}
-                  </option>
-                ))}
-              </select>
-              {labelsHidden && (
-                <button
-                  type="button"
-                  className="btn-ghost text-xs mt-2"
-                  onClick={() => audio.requestLabelsPermission()}
-                >
-                  Show device names (grants mic permission once)
-                </button>
-              )}
-            </>
-          ) : (
-            <p className="text-xs text-muted">
-              This browser doesn&apos;t support per-element output selection. Use OS audio settings.
-            </p>
+
+      <Collapsible open={open}>
+        <div className="space-y-3 mt-3">
+          <Section title="Output & volume" icon={<Volume2 size={15} className="text-muted shrink-0" />}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="text-sm block mb-1">Output device</label>
+                {audio.supportsSinkId ? (
+                  <>
+                    <select
+                      className="input w-full"
+                      value={audio.deviceId}
+                      onChange={(e) => audio.setDeviceId(e.target.value)}
+                    >
+                      <option value="default">System default</option>
+                      {audio.devices.map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {d.label || `Output ${d.deviceId.slice(0, 6)}`}
+                        </option>
+                      ))}
+                    </select>
+                    {labelsHidden && (
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs mt-2"
+                        onClick={() => audio.requestLabelsPermission()}
+                      >
+                        Show device names (grants mic permission once)
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted">
+                    This browser doesn&apos;t support per-element output selection. Use OS audio settings.
+                  </p>
+                )}
+                <p className="text-xs text-muted mt-1">
+                  {audio.virtualMicMode
+                    ? "In Virtual Mic mode this is the cable the soundboard + mics feed into — pick its recording side as your mic in-game."
+                    : "Where the soundboard plays so you can hear it."}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm block mb-1" title={`Master volume ${Math.round(audio.masterVolume * 100)}%`}>
+                  Master volume
+                </label>
+                <div className="flex items-center gap-2">
+                  <Volume2 size={14} className="text-muted shrink-0" />
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={audio.masterVolume}
+                    onChange={(e) => audio.setMasterVolume(Number(e.target.value))}
+                    className="flex-1 accent-accent"
+                    aria-label="Master volume"
+                  />
+                  <span className="text-xs text-muted w-8 text-right">
+                    {Math.round(audio.masterVolume * 100)}
+                  </span>
+                </div>
+                <p className="text-xs text-muted mt-2">Applied on top of each sound&apos;s per-button volume.</p>
+              </div>
+            </div>
+          </Section>
+
+          {audio.supportsSinkId && (
+            <Section
+              title="Virtual Mic mode"
+              icon={<Mic size={15} className="text-muted shrink-0" />}
+              right={
+                <Toggle
+                  checked={audio.virtualMicMode}
+                  onChange={audio.setVirtualMicMode}
+                  label="Toggle Virtual Mic mode"
+                />
+              }
+            >
+              <VirtualMicPanel audio={audio} />
+            </Section>
           )}
         </div>
-        <div>
-          <label className="text-sm block mb-1" title={`Master volume ${Math.round(audio.masterVolume * 100)}%`}>
-            Master volume
-          </label>
-          <div className="flex items-center gap-2">
-            <Volume2 size={14} className="text-muted shrink-0" />
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={audio.masterVolume}
-              onChange={(e) => audio.setMasterVolume(Number(e.target.value))}
-              className="flex-1 accent-accent"
-              aria-label="Master volume"
-            />
-            <span className="text-xs text-muted w-8 text-right">
-              {Math.round(audio.masterVolume * 100)}
-            </span>
-          </div>
-          <p className="text-xs text-muted mt-2">Applied on top of each sound&apos;s per-button volume.</p>
-        </div>
-      </div>
+      </Collapsible>
     </section>
+  );
+}
+
+// Animated show/hide using a 0fr↔1fr grid row (no fixed height needed).
+function Collapsible({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div
+      className={`grid transition-all duration-200 ${
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+      }`}
+    >
+      <div className="overflow-hidden">{children}</div>
+    </div>
+  );
+}
+
+// A collapsible control-panel section with a chevron header. An optional `right`
+// node (e.g. a toggle) sits outside the header button so it doesn't collapse.
+function Section({
+  title,
+  icon,
+  right,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  right?: ReactNode;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border-t border-white/10 pt-3 first:border-t-0 first:pt-0">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-2 text-left flex-1 min-w-0"
+          aria-expanded={open}
+        >
+          <ChevronDown
+            size={14}
+            className={`text-muted shrink-0 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
+          />
+          {icon}
+          <span className="font-semibold text-sm truncate">{title}</span>
+        </button>
+        {right}
+      </div>
+      <Collapsible open={open}>
+        <div className="pt-3">{children}</div>
+      </Collapsible>
+    </div>
+  );
+}
+
+// The slide toggle switch.
+function Toggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 ${
+        checked ? "bg-accent" : "bg-white/15"
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
+          checked ? "translate-x-6" : "translate-x-1"
+        }`}
+      />
+    </button>
+  );
+}
+
+function VirtualMicPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
+  const on = audio.virtualMicMode;
+  const labelsHidden =
+    audio.inputDevices.length === 0 || audio.inputDevices.some((d) => !d.label);
+
+  // The lines actually going through the virtual mic right now — these are the
+  // only things the monitor lets you tick on/off.
+  const monitorLines: { key: string; label: string }[] = [
+    { key: audio.soundboardKey, label: "Soundboard" },
+    ...audio.inputDevices
+      .filter((d) => audio.inputs.find((i) => i.deviceId === d.deviceId)?.enabled)
+      .map((d) => ({ key: d.deviceId, label: d.label || `Capture ${d.deviceId.slice(0, 6)}` })),
+  ];
+
+  return (
+    <div>
+      <p className="text-xs text-muted">
+        Mix your capture devices (mics, virtual cables, GoXLR buses) and the soundboard into a
+        virtual audio cable, then pick that cable as your mic in-game. Choose a monitor device to
+        also hear it locally.
+      </p>
+
+      {!audio.supportsContextSink && on && (
+        <p className="text-xs text-red-400 mt-2">
+          This build can&apos;t route Web Audio to a specific device (needs Chromium 110+).
+        </p>
+      )}
+      {audio.mixerError && on && (
+        <p className="text-xs text-red-400 mt-2">Mixer error: {audio.mixerError}</p>
+      )}
+
+      <Collapsible open={on}>
+        <div className="space-y-5 pt-3">
+          {!audio.secureContext && (
+            <p className="text-xs text-red-400">
+              Microphone access needs a secure context (HTTPS or localhost). Your server URL is
+              plain HTTP, so the browser blocks mic capture.
+            </p>
+          )}
+          {labelsHidden && (
+            <div>
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                onClick={() => audio.requestLabelsPermission()}
+              >
+                Show device names (grants mic permission once)
+              </button>
+              {audio.labelsError && (
+                <p className="text-xs text-red-400 mt-1">Couldn&apos;t access mic: {audio.labelsError}</p>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label className="text-sm block">Sources → virtual mic</label>
+            <p className="text-xs text-muted mb-2">
+              Every capture device Windows reports — mics, plus virtual cables (VB-Audio,
+              VoiceMeeter) and GoXLR buses (e.g. Broadcast Stream Mix) whose recording side shows up
+              here. Tick what the game should hear. To route an app&apos;s audio in, send it to a
+              cable / GoXLR bus in Windows and it&apos;ll appear in this list.
+            </p>
+            <DeviceLineList
+              emptyLabel="No capture devices detected."
+              fallbackName="Capture"
+              devices={audio.inputDevices}
+              isOn={(id) => audio.inputs.find((i) => i.deviceId === id)?.enabled ?? false}
+              volumeOf={(id) => audio.inputs.find((i) => i.deviceId === id)?.volume ?? 1}
+              onToggle={audio.setInputEnabled}
+              onVolume={audio.setInputVolume}
+            />
+          </div>
+
+          <div>
+            <label className="text-sm block mb-1">Monitor</label>
+            <select
+              className="input w-full"
+              value={audio.monitorDeviceId}
+              onChange={(e) => audio.setMonitorDeviceId(e.target.value)}
+            >
+              <option value="default">System default</option>
+              {audio.devices.map((d) => (
+                <option key={d.deviceId} value={d.deviceId}>
+                  {d.label || `Output ${d.deviceId.slice(0, 6)}`}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted mt-1 mb-2">
+              The device you hear locally. Tick which of the live mic lines to monitor — your mic is
+              off by default so you don&apos;t echo yourself.
+            </p>
+            <div className="space-y-1.5">
+              {monitorLines.map((line) => (
+                <label key={line.key} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={audio.monitored.includes(line.key)}
+                    onChange={(e) => audio.setMonitored(line.key, e.target.checked)}
+                  />
+                  <span className="truncate" title={line.label}>{line.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Collapsible>
+    </div>
+  );
+}
+
+function DeviceLineList({
+  emptyLabel,
+  fallbackName,
+  devices,
+  isOn,
+  volumeOf,
+  onToggle,
+  onVolume,
+}: {
+  emptyLabel: string;
+  fallbackName: string;
+  devices: MediaDeviceInfo[];
+  isOn: (deviceId: string) => boolean;
+  volumeOf: (deviceId: string) => number;
+  onToggle: (deviceId: string, enabled: boolean) => void;
+  onVolume: (deviceId: string, volume: number) => void;
+}) {
+  return (
+    <>
+      {devices.length === 0 ? (
+        <p className="text-xs text-muted">{emptyLabel}</p>
+      ) : (
+        <div className="space-y-2">
+          {devices.map((d) => {
+            const enabled = isOn(d.deviceId);
+            const vol = volumeOf(d.deviceId);
+            return (
+              <div key={d.deviceId} className="flex items-center gap-3">
+                <label className="inline-flex items-center gap-2 text-sm w-1/2 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => onToggle(d.deviceId, e.target.checked)}
+                  />
+                  <span className="truncate" title={d.label || d.deviceId}>
+                    {d.label || `${fallbackName} ${d.deviceId.slice(0, 6)}`}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={vol}
+                  disabled={!enabled}
+                  onChange={(e) => onVolume(d.deviceId, Number(e.target.value))}
+                  className="flex-1 accent-accent disabled:opacity-40"
+                  aria-label={`Volume for ${d.label || d.deviceId}`}
+                />
+                <span className="text-xs text-muted w-8 text-right">
+                  {Math.round(vol * 100)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }
 
