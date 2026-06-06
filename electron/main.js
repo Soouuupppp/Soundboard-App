@@ -271,9 +271,47 @@ function lockdownWindow(win) {
   });
 
   // Defense-in-depth: refuse to attach to webviews and refuse permission
-  // requests (notifications, geolocation, media, etc.) from the remote site.
+  // requests (notifications, geolocation, etc.) from the remote site — with one
+  // exception: microphone capture ("media") is allowed for our own trusted
+  // origin so the in-app mic mixer (Virtual Mic mode) can read input devices.
   win.webContents.on("will-attach-webview", (event) => event.preventDefault());
-  win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+
+  // Permissions the in-app mic mixer needs: "media" (getUserMedia microphone)
+  // and "speaker-selection" (setSinkId / AudioContext.setSinkId output routing).
+  const TRUSTED_PERMS = new Set(["media", "speaker-selection"]);
+
+  // Both handlers receive a URL that may include a path (e.g. ".../dashboard"),
+  // so compare on the parsed *origin*, not via strict string equality.
+  const isTrustedUrl = (url) => {
+    const o = originOf(url);
+    return o !== null && o === currentOrigin;
+  };
+
+  win.webContents.session.setPermissionRequestHandler((_wc, perm, cb, details) => {
+    const allowed = TRUSTED_PERMS.has(perm) && isTrustedUrl(details && details.requestingUrl);
+    console.log(
+      "[soundboard] permission REQUEST:",
+      perm,
+      "from",
+      details && details.requestingUrl,
+      "->",
+      allowed ? "ALLOW" : "DENY",
+    );
+    return cb(allowed);
+  });
+  // permissions.query() / synchronous checks go through here.
+  win.webContents.session.setPermissionCheckHandler((_wc, perm, requestingOrigin) => {
+    const allowed = TRUSTED_PERMS.has(perm) && isTrustedUrl(requestingOrigin);
+    console.log(
+      "[soundboard] permission CHECK:",
+      perm,
+      "from",
+      requestingOrigin,
+      "->",
+      allowed ? "ALLOW" : "DENY",
+    );
+    return allowed;
+  });
 }
 
 function createWindow(url) {

@@ -1,9 +1,9 @@
 import { eq } from "drizzle-orm";
+import { Readable } from "node:stream";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { sounds } from "@/db/schema";
 import { openReadStream, statStorageFile } from "@/lib/storage";
-import type { ReadStream } from "node:fs";
 
 export const runtime = "nodejs";
 
@@ -29,27 +29,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   const stream = openReadStream(row.storagePath);
-  // Convert Node Readable to web ReadableStream
-  const web = nodeToWeb(stream);
+  // Readable.toWeb honors backpressure (and propagates cancel → destroy), so a
+  // slow client can't make us buffer the whole file in memory.
+  const web = Readable.toWeb(stream) as ReadableStream<Uint8Array>;
 
   return new Response(web, {
     headers: {
       "Content-Type": "audio/mpeg",
       "Content-Length": String(stat.size),
       "Cache-Control": "private, max-age=3600",
-    },
-  });
-}
-
-function nodeToWeb(stream: ReadStream): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      stream.on("data", (chunk) => controller.enqueue(new Uint8Array(chunk as Buffer)));
-      stream.on("end", () => controller.close());
-      stream.on("error", (err) => controller.error(err));
-    },
-    cancel() {
-      stream.destroy();
     },
   });
 }
