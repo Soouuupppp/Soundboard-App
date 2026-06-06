@@ -28,7 +28,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=$(node -p "require('./electron/package.json').version")
-          tag="electron-v$version"
+          # electron-builder publishes to tag `v${version}` by default; the
+          # check + flip-to-published steps below must use the same tag.
+          tag="v$version"
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "tag=$tag" >> $GITHUB_OUTPUT
           # A published release with this tag means we've already shipped it.
