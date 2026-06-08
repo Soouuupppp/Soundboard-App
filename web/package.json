@@ -1,7 +1,7 @@
 {
   "name": "soundboard-web",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Next.js web app for the Soundboard project — upload, organize, and trigger sounds with Discord auth.",
   "author": {
     "name": "Soouuupppp",
