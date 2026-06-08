@@ -1,7 +1,10 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
 import { auth, signIn, signOut } from "@/lib/auth";
+import { UserBadge } from "@/components/UserBadge";
+import logo from "./logo.png";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://soundboard.example.com";
 const TITLE = "Soundboard";
@@ -11,14 +14,9 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: TITLE,
   description: DESCRIPTION,
-  icons: {
-    icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/favicon-96x96.png", sizes: "96x96", type: "image/png" },
-    ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
-  },
+  // Favicons are provided by the App Router file conventions (app/favicon.ico,
+  // app/icon.png, app/apple-icon.png) — Next injects the correct <link> tags.
+  // The old metadata pointed at a 1.9 MB favicon.svg that browsers refused to load.
   manifest: "/site.webmanifest",
   openGraph: {
     type: "website",
@@ -59,9 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <header className="sticky top-0 z-20 border-b border-white/5 bg-black/30 backdrop-blur-xl">
           <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
             <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-accent-grad shadow-glow">
-                <span className="text-sm">🔊</span>
-              </span>
+              <Image src={logo} alt="Soundboard logo" width={32} height={32} priority className="h-8 w-8" />
               <span>Soundboard</span>
             </Link>
             {session?.user && (
@@ -74,7 +70,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <div className="ml-auto flex items-center gap-3 text-sm">
               {session?.user ? (
                 <>
-                  <span className="text-muted hidden sm:inline">{session.user.name}</span>
+                  <UserBadge name={session.user.name ?? null} image={session.user.image ?? null} />
                   <form
                     action={async () => {
                       "use server";

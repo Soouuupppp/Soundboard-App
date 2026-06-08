@@ -5,9 +5,13 @@ CREATE TABLE IF NOT EXISTS "role" (
   "name" TEXT NOT NULL UNIQUE,
   "defaultMaxFileSize" BIGINT NOT NULL,
   "defaultMaxTotalStorage" BIGINT NOT NULL,
+  "canUpload" BOOLEAN NOT NULL DEFAULT TRUE,
   "isSystem" BOOLEAN NOT NULL DEFAULT FALSE,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- Added after initial release; backfill existing deployments. Existing roles
+-- default to TRUE so current users aren't suddenly blocked from uploading.
+ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "canUpload" BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS "user" (
   "id" TEXT PRIMARY KEY,
@@ -19,8 +23,11 @@ CREATE TABLE IF NOT EXISTS "user" (
   "roleId" UUID REFERENCES "role"("id") ON DELETE SET NULL,
   "maxFileSizeOverride" BIGINT,
   "maxTotalStorageOverride" BIGINT,
+  "canUploadOverride" BOOLEAN,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- Added after initial release; backfill existing deployments (NULL = inherit role).
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "canUploadOverride" BOOLEAN;
 
 CREATE TABLE IF NOT EXISTS "account" (
   "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,

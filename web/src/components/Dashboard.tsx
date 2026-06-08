@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useAudioOutput } from "@/lib/audio-output";
@@ -8,6 +9,7 @@ import { useAudioOutput } from "@/lib/audio-output";
 type Sound = {
   id: string;
   name: string;
+  originalFilename: string;
   sizeBytes: number;
   isPublic: boolean;
   ownerId: string;
@@ -21,26 +23,23 @@ type Limits = { maxFileSize: number; maxTotalStorage: number };
 
 export function Dashboard({
   limits,
-  used: initialUsed,
+  canUpload,
   user,
 }: {
   limits: Limits;
-  used: number;
+  canUpload: boolean;
   user: { name: string; role: string | null };
 }) {
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [used, setUsed] = useState(initialUsed);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [capturingFor, setCapturingFor] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [b, s] = await Promise.all([
-      fetch("/api/board").then((r) => r.json()),
-      fetch("/api/sounds").then((r) => r.json()),
-    ]);
+    const b = await fetch("/api/board").then((r) => r.json());
     setEntries(b.entries ?? []);
-    setUsed(s.used ?? 0);
+    // Let the nav-bar storage meter refetch its usage.
+    window.dispatchEvent(new CustomEvent("soundboard:storage-changed"));
   }, []);
 
   useEffect(() => {
@@ -71,14 +70,45 @@ export function Dashboard({
     audioPlay(soundId, volumes[entryId] ?? 1, entryId);
   }, [audioPlay, volumes]);
 
+  // --- Keybind enable state (persisted in localStorage, this device only) ---
+  // `keybindsEnabled` is the master switch; `keybindEnabled[entryId]` is the
+  // per-clip switch (missing = on). A clip's keybind fires only when both are on.
+  const [keybindsEnabled, setKeybindsEnabledState] = useState(true);
+  const [keybindEnabled, setKeybindEnabled] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try {
+      const g = localStorage.getItem("soundboard:keybindsEnabled");
+      if (g != null) setKeybindsEnabledState(g === "true");
+      const raw = localStorage.getItem("soundboard:keybindEnabled");
+      if (raw) setKeybindEnabled(JSON.parse(raw));
+    } catch {}
+  }, []);
+  const setKeybindsEnabled = useCallback((on: boolean) => {
+    setKeybindsEnabledState(on);
+    try { localStorage.setItem("soundboard:keybindsEnabled", String(on)); } catch {}
+  }, []);
+  const toggleEntryKeybind = useCallback((entryId: string, on: boolean) => {
+    setKeybindEnabled((prev) => {
+      const next = { ...prev, [entryId]: on };
+      try { localStorage.setItem("soundboard:keybindEnabled", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   // --- In-browser keybind capture and listener ---
+  // The map drives the in-app listener, the Electron global-key handler, and the
+  // Electron registration call below — so gating it here disables a keybind
+  // everywhere at once. Disabled keybinds (global off, or per-clip off) are omitted.
   const keybindByCombo = useMemo(() => {
     const map = new Map<string, { entryId: string; soundId: string }>(); // combo -> entry
+    if (!keybindsEnabled) return map;
     for (const e of entries) {
-      if (e.entry.keybind) map.set(normalizeCombo(e.entry.keybind), { entryId: e.entry.id, soundId: e.sound.id });
+      if (e.entry.keybind && keybindEnabled[e.entry.id] !== false) {
+        map.set(normalizeCombo(e.entry.keybind), { entryId: e.entry.id, soundId: e.sound.id });
+      }
     }
     return map;
-  }, [entries]);
+  }, [entries, keybindsEnabled, keybindEnabled]);
 
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
@@ -118,6 +148,8 @@ export function Dashboard({
   // --- Upload ---
   const fileRef = useRef<HTMLInputElement>(null);
   const [makePublic, setMakePublic] = useState(false);
+  const [clipName, setClipName] = useState("");
+  const [fileName, setFileName] = useState<string | null>(null);
 
   async function onUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -132,6 +164,9 @@ export function Dashboard({
     const fd = new FormData();
     fd.append("file", f);
     fd.append("isPublic", String(makePublic));
+    // Blank name → server falls back to the filename (sans .mp3).
+    const name = clipName.trim();
+    if (name) fd.append("name", name);
     const res = await fetch("/api/sounds", { method: "POST", body: fd });
     setBusy(false);
     if (!res.ok) {
@@ -140,6 +175,9 @@ export function Dashboard({
       return;
     }
     if (fileRef.current) fileRef.current.value = "";
+    setClipName("");
+    setFileName(null);
+    setMakePublic(false);
     refresh();
   }
 
@@ -182,41 +220,90 @@ export function Dashboard({
       </div>
 
       <ControlPanel audio={audio} />
-      <section className="card">
-        <div className="flex flex-wrap gap-6 items-end">
-          <div className="flex-1 min-w-[240px]">
-            <h2 className="font-semibold mb-1 flex items-center gap-2">Storage</h2>
-            <p className="text-sm text-muted">
-              <span className="text-white font-medium">{formatBytes(used)}</span>
-              <span className="mx-1">/</span>
-              {formatBytes(limits.maxTotalStorage)} used
-              <span className="ml-3 chip">Max per file: {formatBytes(limits.maxFileSize)}</span>
+
+      {!canUpload ? (
+        <section className="card flex items-start gap-3">
+          <Lock size={16} className="text-muted mt-0.5 shrink-0" />
+          <div>
+            <h2 className="font-semibold">Uploading is limited</h2>
+            <p className="text-sm text-muted mt-1">
+              Your account isn&apos;t whitelisted for uploads yet. You can still{" "}
+              <Link href="/public" className="text-accent hover:underline">
+                browse public sounds
+              </Link>{" "}
+              and add them to your board.
             </p>
-            <div className="w-full h-2 bg-white/[0.06] rounded-full mt-3 overflow-hidden">
-              <div
-                className="h-full bg-accent-grad transition-[width] duration-500"
-                style={{ width: `${Math.min(100, (used / limits.maxTotalStorage) * 100)}%` }}
-              />
-            </div>
           </div>
-          <form onSubmit={onUpload} className="flex flex-wrap items-center gap-2 ml-auto">
-            <input ref={fileRef} type="file" accept="audio/mpeg,.mp3" className="input max-w-xs file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-white file:text-xs" />
-            <label className="text-sm flex items-center gap-2 chip !text-white">
-              <input type="checkbox" checked={makePublic} onChange={(e) => setMakePublic(e.target.checked)} />
-              Public
+        </section>
+      ) : (
+      <section className="card">
+        <h2 className="font-semibold mb-1 flex items-center gap-2">
+          <Upload size={16} className="text-muted" /> Upload a sound
+        </h2>
+        <p className="text-sm text-muted mb-4">
+          Add an .mp3 to your board. Give it a name, or we&apos;ll use the file name.
+        </p>
+        <form onSubmit={onUpload} className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="block text-xs text-muted mb-1">Audio file</span>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="audio/mpeg,.mp3"
+              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
+              className="input w-full file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-white file:text-xs"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-muted mb-1">Clip name</span>
+            <input
+              className="input w-full"
+              value={clipName}
+              onChange={(e) => setClipName(e.target.value)}
+              placeholder={fileName ? fileName.replace(/\.mp3$/i, "") : "My epic clip"}
+              maxLength={200}
+            />
+          </label>
+          <div className="flex items-center justify-between gap-4 sm:col-span-2">
+            <label className="flex items-center gap-3 text-sm select-none">
+              <Toggle
+                checked={makePublic}
+                onChange={setMakePublic}
+                label="Share this clip publicly"
+              />
+              <span className="flex items-center gap-1.5">
+                {makePublic ? <Globe size={14} /> : <Lock size={14} />}
+                {makePublic ? "Public — others can find and add it" : "Private — only you can use it"}
+              </span>
             </label>
             <button className="btn-primary" disabled={busy}>
               <Upload size={16} className="mr-1" /> {busy ? "Uploading…" : "Upload"}
             </button>
-          </form>
-        </div>
+          </div>
+        </form>
         {err && <p className="text-red-300 text-sm mt-3">{err}</p>}
       </section>
+      )}
 
       <section>
-        <h2 className="section-title mb-4">Your board</h2>
+        <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+          <h2 className="section-title">Your board</h2>
+          <label className="flex items-center gap-2.5 text-sm select-none" title="When off, no keybinds trigger playback (in-app or global hotkeys)">
+            <Keyboard size={15} className={keybindsEnabled ? "text-accent" : "text-muted"} />
+            <span className={keybindsEnabled ? "" : "text-muted"}>
+              Keybinds {keybindsEnabled ? "on" : "off"}
+            </span>
+            <Toggle
+              checked={keybindsEnabled}
+              onChange={setKeybindsEnabled}
+              label="Toggle all keybinds"
+            />
+          </label>
+        </div>
         {entries.length === 0 ? (
-          <p className="text-muted">No sounds yet. Upload one above or browse the public list.</p>
+          <p className="text-muted">
+            No sounds yet. {canUpload ? "Upload one above or browse" : "Browse"} the public list.
+          </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {entries.map((e) => (
@@ -230,6 +317,9 @@ export function Dashboard({
                 onCancel={() => audio.cancelSound(e.sound.id)}
                 volume={volumes[e.entry.id] ?? 1}
                 onVolumeChange={(v) => setVolume(e.entry.id, v)}
+                keybindsGloballyEnabled={keybindsEnabled}
+                keybindEnabled={keybindEnabled[e.entry.id] !== false}
+                onToggleKeybind={(on) => toggleEntryKeybind(e.entry.id, on)}
                 onCaptureStart={() => setCapturingFor(e.entry.id)}
                 onCaptureCancel={() => setCapturingFor(null)}
                 onCaptured={(combo) => {
@@ -265,9 +355,13 @@ function SoundCard(props: {
   onTogglePublic: (next: boolean) => void;
   volume: number;
   onVolumeChange: (v: number) => void;
+  keybindsGloballyEnabled: boolean;
+  keybindEnabled: boolean;
+  onToggleKeybind: (on: boolean) => void;
 }) {
   const { entry, capturing } = props;
   const { sound, ownerName } = entry;
+  const hasKeybind = !!entry.entry.keybind;
 
   // Capture next keypress
   useEffect(() => {
@@ -320,18 +414,44 @@ function SoundCard(props: {
           </button>
         )}
       </div>
-      <div className="text-xs text-muted truncate">by {ownerName ?? "unknown"}</div>
+      <div className="text-xs text-muted truncate" title={sound.originalFilename}>
+        {sound.originalFilename}
+      </div>
+      <div className="text-[11px] text-muted/70 truncate">by {ownerName ?? "unknown"}</div>
 
       <div className="flex items-center gap-2 mt-1">
+        {hasKeybind && !capturing && (
+          <Toggle
+            size="sm"
+            checked={props.keybindEnabled}
+            disabled={!props.keybindsGloballyEnabled}
+            onChange={props.onToggleKeybind}
+            label={`Toggle keybind for ${entry.entry.label || sound.name}`}
+          />
+        )}
         <button
-          className="btn-ghost flex-1 text-xs"
+          className="btn-ghost flex-1 text-xs min-w-0"
           onClick={capturing ? props.onCaptureCancel : props.onCaptureStart}
-          title="Click then press a key combination"
+          title={
+            hasKeybind && !props.keybindsGloballyEnabled
+              ? "Keybinds are globally off"
+              : hasKeybind && !props.keybindEnabled
+                ? "This keybind is off"
+                : "Click then press a key combination"
+          }
         >
-          <Keyboard size={14} className="mr-1" />
-          {capturing ? "Press keys…" : entry.entry.keybind || "Set keybind"}
+          <Keyboard size={14} className="mr-1 shrink-0" />
+          <span
+            className={`truncate ${
+              hasKeybind && (!props.keybindEnabled || !props.keybindsGloballyEnabled)
+                ? "line-through text-muted"
+                : ""
+            }`}
+          >
+            {capturing ? "Press keys…" : entry.entry.keybind || "Set keybind"}
+          </span>
         </button>
-        {entry.entry.keybind && !capturing && (
+        {hasKeybind && !capturing && (
           <button className="btn-ghost text-xs" onClick={props.onClearKey} title="Clear">×</button>
         )}
       </div>
@@ -545,30 +665,39 @@ function Section({
   );
 }
 
-// The slide toggle switch.
+// The slide toggle switch. `size="sm"` is a compact variant for tight spots
+// like sound cards. `disabled` dims it and blocks interaction.
 function Toggle({
   checked,
   onChange,
   label,
+  size = "md",
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
+  size?: "md" | "sm";
+  disabled?: boolean;
 }) {
+  const sm = size === "sm";
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 ${
-        checked ? "bg-accent" : "bg-white/15"
-      }`}
+      className={`relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed ${
+        sm ? "h-5 w-9" : "h-6 w-11"
+      } ${checked ? "bg-accent" : "bg-white/15"}`}
     >
       <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
-          checked ? "translate-x-6" : "translate-x-1"
+        className={`inline-block transform rounded-full bg-white shadow transition-transform duration-200 ${
+          sm
+            ? `h-3.5 w-3.5 ${checked ? "translate-x-[18px]" : "translate-x-1"}`
+            : `h-4 w-4 ${checked ? "translate-x-6" : "translate-x-1"}`
         }`}
       />
     </button>

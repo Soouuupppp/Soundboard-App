@@ -65,10 +65,13 @@ function originOf(rawUrl) {
   }
 }
 
+// The public hosted instance — offered as the example and one-click pre-fill.
+const PUBLIC_INSTANCE_URL = "https://soundboard.soouuupppp.com";
+
 async function promptForUrl(current) {
   const win = new BrowserWindow({
     width: 520,
-    height: 220,
+    height: 250,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -87,26 +90,35 @@ async function promptForUrl(current) {
   body{font-family:system-ui,sans-serif;background:#0b0d12;color:#e6e8ee;margin:0;padding:20px;}
   h1{font-size:15px;margin:0 0 8px 0;font-weight:600;}
   p{font-size:12px;color:#9aa3b2;margin:0 0 12px 0;}
-  input{width:100%;padding:8px;border-radius:6px;border:1px solid #1f2532;background:#141821;color:#fff;font-size:13px;outline:none;}
+  input{width:100%;padding:8px;border-radius:6px;border:1px solid #1f2532;background:#141821;color:#fff;font-size:13px;outline:none;box-sizing:border-box;}
   input:focus{border-color:#5865F2;}
+  .prefill{margin-top:8px;padding:0;background:none;border:0;color:#9aa3b2;font-size:12px;cursor:pointer;}
+  .prefill:hover{color:#cfd5e1;text-decoration:underline;}
   .row{display:flex;gap:8px;margin-top:14px;justify-content:flex-end;}
   button{padding:8px 14px;border-radius:6px;border:0;color:#fff;font-size:13px;cursor:pointer;}
   button.primary{background:#5865F2;}
   button.secondary{background:#1f2532;}
 </style></head><body>
 <h1>Enter Soundboard server URL</h1>
-<p>Example: <code>https://soundboard.example.com</code></p>
+<p>Example: <code>${PUBLIC_INSTANCE_URL}</code></p>
 <input id="u" value="${safeCurrent}" placeholder="https://..." autofocus />
+<button type="button" class="prefill" id="prefill">↳ Use public instance (${PUBLIC_INSTANCE_URL})</button>
 <div class="row">
   <button class="secondary" id="cancel">Cancel</button>
   <button class="primary" id="ok">Connect</button>
 </div>
 <script>
+  const PUBLIC_URL = ${JSON.stringify(PUBLIC_INSTANCE_URL)};
   document.getElementById('ok').addEventListener('click', () => {
     const v = document.getElementById('u').value.trim();
     window.promptApi.submit(v);
   });
   document.getElementById('cancel').addEventListener('click', () => window.promptApi.cancel());
+  document.getElementById('prefill').addEventListener('click', () => {
+    const i = document.getElementById('u');
+    i.value = PUBLIC_URL;
+    i.focus();
+  });
   document.getElementById('u').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') document.getElementById('ok').click();
     if (e.key === 'Escape') window.promptApi.cancel();

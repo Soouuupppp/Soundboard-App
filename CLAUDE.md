@@ -119,4 +119,5 @@ the `virtual-mic-capture` memory before reopening that decision.
 - Match the existing concise, comment-the-why style. The audio files in
   particular carry ASCII signal-flow diagrams in their header comments — keep
   them accurate if you change routing.
+- **Do not run linting** (`pnpm lint` / eslint) — don't run it to verify changes.
 - License is UNLICENSED / all rights reserved.
