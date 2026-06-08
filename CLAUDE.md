@@ -26,7 +26,7 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.1.0**).
+(currently **1.1.1**).
 
 ## Stack
 
