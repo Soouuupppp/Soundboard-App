@@ -39,6 +39,25 @@ export async function getUserLimits(userId: string): Promise<Limits> {
   };
 }
 
+// Whether a user may upload. Resolves per-user override → role's canUpload →
+// allowed (legacy / pre-role accounts with no role). Admin bypass is handled at
+// the route level via isAdminSession.
+export async function canUserUpload(userId: string): Promise<boolean> {
+  const [u] = await db
+    .select({ roleId: users.roleId, override: users.canUploadOverride })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (u?.override != null) return u.override;
+  if (!u?.roleId) return true;
+  const [r] = await db
+    .select({ canUpload: roles.canUpload })
+    .from(roles)
+    .where(eq(roles.id, u.roleId))
+    .limit(1);
+  return r?.canUpload ?? true;
+}
+
 export async function getUsedBytes(userId: string): Promise<number> {
   const [row] = await db
     .select({ total: sum(sounds.sizeBytes) })

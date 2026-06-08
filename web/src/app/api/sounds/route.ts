@@ -3,11 +3,11 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
-import { auth } from "@/lib/auth";
+import { auth, isAdminSession } from "@/lib/auth";
 import { db } from "@/db";
 import { sounds, boardEntries } from "@/db/schema";
 import { ensureUserDir } from "@/lib/storage";
-import { getUserLimits, getUsedBytes } from "@/lib/quota";
+import { canUserUpload, getUserLimits, getUsedBytes } from "@/lib/quota";
 import { clientKey, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { soundName, originalFilename } from "@/lib/validation";
 
@@ -46,6 +46,15 @@ export async function POST(req: Request) {
     refillPerSec: 1 / 12,
   });
   if (!rl.ok) return tooManyRequests(rl.retryAfter);
+
+  // Upload gate: only whitelisted roles (or admins) may upload their own clips.
+  // Everyone can still browse and add public clips to their board.
+  if (!isAdminSession(session) && !(await canUserUpload(session.user.id))) {
+    return NextResponse.json(
+      { error: "uploads are limited to whitelisted accounts" },
+      { status: 403 }
+    );
+  }
 
   // Reject early on Content-Length before buffering anything. We compare to the
   // user's max-file-size plus a small overhead for multipart framing.

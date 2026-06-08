@@ -26,11 +26,19 @@ async function main() {
   const defaultFile = Number(process.env.DEFAULT_MAX_FILE_SIZE ?? 5 * 1024 * 1024);
   const defaultTotal = Number(process.env.DEFAULT_MAX_TOTAL_STORAGE ?? 50 * 1024 * 1024);
 
+  // Three system roles:
+  //   user        — default; can browse/use public clips but NOT upload.
+  //   whitelisted — same quotas as user, but allowed to upload their own clips.
+  //   admin       — full access.
+  // ON CONFLICT DO NOTHING keeps this idempotent and never clobbers an admin's
+  // later toggles. (Existing pre-canUpload deployments keep user.canUpload=TRUE
+  // via the bootstrap backfill; flip it off in /admin to enforce the whitelist.)
   await sql`
-    INSERT INTO "role" ("name", "defaultMaxFileSize", "defaultMaxTotalStorage", "isSystem")
+    INSERT INTO "role" ("name", "defaultMaxFileSize", "defaultMaxTotalStorage", "isSystem", "canUpload")
     VALUES
-      ('user',  ${defaultFile}, ${defaultTotal}, true),
-      ('admin', ${defaultFile * 4}, ${defaultTotal * 20}, true)
+      ('user',        ${defaultFile},     ${defaultTotal},      true, false),
+      ('whitelisted', ${defaultFile},     ${defaultTotal},      true, true),
+      ('admin',       ${defaultFile * 4}, ${defaultTotal * 20}, true, true)
     ON CONFLICT ("name") DO NOTHING
   `;
 

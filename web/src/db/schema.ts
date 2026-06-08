@@ -26,6 +26,8 @@ export const users = pgTable("user", {
   // Per-user overrides (null → fall back to role default → env default).
   maxFileSizeOverride: bigint("maxFileSizeOverride", { mode: "number" }),
   maxTotalStorageOverride: bigint("maxTotalStorageOverride", { mode: "number" }),
+  // Per-user upload permission override (null → fall back to role's canUpload).
+  canUploadOverride: boolean("canUploadOverride"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -71,7 +73,10 @@ export const roles = pgTable("role", {
   // Defaults applied to all users with this role, unless they have an override.
   defaultMaxFileSize: bigint("defaultMaxFileSize", { mode: "number" }).notNull(),
   defaultMaxTotalStorage: bigint("defaultMaxTotalStorage", { mode: "number" }).notNull(),
-  isSystem: boolean("isSystem").notNull().default(false), // protects "user" and "admin" from deletion
+  // Whether members of this role may upload their own sounds. When false they
+  // can still browse and add public clips to their board — just not upload.
+  canUpload: boolean("canUpload").notNull().default(true),
+  isSystem: boolean("isSystem").notNull().default(false), // protects system roles from deletion
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

@@ -17,8 +17,10 @@ export async function GET() {
       discordId: users.discordId,
       roleId: users.roleId,
       roleName: roles.name,
+      roleCanUpload: roles.canUpload,
       maxFileSizeOverride: users.maxFileSizeOverride,
       maxTotalStorageOverride: users.maxTotalStorageOverride,
+      canUploadOverride: users.canUploadOverride,
       createdAt: users.createdAt,
     })
     .from(users)
