@@ -12,7 +12,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Rebuild and restart containers
+        # docker-rebuild.mjs keeps a rolling soundboard-web:latest/:prev pair
+        # (prev = one build back, for `pnpm rollback`) and prunes older layers,
+        # so rebuilds replace images instead of piling up dangling <none> ones.
         run: |
           docker compose --env-file /home/soundboard/.env pull || true
-          docker compose --env-file /home/soundboard/.env up -d --build
-          docker image prune -f
+          node scripts/docker-rebuild.mjs --env-file /home/soundboard/.env --detach

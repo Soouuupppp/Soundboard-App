@@ -29,6 +29,10 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+    # Stable name so rebuilds replace this tag instead of leaving a dangling
+    # <none> image behind. The rolling latest/prev tagging (one build back kept
+    # for rollback) is handled by scripts/docker-rebuild.mjs — see that file.
+    image: soundboard-web:latest
     restart: unless-stopped
     depends_on:
       db:
