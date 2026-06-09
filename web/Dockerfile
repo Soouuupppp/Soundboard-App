@@ -19,8 +19,13 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 RUN corepack enable
 # yt-dlp + ffmpeg power the YouTube→soundbite import (web/src/lib/yt-convert.ts).
-# ffmpeg is required for audio extraction/trimming; both are in Alpine community.
-RUN apk add --no-cache yt-dlp ffmpeg
+# yt-dlp comes from upstream, not apk: Alpine's package lags and YouTube's
+# frequent extractor/bot-check changes break old versions (cookies stop being
+# enough). It's a Python zipapp, so python3 is the only runtime dep. ffmpeg does
+# the audio extraction/trimming. Rebuild to pull a newer yt-dlp.
+RUN apk add --no-cache ffmpeg python3 \
+ && wget -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+ && chmod a+rx /usr/local/bin/yt-dlp
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 

@@ -74,16 +74,22 @@ async function fail(jobId: string, message: string) {
     .where(eq(conversionJobs.id, jobId));
 }
 
-// Only pass --cookies when a non-empty file is actually mounted: handing yt-dlp
-// an empty or absent jar makes it bail on a "malformed cookies file".
-async function cookieArgs(): Promise<string[]> {
+// Resolve --cookies args for a job. Only pass cookies when a non-empty file is
+// actually mounted (an empty/absent jar makes yt-dlp bail on a "malformed
+// cookies file"). The mount is read-only, but yt-dlp rewrites the jar on exit
+// and crashes if it can't — so copy into the job's writable temp dir and point
+// at the copy. The copy dies with workDir; the mounted source stays pristine.
+async function cookieArgs(workDir: string): Promise<string[]> {
   try {
     const st = await fs.stat(COOKIES_PATH);
-    if (st.isFile() && st.size > 0) return ["--cookies", COOKIES_PATH];
+    if (!st.isFile() || st.size === 0) return [];
+    const dest = join(workDir, "cookies.txt");
+    await fs.copyFile(COOKIES_PATH, dest);
+    return ["--cookies", dest];
   } catch {
     // not mounted / unreadable — run without cookies
+    return [];
   }
-  return [];
 }
 
 async function runJob(jobId: string) {
@@ -120,7 +126,7 @@ async function runJob(jobId: string) {
 
     await runYtDlp([
       "--ignore-config",
-      ...(await cookieArgs()),
+      ...(await cookieArgs(workDir)),
       "--no-playlist",
       "--no-progress",
       "--no-warnings",
