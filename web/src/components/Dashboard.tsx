@@ -1,9 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown } from "lucide-react";
+import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown, Gamepad2 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useAudioOutput } from "@/lib/audio-output";
+import {
+  isModToken,
+  keyTokenFromEvent,
+  modsFromEvent,
+  sameMods,
+  parseKeyCombo,
+  canonicalKeyCombo,
+  parseVrChord,
+  canonicalVrChord,
+  pickLargest,
+  type Mods,
+} from "@/lib/chord";
 
 type Sound = {
   id: string;
@@ -13,7 +25,14 @@ type Sound = {
   ownerId: string;
 };
 type Entry = {
-  entry: { id: string; soundId: string; label: string | null; keybind: string | null; position: number };
+  entry: {
+    id: string;
+    soundId: string;
+    label: string | null;
+    keybind: string | null;
+    controllerBind: string | null;
+    position: number;
+  };
   sound: Sound;
   ownerName: string | null;
 };
@@ -33,6 +52,10 @@ export function Dashboard({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [capturingFor, setCapturingFor] = useState<string | null>(null);
+  // Controller binds are independent of keybinds (separate capture + state).
+  const [capturingVrFor, setCapturingVrFor] = useState<string | null>(null);
+  const [vrConnected, setVrConnected] = useState(false);
+  const [hasDesktop, setHasDesktop] = useState(false);
 
   const refresh = useCallback(async () => {
     const [b, s] = await Promise.all([
@@ -71,36 +94,72 @@ export function Dashboard({
     audioPlay(soundId, volumes[entryId] ?? 1, entryId);
   }, [audioPlay, volumes]);
 
-  // --- In-browser keybind capture and listener ---
-  const keybindByCombo = useMemo(() => {
-    const map = new Map<string, { entryId: string; soundId: string }>(); // combo -> entry
-    for (const e of entries) {
-      if (e.entry.keybind) map.set(normalizeCombo(e.entry.keybind), { entryId: e.entry.id, soundId: e.sound.id });
-    }
-    return map;
+  // --- Keyboard binds (chords; modifiers strict, other keys subset-matched) ---
+  const keyBinds = useMemo(() => {
+    return entries.flatMap((e) => {
+      if (!e.entry.keybind) return [];
+      const { mods, keys } = parseKeyCombo(e.entry.keybind);
+      if (keys.length === 0) return [];
+      return [{
+        raw: canonicalKeyCombo(mods, keys),
+        mods,
+        tokens: new Set(keys),
+        entryId: e.entry.id,
+        soundId: e.sound.id,
+      }];
+    });
   }, [entries]);
 
+  // Canonical combo string -> entry, for Electron global-hook lookups + registration.
+  const keybindByCombo = useMemo(() => {
+    const map = new Map<string, { entryId: string; soundId: string }>();
+    for (const b of keyBinds) map.set(b.raw, { entryId: b.entryId, soundId: b.soundId });
+    return map;
+  }, [keyBinds]);
+
+  // In-browser keyboard matching: track held non-modifier keys, fire on the key
+  // that completes a bound chord (largest wins). Modifiers come from event flags.
+  const heldKeysRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    function onKey(ev: KeyboardEvent) {
-      if (capturingFor) return; // don't trigger while capturing
+    function onKeyDown(ev: KeyboardEvent) {
       const target = ev.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
-      const combo = comboFromEvent(ev);
-      const hit = keybindByCombo.get(combo);
-      if (hit) {
+      const token = keyTokenFromEvent(ev);
+      if (!token || isModToken(token)) return; // modifiers tracked via flags only
+      if (ev.repeat) return; // ignore auto-repeat
+      heldKeysRef.current.add(token);
+      if (capturingFor) return; // capture handles its own keys
+      const mods = modsFromEvent(ev);
+      const candidates = keyBinds.filter((b) => sameMods(b.mods, mods));
+      const best = pickLargest(heldKeysRef.current, token, candidates);
+      if (best) {
         ev.preventDefault();
-        playEntry(hit.entryId, hit.soundId);
+        playEntry(best.entryId, best.soundId);
       }
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [keybindByCombo, capturingFor, playEntry]);
+    function onKeyUp(ev: KeyboardEvent) {
+      const token = keyTokenFromEvent(ev);
+      if (token && !isModToken(token)) heldKeysRef.current.delete(token);
+    }
+    function clearHeld() { heldKeysRef.current.clear(); }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", clearHeld);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", clearHeld);
+    };
+  }, [keyBinds, capturingFor, playEntry]);
 
-  // Listen for OS-level global shortcut events forwarded by the Electron preload.
+  // OS-level global shortcut events forwarded by the Electron hook (already
+  // chord-matched there); look up the canonical combo and play.
   useEffect(() => {
     function onGlobal(ev: Event) {
       const detail = (ev as CustomEvent<{ combo: string }>).detail;
-      const hit = keybindByCombo.get(normalizeCombo(detail.combo));
+      if (!detail?.combo) return;
+      const { mods, keys } = parseKeyCombo(detail.combo);
+      const hit = keybindByCombo.get(canonicalKeyCombo(mods, keys));
       if (hit) playEntry(hit.entryId, hit.soundId);
     }
     window.addEventListener("soundboard:globalKey", onGlobal as EventListener);
@@ -114,6 +173,50 @@ export function Dashboard({
       api.registerKeybinds([...keybindByCombo.keys()]);
     }
   }, [keybindByCombo]);
+
+  // --- Controller (Valve Index) binds: chords, independent of keybinds ---
+  useEffect(() => {
+    setHasDesktop(!!(window as unknown as { soundboard?: unknown }).soundboard);
+  }, []);
+
+  const vrBinds = useMemo(() => {
+    return entries.flatMap((e) => {
+      if (!e.entry.controllerBind) return [];
+      const tokens = parseVrChord(e.entry.controllerBind);
+      if (tokens.length === 0) return [];
+      return [{ tokens: new Set(tokens), entryId: e.entry.id, soundId: e.sound.id }];
+    });
+  }, [entries]);
+
+  // Track held controller inputs (the bridge sends press + release); fire on the
+  // input that completes a bound chord (largest wins). Skip while capturing.
+  const heldVrRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    function onVrInput(ev: Event) {
+      const detail = (ev as CustomEvent<{ token: string; pressed: boolean }>).detail;
+      if (!detail?.token) return;
+      if (!detail.pressed) {
+        heldVrRef.current.delete(detail.token);
+        return;
+      }
+      heldVrRef.current.add(detail.token);
+      if (capturingVrFor) return;
+      const best = pickLargest(heldVrRef.current, detail.token, vrBinds);
+      if (best) playEntry(best.entryId, best.soundId);
+    }
+    window.addEventListener("soundboard:vrInput", onVrInput as EventListener);
+    return () => window.removeEventListener("soundboard:vrInput", onVrInput as EventListener);
+  }, [vrBinds, capturingVrFor, playEntry]);
+
+  // SteamVR connection status from the native bridge.
+  useEffect(() => {
+    function onVrStatus(ev: Event) {
+      const detail = (ev as CustomEvent<{ steamvr: boolean }>).detail;
+      setVrConnected(!!detail?.steamvr);
+    }
+    window.addEventListener("soundboard:vrStatus", onVrStatus as EventListener);
+    return () => window.removeEventListener("soundboard:vrStatus", onVrStatus as EventListener);
+  }, []);
 
   // --- Upload ---
   const fileRef = useRef<HTMLInputElement>(null);
@@ -148,6 +251,15 @@ export function Dashboard({
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ keybind: combo }),
+    });
+    refresh();
+  }
+
+  async function setControllerBind(entryId: string, token: string | null) {
+    await fetch(`/api/board/${entryId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ controllerBind: token }),
     });
     refresh();
   }
@@ -214,7 +326,18 @@ export function Dashboard({
       </section>
 
       <section>
-        <h2 className="section-title mb-4">Your board</h2>
+        <div className="flex items-center gap-3 mb-4">
+          <h2 className="section-title">Your board</h2>
+          {hasDesktop && (
+            <span
+              className={`chip ${vrConnected ? "text-emerald-300" : "text-muted"}`}
+              title="Valve Index controller status"
+            >
+              <Gamepad2 size={12} className="mr-1" />
+              {vrConnected ? "SteamVR connected" : "SteamVR not detected"}
+            </span>
+          )}
+        </div>
         {entries.length === 0 ? (
           <p className="text-muted">No sounds yet. Upload one above or browse the public list.</p>
         ) : (
@@ -237,6 +360,16 @@ export function Dashboard({
                   setKeybind(e.entry.id, combo);
                 }}
                 onClearKey={() => setKeybind(e.entry.id, null)}
+                hasDesktop={hasDesktop}
+                vrConnected={vrConnected}
+                controllerCapturing={capturingVrFor === e.entry.id}
+                onControllerCaptureStart={() => setCapturingVrFor(e.entry.id)}
+                onControllerCaptureCancel={() => setCapturingVrFor(null)}
+                onControllerCaptured={(token) => {
+                  setCapturingVrFor(null);
+                  setControllerBind(e.entry.id, token);
+                }}
+                onClearController={() => setControllerBind(e.entry.id, null)}
                 onRemove={() => removeEntry(e.entry.id)}
                 onDeleteSound={() => deleteSound(e.sound.id)}
                 onTogglePublic={(next) => togglePublic(e.sound.id, next)}
@@ -260,6 +393,13 @@ function SoundCard(props: {
   onCaptureCancel: () => void;
   onCaptured: (combo: string) => void;
   onClearKey: () => void;
+  hasDesktop: boolean;
+  vrConnected: boolean;
+  controllerCapturing: boolean;
+  onControllerCaptureStart: () => void;
+  onControllerCaptureCancel: () => void;
+  onControllerCaptured: (token: string) => void;
+  onClearController: () => void;
   onRemove: () => void;
   onDeleteSound: () => void;
   onTogglePublic: (next: boolean) => void;
@@ -269,19 +409,40 @@ function SoundCard(props: {
   const { entry, capturing } = props;
   const { sound, ownerName } = entry;
 
-  // Capture next keypress
+  // Capture a keyboard chord: hold the keys together, release to confirm.
   useEffect(() => {
     if (!capturing) return;
-    function onKey(ev: KeyboardEvent) {
+    const held = new Set<string>();
+    let peakKeys: string[] = [];
+    let peakMods: Mods = { ctrl: false, alt: false, shift: false, meta: false };
+    let peakSize = 0;
+    const sizeOf = (m: Mods, keys: number) =>
+      keys + (m.ctrl ? 1 : 0) + (m.alt ? 1 : 0) + (m.shift ? 1 : 0) + (m.meta ? 1 : 0);
+    function onKeyDown(ev: KeyboardEvent) {
       ev.preventDefault();
       if (ev.key === "Escape") {
         props.onCaptureCancel();
         return;
       }
-      // Ignore modifier-only presses
-      if (["Control", "Shift", "Alt", "Meta"].includes(ev.key)) return;
-      const combo = comboFromEvent(ev);
-      const risk = comboRisk(combo);
+      const token = keyTokenFromEvent(ev);
+      if (!token || isModToken(token)) return; // modifiers tracked via flags
+      if (!ev.repeat) held.add(token);
+      const mods = modsFromEvent(ev);
+      const s = sizeOf(mods, held.size);
+      if (s > peakSize) {
+        peakSize = s;
+        peakKeys = [...held];
+        peakMods = mods;
+      }
+    }
+    function onKeyUp(ev: KeyboardEvent) {
+      const token = keyTokenFromEvent(ev);
+      if (token && !isModToken(token)) held.delete(token);
+      if (held.size > 0 || peakKeys.length === 0) return; // wait for full release
+      const combo = canonicalKeyCombo(peakMods, peakKeys);
+      const single =
+        peakKeys.length === 1 && !peakMods.ctrl && !peakMods.alt && !peakMods.shift && !peakMods.meta;
+      const risk = single ? comboRisk(combo) : null;
       if (risk) {
         const ok = window.confirm(
           `"${combo}" ${risk}\n\n` +
@@ -295,9 +456,43 @@ function SoundCard(props: {
       }
       props.onCaptured(combo);
     }
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
   }, [capturing, props]);
+
+  // Capture a controller chord: hold the inputs together, release to confirm.
+  const controllerCapturing = props.controllerCapturing;
+  useEffect(() => {
+    if (!controllerCapturing) return;
+    const held = new Set<string>();
+    let peak: string[] = [];
+    function onVrInput(ev: Event) {
+      const detail = (ev as CustomEvent<{ token: string; pressed: boolean }>).detail;
+      if (!detail?.token) return;
+      if (detail.pressed) {
+        held.add(detail.token);
+        if (held.size > peak.length) peak = [...held];
+      } else {
+        held.delete(detail.token);
+        if (held.size === 0 && peak.length > 0) {
+          props.onControllerCaptured(canonicalVrChord(peak));
+        }
+      }
+    }
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") props.onControllerCaptureCancel();
+    }
+    window.addEventListener("soundboard:vrInput", onVrInput as EventListener);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("soundboard:vrInput", onVrInput as EventListener);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [controllerCapturing, props]);
 
   return (
     <div className="card flex flex-col gap-2">
@@ -326,13 +521,44 @@ function SoundCard(props: {
         <button
           className="btn-ghost flex-1 text-xs"
           onClick={capturing ? props.onCaptureCancel : props.onCaptureStart}
-          title="Click then press a key combination"
+          title="Click, then hold one or more keys together and release"
         >
           <Keyboard size={14} className="mr-1" />
-          {capturing ? "Press keys…" : entry.entry.keybind || "Set keybind"}
+          <span className="truncate">
+            {capturing ? "Hold keys…" : entry.entry.keybind || "Set keybind"}
+          </span>
         </button>
         {entry.entry.keybind && !capturing && (
           <button className="btn-ghost text-xs" onClick={props.onClearKey} title="Clear">×</button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 mt-1">
+        <button
+          className="btn-ghost flex-1 text-xs"
+          disabled={!props.hasDesktop}
+          onClick={props.controllerCapturing ? props.onControllerCaptureCancel : props.onControllerCaptureStart}
+          title={
+            !props.hasDesktop
+              ? "Controller binds need the desktop app + SteamVR"
+              : !props.vrConnected
+              ? "SteamVR not detected — start SteamVR to use controller binds"
+              : "Click, then hold one or more Index inputs together and release"
+          }
+        >
+          <Gamepad2 size={14} className="mr-1 shrink-0" />
+          <span className="truncate">
+            {props.controllerCapturing
+              ? "Hold inputs…"
+              : entry.entry.controllerBind
+              ? formatVrChord(entry.entry.controllerBind)
+              : props.hasDesktop
+              ? "Set controller"
+              : "Desktop app required"}
+          </span>
+        </button>
+        {entry.entry.controllerBind && !props.controllerCapturing && (
+          <button className="btn-ghost text-xs" onClick={props.onClearController} title="Clear">×</button>
         )}
       </div>
 
@@ -748,25 +974,28 @@ function DeviceLineList({
 
 // --- Key combo helpers ---
 
-function comboFromEvent(ev: KeyboardEvent): string {
-  const parts: string[] = [];
-  if (ev.ctrlKey) parts.push("Ctrl");
-  if (ev.altKey) parts.push("Alt");
-  if (ev.shiftKey) parts.push("Shift");
-  if (ev.metaKey) parts.push("Meta");
-  let key = ev.key;
-  if (key === " ") key = "Space";
-  if (key.length === 1) key = key.toUpperCase();
-  parts.push(key);
-  return parts.join("+");
+// "VR:RightHand:A" -> "R A". Used per-token inside a chord.
+function formatVrToken(token: string): string {
+  const m = /^VR:(LeftHand|RightHand):(.+)$/.exec(token);
+  if (!m) return token;
+  const hand = m[1] === "LeftHand" ? "L" : "R";
+  const labels: Record<string, string> = {
+    A: "A",
+    B: "B",
+    Trigger: "Trigger",
+    Grip: "Grip",
+    ThumbstickClick: "Stick",
+    TriggerPull: "Trigger (pull)",
+    ATouch: "A (touch)",
+    TrackpadTouch: "Trackpad (touch)",
+  };
+  return `${hand} ${labels[m[2]] ?? m[2]}`;
 }
 
-function normalizeCombo(s: string): string {
-  return s
-    .split("+")
-    .map((p) => p.trim())
-    .map((p) => (p.length === 1 ? p.toUpperCase() : p))
-    .join("+");
+// "VR:LeftHand:TrackpadTouch+VR:RightHand:A" -> "Index L Trackpad (touch) + R A"
+function formatVrChord(chord: string): string {
+  const parts = chord.split("+").map((t) => formatVrToken(t.trim())).filter(Boolean);
+  return parts.length ? `Index ${parts.join(" + ")}` : chord;
 }
 
 // Returns a short human description of *why* a combo is risky, or null if it's

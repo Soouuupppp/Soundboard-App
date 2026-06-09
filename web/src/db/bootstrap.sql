@@ -69,7 +69,12 @@ CREATE TABLE IF NOT EXISTS "boardEntry" (
   "soundId" UUID NOT NULL REFERENCES "sound"("id") ON DELETE CASCADE,
   "label" TEXT,
   "keybind" TEXT,
+  "controllerBind" TEXT,
   "position" INTEGER NOT NULL DEFAULT 0,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS "boardEntry_user_idx" ON "boardEntry" ("userId");
+-- Added after initial release: Valve Index controller bind, independent of
+-- keybind. ALTER is for DBs created before this column existed (CREATE TABLE
+-- IF NOT EXISTS above won't add it to an existing table).
+ALTER TABLE "boardEntry" ADD COLUMN IF NOT EXISTS "controllerBind" TEXT;

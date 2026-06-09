@@ -9,6 +9,7 @@ const {
 const path = require("path");
 const fs = require("fs");
 const hotkeys = require("./hotkeys");
+const vrControllers = require("./vr-controllers");
 const { autoUpdater } = require("electron-updater");
 
 // --- Settings persistence ---------------------------------------------------
@@ -234,6 +235,21 @@ function appIconPath() {
   return path.join(__dirname, "assets", file);
 }
 
+// Resolve the native VR bridge exe + its action manifest. Packaged builds ship
+// them under resources/vr (electron-builder extraResources); dev runs use the
+// CMake build output. The generated .vrmanifest is written into userData, which
+// is writable even when the install dir under Program Files is not.
+function vrPaths() {
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, "vr")
+    : path.join(__dirname, "native", "vr-bridge", "build", "Release");
+  return {
+    exePath: path.join(base, "vr-bridge.exe"),
+    actionsPath: path.join(base, "soundboard_actions.json"),
+    dataDir: app.getPath("userData"),
+  };
+}
+
 // Hosts allowed to navigate inside the window even when they aren't the
 // soundboard origin — needed so OAuth (Discord) completes in-app and the
 // session cookie lands on the right origin.
@@ -410,6 +426,26 @@ app.whenReady().then(async () => {
     },
   });
 
+  // Start the native VR controller bridge (Valve Index, via SteamVR). It runs
+  // as a separate process; button presses are forwarded on their own channel
+  // so they stay independent of the keyboard path.
+  const vp = vrPaths();
+  vrControllers.start({
+    exePath: vp.exePath,
+    actionsPath: vp.actionsPath,
+    dataDir: vp.dataDir,
+    onInput: ({ token, pressed }) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("soundboard:vrInput", { token, pressed });
+      }
+    },
+    onStatus: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("soundboard:vrStatus", status);
+      }
+    },
+  });
+
   ipcMain.handle("soundboard:registerKeybinds", (_evt, combos) => {
     if (!Array.isArray(combos)) return { ok: false, error: "not an array" };
     // Cap how many combos a remote page can ever register at once.
@@ -431,7 +467,10 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("will-quit", () => hotkeys.stop());
+app.on("will-quit", () => {
+  hotkeys.stop();
+  vrControllers.stop();
+});
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
