@@ -18,6 +18,9 @@ RUN pnpm build
 FROM node:22-alpine AS runner
 WORKDIR /app
 RUN corepack enable
+# yt-dlp + ffmpeg power the YouTube→soundbite import (web/src/lib/yt-convert.ts).
+# ffmpeg is required for audio extraction/trimming; both are in Alpine community.
+RUN apk add --no-cache yt-dlp ffmpeg
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 

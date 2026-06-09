@@ -4,8 +4,15 @@
 //
 // It owns a single AudioContext and routes a set of SOURCES to two destinations:
 //
-//   sources ─┬─► cableBus ─► ctx.destination ─►(setSinkId) virtual cable  (the game's mic)
+//   sources ─┬─► cableBus ─┬─► limiter ─► ctx.destination ─►(setSinkId) virtual cable (game's mic)
+//            │             └─► analyser  (peak meter tap, pre-limiter)
 //            └─► (per-source monitor send) ─► monitorBus ─► <audio>.setSinkId ─► your ears
+//
+// The limiter sits on the cable path because sources sum at unity: a hot mic +
+// a clip can push the sum past 0 dBFS and hard-clip the virtual mic (which the
+// listener hears as distortion even though the local monitor — a separate path —
+// sounds fine). The analyser taps the pre-limiter sum so the UI meter can warn
+// when you're driving it into clipping.
 //
 // Sources that can feed the virtual mic:
 //   • INPUT lines  — any capture device Windows reports, captured with
@@ -62,8 +69,14 @@ function clamp01(v: number) {
 
 export class MicMixer {
   private ctx: SinkCapableContext | null = null;
-  // Everything destined for the virtual cable sums here, then to ctx.destination.
+  // Everything destined for the virtual cable sums here, then through the limiter
+  // to ctx.destination.
   private cableBus: GainNode | null = null;
+  // Brickwall-ish limiter on the cable so the summed sources can't clip the mic.
+  private cableLimiter: DynamicsCompressorNode | null = null;
+  // Taps the pre-limiter cable sum to drive the UI peak meter.
+  private cableAnalyser: AnalyserNode | null = null;
+  private peakBuf: Float32Array<ArrayBuffer> | null = null;
   // Everything you monitor locally sums here, then out to the monitor device.
   private monitorBus: GainNode | null = null;
   private monitorDest: MediaStreamAudioDestinationNode | null = null;
@@ -84,12 +97,43 @@ export class MicMixer {
     return this.ctx !== null;
   }
 
+  // Current peak amplitude of the pre-limiter cable sum, as a linear 0..1+
+  // value (can exceed 1.0 when the sources are driving the limiter into
+  // clipping). Cheap enough to poll each animation frame for a meter.
+  getCablePeak(): number {
+    const a = this.cableAnalyser;
+    const buf = this.peakBuf;
+    if (!a || !buf) return 0;
+    a.getFloatTimeDomainData(buf);
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = Math.abs(buf[i]);
+      if (v > peak) peak = v;
+    }
+    return peak;
+  }
+
   async start(cableDeviceId: string) {
     if (this.ctx) return;
     mlog("start: creating AudioContext, cableDeviceId =", cableDeviceId || "(default)");
     const ctx = new AudioContext() as SinkCapableContext;
     const cableBus = ctx.createGain();
-    cableBus.connect(ctx.destination);
+    // Limiter between the summed sources and the cable: catches peaks so a hot
+    // sum doesn't hard-clip the virtual mic. Tuned as a fast brickwall limiter
+    // (near-unity below ~-1 dBFS, hard knee, high ratio).
+    const cableLimiter = ctx.createDynamicsCompressor();
+    cableLimiter.threshold.value = -1;
+    cableLimiter.knee.value = 0;
+    cableLimiter.ratio.value = 20;
+    cableLimiter.attack.value = 0.003;
+    cableLimiter.release.value = 0.25;
+    cableBus.connect(cableLimiter);
+    cableLimiter.connect(ctx.destination);
+    // Pre-limiter tap for the meter (so it shows the true incoming peak, not the
+    // already-limited output). Not connected onward — it only analyses.
+    const cableAnalyser = ctx.createAnalyser();
+    cableAnalyser.fftSize = 1024;
+    cableBus.connect(cableAnalyser);
 
     const monitorBus = ctx.createGain();
     const monitorDest = ctx.createMediaStreamDestination();
@@ -105,6 +149,9 @@ export class MicMixer {
 
     this.ctx = ctx;
     this.cableBus = cableBus;
+    this.cableLimiter = cableLimiter;
+    this.cableAnalyser = cableAnalyser;
+    this.peakBuf = new Float32Array(new ArrayBuffer(cableAnalyser.fftSize * 4));
     this.monitorBus = monitorBus;
     this.monitorDest = monitorDest;
     this.monitorEl = monitorEl;
@@ -319,12 +366,17 @@ export class MicMixer {
     this.soundboardBus?.disconnect();
     this.monitorBus?.disconnect();
     this.monitorDest?.disconnect();
+    this.cableAnalyser?.disconnect();
+    this.cableLimiter?.disconnect();
     this.cableBus?.disconnect();
     this.soundboardMonitorSend = null;
     this.soundboardBus = null;
     this.monitorBus = null;
     this.monitorDest = null;
     this.monitorEl = null;
+    this.cableAnalyser = null;
+    this.cableLimiter = null;
+    this.peakBuf = null;
     this.cableBus = null;
     if (this.ctx) {
       try {

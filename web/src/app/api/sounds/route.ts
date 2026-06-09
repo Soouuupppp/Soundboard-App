@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
-import { promises as fs } from "node:fs";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { auth, isAdminSession } from "@/lib/auth";
 import { db } from "@/db";
-import { sounds, boardEntries } from "@/db/schema";
-import { ensureUserDir } from "@/lib/storage";
+import { sounds } from "@/db/schema";
 import { canUserUpload, getUserLimits, getUsedBytes } from "@/lib/quota";
 import { clientKey, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { soundName, originalFilename } from "@/lib/validation";
+import { looksLikeMp3, persistSound } from "@/lib/sounds";
 
 export const runtime = "nodejs";
 
@@ -113,46 +110,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid filename" }, { status: 400 });
   }
 
-  // Write file.
-  const dir = await ensureUserDir(session.user.discordId);
-  const id = randomUUID();
-  const storageRel = `${session.user.discordId}/${id}.mp3`;
-  const abs = join(dir, `${id}.mp3`);
-  await fs.writeFile(abs, buf);
-
   const isPublic = String(form.get("isPublic") ?? "false") === "true";
 
-  const [row] = await db
-    .insert(sounds)
-    .values({
-      id,
-      ownerId: session.user.id,
-      name: nameParsed.data,
-      originalFilename: origParsed.data,
-      storagePath: storageRel,
-      sizeBytes: file.size,
-      isPublic,
-    })
-    .returning();
-
-  // Auto-add to the uploader's own board.
-  await db.insert(boardEntries).values({
-    userId: session.user.id,
-    soundId: row.id,
+  const row = await persistSound({
+    ownerId: session.user.id,
+    discordId: session.user.discordId,
+    name: nameParsed.data,
+    originalFilename: origParsed.data,
+    buf,
+    isPublic,
   });
 
   return NextResponse.json({ sound: row });
-}
-
-function looksLikeMp3(buf: Buffer): boolean {
-  if (buf.length < 3) return false;
-  // ID3v2 tag header.
-  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) return true;
-  // MPEG audio sync: 11 high bits set → first byte 0xFF, second byte top 3 bits set.
-  // Scan past up to 1KiB of leading zero padding some tools insert.
-  for (let i = 0; i < Math.min(buf.length - 1, 1024); i++) {
-    if (buf[i] === 0x00) continue;
-    return buf[i] === 0xff && (buf[i + 1] & 0xe0) === 0xe0;
-  }
-  return false;
 }
