@@ -12,9 +12,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Rebuild and restart containers
-        # docker-rebuild.mjs keeps a rolling soundboard-web:latest/:prev pair
-        # (prev = one build back, for `pnpm rollback`) and prunes older layers,
-        # so rebuilds replace images instead of piling up dangling <none> ones.
+        # Rolling soundboard-web:latest/:prev tags so rebuilds replace images
+        # instead of leaving dangling <none> layers; :prev is one build back,
+        # kept for rollback. This mirrors scripts/docker-rebuild.mjs (used by
+        # local `pnpm up`) — inlined as bash because the runner shell has no node.
+        env:
+          ENV_FILE: /home/soundboard/.env
         run: |
-          docker compose --env-file /home/soundboard/.env pull || true
-          node scripts/docker-rebuild.mjs --env-file /home/soundboard/.env --detach
+          set -e
+          # Only the base image is pulled; web is built locally, not in a registry.
+          docker compose --env-file "$ENV_FILE" pull db || true
+          # Keep the current image as :prev for rollback (no-op on first deploy).
+          docker image tag soundboard-web:latest soundboard-web:prev 2>/dev/null || true
+          # Build the new :latest, drop the displaced layer, then restart on it.
+          docker compose --env-file "$ENV_FILE" build web
+          docker image prune -f
+          docker compose --env-file "$ENV_FILE" up -d
