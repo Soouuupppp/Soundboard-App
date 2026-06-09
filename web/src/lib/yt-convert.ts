@@ -75,6 +75,9 @@ async function pump() {
 }
 
 async function fail(jobId: string, message: string) {
+  // Central log point for every failure reason (early returns + the catch), so
+  // nothing fails silently. The catch separately logs the raw cause/stderr.
+  console.warn(`[yt-convert] job ${jobId} failed: ${message}`);
   await db
     .update(conversionJobs)
     .set({ status: "error", error: message, updatedAt: new Date() })
@@ -111,6 +114,7 @@ async function runJob(jobId: string) {
   const [job] = await db.select().from(conversionJobs).where(eq(conversionJobs.id, jobId)).limit(1);
   if (!job || job.status !== "pending") return;
 
+  console.log(`[yt-convert] job ${jobId} starting: ${job.url} (user ${job.userId})`);
   await db
     .update(conversionJobs)
     .set({ status: "running", updatedAt: new Date() })
@@ -198,10 +202,13 @@ async function runJob(jobId: string) {
       .update(conversionJobs)
       .set({ status: "done", soundId: sound.id, error: null, updatedAt: new Date() })
       .where(eq(conversionJobs.id, jobId));
+    console.log(`[yt-convert] job ${jobId} done: sound ${sound.id} (${buf.length} bytes)`);
   } catch (e) {
     // Log the raw cause (incl. yt-dlp stderr) to the server console / docker
-    // logs; the client only ever sees the short safeError() summary.
-    console.error(`[yt-convert] job ${jobId} (${job.url}) failed:`, e);
+    // logs, with proxy creds redacted; the client only ever sees the short
+    // safeError() summary.
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error(`[yt-convert] job ${jobId} (${job.url}) failed:`, redactSecrets(detail));
     await fail(jobId, safeError(e));
   } finally {
     if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -227,10 +234,45 @@ function runYtDlp(args: string[]): Promise<void> {
   });
 }
 
-// Map raw spawn/yt-dlp failures to short, non-leaky messages for the client.
+// Strip basic-auth creds (e.g. proxy user:pass@host) from text before logging,
+// since the failed command — which includes --proxy — gets logged verbatim.
+function redactSecrets(s: string): string {
+  return s.replace(/\/\/[^/@\s]+@/g, "//***@");
+}
+
+// Map raw spawn/yt-dlp failures to short, user-facing messages for the client.
+// yt-dlp's own stderr is appended to the error message (see runYtDlp), so match
+// the common, actionable cases; the client never sees the raw text.
 function safeError(e: unknown): string {
-  const err = e as NodeJS.ErrnoException & { killed?: boolean; signal?: string };
+  const err = e as NodeJS.ErrnoException & { killed?: boolean; signal?: string; message?: string };
   if (err?.code === "ENOENT") return "Conversion tool isn't installed on the server";
-  if (err?.killed || err?.signal === "SIGTERM") return "Conversion timed out";
-  return "Conversion failed";
+  if (err?.killed || err?.signal === "SIGTERM") {
+    return "Conversion timed out — the video may be too long or the source too slow";
+  }
+
+  const msg = (err?.message || "").toLowerCase();
+  if (msg.includes("drm")) return "This video is DRM-protected and can't be converted";
+  if (msg.includes("not a bot") || msg.includes("sign in to confirm")) {
+    return "YouTube is temporarily blocking conversions on the server — please try again later";
+  }
+  if (msg.includes("private video")) return "This video is private";
+  if (msg.includes("members-only") || msg.includes("join this channel")) {
+    return "This video is for channel members only";
+  }
+  if (msg.includes("age") && (msg.includes("restrict") || msg.includes("confirm your age"))) {
+    return "This video is age-restricted and can't be converted";
+  }
+  if (msg.includes("not available in your country") || msg.includes("blocked it in your country")) {
+    return "This video isn't available in the server's region";
+  }
+  if (msg.includes("video unavailable") || msg.includes("no longer available") || msg.includes("has been removed")) {
+    return "This video is unavailable";
+  }
+  if (msg.includes("is live") || msg.includes("live event") || msg.includes("premieres in")) {
+    return "Live streams can't be converted";
+  }
+  if (msg.includes("requested format is not available") || msg.includes("requested format")) {
+    return "Couldn't find a downloadable audio track for this video";
+  }
+  return "Conversion failed — the video may be unavailable or restricted";
 }
