@@ -29,6 +29,13 @@ const YTDLP = process.env.YTDLP_PATH || "yt-dlp";
 // the container at this path — see docker-compose.yml. Absent/empty → no
 // --cookies, which is fine for IPs YouTube doesn't challenge.
 const COOKIES_PATH = process.env.YTDLP_COOKIES?.trim() || "/secrets/yt-cookies.txt";
+// Optional outbound proxy (e.g. a residential/SOCKS5 endpoint). The reliable fix
+// when YouTube blocks the server's datacenter IP with "confirm you're not a bot"
+// even with valid cookies. Unset = direct connection.
+const PROXY = process.env.YTDLP_PROXY?.trim() || null;
+// Optional extra yt-dlp --extractor-args, e.g. "youtube:player_client=tv" to try
+// a client that may dodge the bot check without a proxy. Unset = none.
+const EXTRACTOR_ARGS = process.env.YTDLP_EXTRACTOR_ARGS?.trim() || null;
 // Hard wall-clock ceiling per job so a stuck download can't hold a slot forever.
 const JOB_TIMEOUT_MS = 180_000;
 
@@ -135,6 +142,8 @@ async function runJob(jobId: string) {
     await runYtDlp([
       "--ignore-config",
       ...(await cookieArgs(workDir)),
+      ...(PROXY ? ["--proxy", PROXY] : []),
+      ...(EXTRACTOR_ARGS ? ["--extractor-args", EXTRACTOR_ARGS] : []),
       "--no-playlist",
       "--no-progress",
       "--no-warnings",
