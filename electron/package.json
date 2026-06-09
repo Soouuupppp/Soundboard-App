@@ -2,7 +2,7 @@
   "name": "soundboard-electron",
   "productName": "Soundboard",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Desktop wrapper for the Soundboard web app with OS-level global hotkeys.",
   "author": {
     "name": "Soouuupppp",
@@ -21,10 +21,11 @@
   "scripts": {
     "start": "electron .",
     "bake": "node scripts/bake-url.js",
-    "dist": "pnpm bake && electron-builder",
-    "dist:win": "pnpm bake && electron-builder --win",
-    "dist:portable": "pnpm bake && electron-builder --win portable",
-    "release:win": "pnpm bake && electron-builder --win --publish always"
+    "build:native": "node scripts/build-native.js",
+    "dist": "pnpm bake && pnpm build:native && electron-builder",
+    "dist:win": "pnpm bake && pnpm build:native && electron-builder --win",
+    "dist:portable": "pnpm bake && pnpm build:native && electron-builder --win portable",
+    "release:win": "pnpm bake && pnpm build:native && electron-builder --win --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
@@ -42,11 +43,15 @@
     "files": [
       "main.js",
       "hotkeys.js",
+      "vr-controllers.js",
       "preload.js",
       "prompt-preload.js",
       "package.json",
       "baked.json",
       "assets/**"
+    ],
+    "extraResources": [
+      { "from": "resources/vr", "to": "vr", "filter": ["**/*"] }
     ],
     "directories": {
       "buildResources": "assets",

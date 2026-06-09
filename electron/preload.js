@@ -11,3 +11,13 @@ contextBridge.exposeInMainWorld("soundboard", {
 ipcRenderer.on("soundboard:globalKey", (_evt, detail) => {
   window.dispatchEvent(new CustomEvent("soundboard:globalKey", { detail }));
 });
+
+// VR controller (Valve Index) events from the native bridge:
+//   soundboard:vrInput  -> { token }   a button was pressed
+//   soundboard:vrStatus -> { steamvr } SteamVR connection state changed
+ipcRenderer.on("soundboard:vrInput", (_evt, detail) => {
+  window.dispatchEvent(new CustomEvent("soundboard:vrInput", { detail }));
+});
+ipcRenderer.on("soundboard:vrStatus", (_evt, detail) => {
+  window.dispatchEvent(new CustomEvent("soundboard:vrStatus", { detail }));
+});

@@ -92,6 +92,38 @@ export const sounds = pgTable("sound", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+// Global, admin-editable app settings. Single row keyed by a fixed id
+// ("singleton"); read/upserted lazily via lib/app-settings.ts. Currently holds
+// the YouTube-import knobs (master toggle, limits, host allowlist).
+export const appSettings = pgTable("appSettings", {
+  id: text("id").primaryKey().default("singleton"),
+  ytEnabled: boolean("ytEnabled").notNull().default(false),
+  ytMaxDurationSec: integer("ytMaxDurationSec").notNull().default(300),
+  ytMaxFileSize: bigint("ytMaxFileSize", { mode: "number" }).notNull().default(20 * 1024 * 1024),
+  ytConcurrency: integer("ytConcurrency").notNull().default(1),
+  // Comma-separated bare hostnames an imported URL must match exactly.
+  ytAllowedHosts: text("ytAllowedHosts")
+    .notNull()
+    .default("youtube.com,youtu.be,www.youtube.com,m.youtube.com,music.youtube.com"),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+// A YouTube→soundbite conversion request. The client enqueues one and polls it
+// until status is "done" (soundId set) or "error". Conversion runs in-process
+// (see lib/yt-convert.ts); stale running/pending rows are failed on restart.
+export const conversionJobs = pgTable("conversionJob", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  status: text("status").notNull().default("pending"), // pending | running | done | error
+  error: text("error"),
+  soundId: uuid("soundId").references(() => sounds.id, { onDelete: "set null" }),
+  requestedName: text("requestedName"),
+  isPublic: boolean("isPublic").notNull().default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
 // An entry on a user's personal board. Always references a sound (own or public).
 export const boardEntries = pgTable("boardEntry", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -100,6 +132,9 @@ export const boardEntries = pgTable("boardEntry", {
   // Optional override label and keybind for this entry.
   label: text("label"),
   keybind: text("keybind"), // e.g. "Ctrl+Shift+1" or "F5"
+  // Optional Valve Index controller bind, e.g. "VR:RightHand:A". Independent of
+  // keybind so an entry can be triggered by keyboard and controller at once.
+  controllerBind: text("controllerBind"),
   position: integer("position").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

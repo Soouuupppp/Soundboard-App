@@ -76,7 +76,46 @@ CREATE TABLE IF NOT EXISTS "boardEntry" (
   "soundId" UUID NOT NULL REFERENCES "sound"("id") ON DELETE CASCADE,
   "label" TEXT,
   "keybind" TEXT,
+  "controllerBind" TEXT,
   "position" INTEGER NOT NULL DEFAULT 0,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS "boardEntry_user_idx" ON "boardEntry" ("userId");
+-- Added after initial release: Valve Index controller bind, independent of
+-- keybind. ALTER is for DBs created before this column existed (CREATE TABLE
+-- IF NOT EXISTS above won't add it to an existing table).
+ALTER TABLE "boardEntry" ADD COLUMN IF NOT EXISTS "controllerBind" TEXT;
+
+-- Global app settings: single row keyed by id='singleton'. Holds the
+-- admin-editable YouTube-import knobs. INSERT seeds defaults; ON CONFLICT keeps
+-- it idempotent and never clobbers an admin's saved values.
+CREATE TABLE IF NOT EXISTS "appSettings" (
+  "id" TEXT PRIMARY KEY DEFAULT 'singleton',
+  "ytEnabled" BOOLEAN NOT NULL DEFAULT FALSE,
+  "ytMaxDurationSec" INTEGER NOT NULL DEFAULT 300,
+  "ytMaxFileSize" BIGINT NOT NULL DEFAULT 20971520,
+  "ytConcurrency" INTEGER NOT NULL DEFAULT 1,
+  "ytAllowedHosts" TEXT NOT NULL DEFAULT 'youtube.com,youtu.be,www.youtube.com,m.youtube.com,music.youtube.com',
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
+);
+INSERT INTO "appSettings" ("id") VALUES ('singleton') ON CONFLICT ("id") DO NOTHING;
+
+-- YouTube→soundbite conversion jobs. Polled by the client until done/error.
+CREATE TABLE IF NOT EXISTS "conversionJob" (
+  "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+  "url" TEXT NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'pending',
+  "error" TEXT,
+  "soundId" UUID REFERENCES "sound"("id") ON DELETE SET NULL,
+  "requestedName" TEXT,
+  "isPublic" BOOLEAN NOT NULL DEFAULT FALSE,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS "conversionJob_user_idx" ON "conversionJob" ("userId");
+
+-- Any job left mid-flight by a previous process can never resume (the in-process
+-- queue is gone), so fail them on boot. Safe & idempotent.
+UPDATE "conversionJob" SET "status" = 'error', "error" = 'interrupted by server restart', "updatedAt" = NOW()
+  WHERE "status" IN ('pending', 'running');

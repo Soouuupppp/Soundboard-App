@@ -1,0 +1,51 @@
+{
+  "controller_type": "knuckles",
+  "name": "Soundboard Default",
+  "description": "Default Soundboard bindings for Valve Index controllers",
+  "category": "steamvr_input",
+  "bindings": {
+    "/actions/soundboard": {
+      "sources": [
+        { "path": "/user/hand/left/input/a", "mode": "button",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/left_a" },
+            "touch": { "output": "/actions/soundboard/in/left_a_touch" }
+          } },
+        { "path": "/user/hand/left/input/trackpad", "mode": "trackpad",
+          "inputs": { "touch": { "output": "/actions/soundboard/in/left_trackpad_touch" } } },
+        { "path": "/user/hand/left/input/b", "mode": "button",
+          "inputs": { "click": { "output": "/actions/soundboard/in/left_b" } } },
+        { "path": "/user/hand/left/input/trigger", "mode": "trigger",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/left_trigger" },
+            "pull": { "output": "/actions/soundboard/in/left_trigger_pull" }
+          } },
+        { "path": "/user/hand/left/input/grip", "mode": "force_sensor",
+          "inputs": { "click": { "output": "/actions/soundboard/in/left_grip" } },
+          "parameters": { "click_activate_threshold": "0.3", "click_deactivate_threshold": "0.2" } },
+        { "path": "/user/hand/left/input/thumbstick", "mode": "button",
+          "inputs": { "click": { "output": "/actions/soundboard/in/left_thumbstick" } } },
+
+        { "path": "/user/hand/right/input/a", "mode": "button",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/right_a" },
+            "touch": { "output": "/actions/soundboard/in/right_a_touch" }
+          } },
+        { "path": "/user/hand/right/input/trackpad", "mode": "trackpad",
+          "inputs": { "touch": { "output": "/actions/soundboard/in/right_trackpad_touch" } } },
+        { "path": "/user/hand/right/input/b", "mode": "button",
+          "inputs": { "click": { "output": "/actions/soundboard/in/right_b" } } },
+        { "path": "/user/hand/right/input/trigger", "mode": "trigger",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/right_trigger" },
+            "pull": { "output": "/actions/soundboard/in/right_trigger_pull" }
+          } },
+        { "path": "/user/hand/right/input/grip", "mode": "force_sensor",
+          "inputs": { "click": { "output": "/actions/soundboard/in/right_grip" } },
+          "parameters": { "click_activate_threshold": "0.3", "click_deactivate_threshold": "0.2" } },
+        { "path": "/user/hand/right/input/thumbstick", "mode": "button",
+          "inputs": { "click": { "output": "/actions/soundboard/in/right_thumbstick" } } }
+      ]
+    }
+  }
+}

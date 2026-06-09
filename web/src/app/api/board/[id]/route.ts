@@ -26,6 +26,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   const updates: Record<string, unknown> = {};
   if ("keybind" in parsed.data) updates.keybind = parsed.data.keybind ?? null;
+  if ("controllerBind" in parsed.data) updates.controllerBind = parsed.data.controllerBind ?? null;
   if ("label" in parsed.data) updates.label = parsed.data.label ?? null;
   if (parsed.data.position !== undefined) updates.position = parsed.data.position;
   if (Object.keys(updates).length === 0) return NextResponse.json({ ok: true });
