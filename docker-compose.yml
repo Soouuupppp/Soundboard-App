@@ -51,9 +51,17 @@ services:
       UPLOADS_DIR: ${UPLOADS_DIR}
       DEFAULT_MAX_FILE_SIZE: ${DEFAULT_MAX_FILE_SIZE}
       DEFAULT_MAX_TOTAL_STORAGE: ${DEFAULT_MAX_TOTAL_STORAGE}
+      # Path inside the container where yt-convert looks for YouTube cookies;
+      # matches the mount target below. Used only if the file is non-empty.
+      YTDLP_COOKIES: ${YTDLP_COOKIES:-/secrets/yt-cookies.txt}
     volumes:
       # DATA_PUBLIC_DIR — same idea as DATA_DB_DIR above. Set to
       # /home/soundboard/data_public on prod; defaults to ./data_public locally.
       - ${DATA_PUBLIC_DIR:-./data_public}:/data_public
+      # YouTube cookies (Netscape cookies.txt) to get past "confirm you're not a
+      # bot" on datacenter IPs. Point YTDLP_COOKIES_FILE at your cookies.txt on
+      # the host; defaults to an empty placeholder so the bind is always valid.
+      # yt-convert ignores it unless it's non-empty, so leaving it unset is fine.
+      - ${YTDLP_COOKIES_FILE:-./web/.empty-cookies.txt}:/secrets/yt-cookies.txt:ro
     ports:
       - "5050:5050"
