@@ -80,6 +80,9 @@ export type AudioOutput = {
   monitored: string[];
   setMonitored: (key: string, on: boolean) => void;
   soundboardKey: string;
+  // Current peak level of the cable sum (linear, 0..1+; >1 = driving the limiter
+  // into clipping). Returns 0 when the mixer isn't running.
+  getCablePeak: () => number;
   mixerError: string | null;
   labelsError: string | null;
   supportsContextSink: boolean;
@@ -414,6 +417,8 @@ export function useAudioOutput(): AudioOutput {
     for (const a of all) stopEntry(a);
   }, [stopEntry]);
 
+  const getCablePeak = useCallback(() => mixerRef.current?.getCablePeak() ?? 0, []);
+
   return {
     deviceId,
     masterVolume,
@@ -440,6 +445,7 @@ export function useAudioOutput(): AudioOutput {
     monitored,
     setMonitored,
     soundboardKey: SOUNDBOARD_KEY,
+    getCablePeak,
     mixerError,
     labelsError,
     supportsContextSink,

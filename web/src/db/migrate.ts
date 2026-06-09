@@ -15,7 +15,10 @@ if (!url) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const sql = postgres(url, { max: 1 });
+// Silence Postgres NOTICEs — the bootstrap is intentionally idempotent
+// (CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS), so every re-run would
+// otherwise spam "relation already exists, skipping" on boot.
+const sql = postgres(url, { max: 1, onnotice: () => {} });
 
 async function main() {
   const bootstrapPath = join(__dirname, "bootstrap.sql");

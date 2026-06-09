@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
-import { Shield, Users, Trash2, Plus, Search, AlertCircle, Music, Play, Globe, Lock, ChevronDown, Upload, Ban } from "lucide-react";
+import { Shield, Users, Trash2, Plus, Search, AlertCircle, Music, Play, Globe, Lock, ChevronDown, Upload, Ban, Youtube } from "lucide-react";
 import { formatBytes, parseSize } from "@/lib/utils";
 import { useAudioOutput } from "@/lib/audio-output";
 
@@ -38,22 +38,32 @@ type Sound = {
   ownerDiscordId: string | null;
   boardCount: number;
 };
+type Settings = {
+  ytEnabled: boolean;
+  ytMaxDurationSec: number;
+  ytMaxFileSize: number;
+  ytConcurrency: number;
+  ytAllowedHosts: string;
+};
 
 export function AdminPanel() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [sounds, setSounds] = useState<Sound[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = async () => {
-    const [r, u, s] = await Promise.all([
+    const [r, u, s, cfg] = await Promise.all([
       fetch("/api/admin/roles").then((x) => x.json()),
       fetch("/api/admin/users").then((x) => x.json()),
       fetch("/api/admin/sounds").then((x) => x.json()),
+      fetch("/api/admin/settings").then((x) => x.json()),
     ]);
     setRoles(r.roles ?? []);
     setUsers(u.users ?? []);
     setSounds(s.sounds ?? []);
+    setSettings(cfg.settings ?? null);
     setLoading(false);
   };
 
@@ -99,6 +109,18 @@ export function AdminPanel() {
       </Section>
 
       <Section
+        icon={<Youtube size={16} />}
+        title="YouTube import"
+        subtitle="Let whitelisted users turn YouTube links into clips. Audio is fetched, trimmed, and transcoded server-side."
+      >
+        {settings ? (
+          <YouTubeSettings settings={settings} onChange={refresh} />
+        ) : (
+          <p className="text-sm text-muted">Loading…</p>
+        )}
+      </Section>
+
+      <Section
         icon={<Music size={16} />}
         title="Content"
         subtitle="Every uploaded sound. Preview to review, flip public clips private, or delete violating content."
@@ -106,6 +128,121 @@ export function AdminPanel() {
       >
         <SoundsTable sounds={sounds} onChange={refresh} />
       </Section>
+    </div>
+  );
+}
+
+function YouTubeSettings({ settings, onChange }: { settings: Settings; onChange: () => void }) {
+  const [duration, setDuration] = useState(String(settings.ytMaxDurationSec));
+  const [concurrency, setConcurrency] = useState(String(settings.ytConcurrency));
+  const [hosts, setHosts] = useState(settings.ytAllowedHosts);
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function patch(body: Partial<Settings>) {
+    setErr(null);
+    setSaving(true);
+    const res = await fetch("/api/admin/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setErr(j.error ?? "Couldn't save");
+      return false;
+    }
+    onChange();
+    return true;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="font-medium text-sm">Enable YouTube import</div>
+          <p className="text-xs text-muted mt-0.5">
+            When off, the import card is hidden and the API rejects requests. Note: downloading
+            YouTube audio may conflict with YouTube&apos;s Terms of Service — enable at your own
+            discretion.
+          </p>
+        </div>
+        <Toggle
+          checked={settings.ytEnabled}
+          onChange={(next) => patch({ ytEnabled: next })}
+          label="Toggle YouTube import"
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Max duration (seconds)">
+          <input
+            className="input"
+            value={duration}
+            inputMode="numeric"
+            onChange={(e) => setDuration(e.target.value)}
+            onBlur={() => {
+              const n = Math.round(Number(duration));
+              if (!Number.isFinite(n) || n < 1 || n > 3600) {
+                setErr("Duration must be 1–3600 seconds");
+                setDuration(String(settings.ytMaxDurationSec));
+                return;
+              }
+              if (n !== settings.ytMaxDurationSec) patch({ ytMaxDurationSec: n });
+            }}
+          />
+        </Field>
+        <Field label="Max file size">
+          <SizeInput
+            value={settings.ytMaxFileSize}
+            onCommit={(v) => patch({ ytMaxFileSize: v })}
+          />
+        </Field>
+        <Field label="Concurrent conversions">
+          <input
+            className="input"
+            value={concurrency}
+            inputMode="numeric"
+            onChange={(e) => setConcurrency(e.target.value)}
+            onBlur={() => {
+              const n = Math.round(Number(concurrency));
+              if (!Number.isFinite(n) || n < 1 || n > 4) {
+                setErr("Concurrency must be 1–4");
+                setConcurrency(String(settings.ytConcurrency));
+                return;
+              }
+              if (n !== settings.ytConcurrency) patch({ ytConcurrency: n });
+            }}
+          />
+        </Field>
+      </div>
+
+      <Field label="Allowed hosts (comma-separated)">
+        <input
+          className="input w-full"
+          value={hosts}
+          onChange={(e) => setHosts(e.target.value)}
+          onBlur={() => {
+            if (hosts !== settings.ytAllowedHosts) {
+              patch({ ytAllowedHosts: hosts }).then((ok) => {
+                if (!ok) setHosts(settings.ytAllowedHosts);
+              });
+            }
+          }}
+        />
+      </Field>
+      <p className="text-xs text-muted -mt-3">
+        Bare hostnames only (e.g. <code>youtube.com</code>). Imported links must match one exactly —
+        this is the guard against fetching arbitrary URLs.
+      </p>
+
+      {err && (
+        <p className="text-xs text-red-300 flex items-center gap-1.5">
+          <AlertCircle size={13} /> {err}
+        </p>
+      )}
+      {saving && <p className="text-xs text-muted">Saving…</p>}
     </div>
   );
 }

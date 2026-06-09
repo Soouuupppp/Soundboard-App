@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown } from "lucide-react";
+import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown, Youtube } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useAudioOutput } from "@/lib/audio-output";
 
@@ -25,15 +25,19 @@ export function Dashboard({
   limits,
   canUpload,
   user,
+  yt,
 }: {
   limits: Limits;
   canUpload: boolean;
   user: { name: string; role: string | null };
+  yt: { enabled: boolean; maxDurationSec: number };
 }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [capturingFor, setCapturingFor] = useState<string | null>(null);
+  // Which "add a sound" panel is open below the button group (null = collapsed).
+  const [addTab, setAddTab] = useState<"upload" | "youtube" | null>(null);
 
   const refresh = useCallback(async () => {
     const b = await fetch("/api/board").then((r) => r.json());
@@ -237,51 +241,75 @@ export function Dashboard({
         </section>
       ) : (
       <section className="card">
-        <h2 className="font-semibold mb-1 flex items-center gap-2">
-          <Upload size={16} className="text-muted" /> Upload a sound
-        </h2>
-        <p className="text-sm text-muted mb-4">
-          Add an .mp3 to your board. Give it a name, or we&apos;ll use the file name.
-        </p>
-        <form onSubmit={onUpload} className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="block text-xs text-muted mb-1">Audio file</span>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="audio/mpeg,.mp3"
-              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
-              className="input w-full file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-white file:text-xs"
+        <div className="flex gap-2">
+          <AddTabButton
+            icon={<Upload size={18} />}
+            label="Upload a sound"
+            active={addTab === "upload"}
+            onClick={() => setAddTab((t) => (t === "upload" ? null : "upload"))}
+          />
+          {yt.enabled && (
+            <AddTabButton
+              icon={<Youtube size={18} />}
+              label="Import from YouTube"
+              active={addTab === "youtube"}
+              onClick={() => setAddTab((t) => (t === "youtube" ? null : "youtube"))}
             />
-          </label>
-          <label className="block">
-            <span className="block text-xs text-muted mb-1">Clip name</span>
-            <input
-              className="input w-full"
-              value={clipName}
-              onChange={(e) => setClipName(e.target.value)}
-              placeholder={fileName ? fileName.replace(/\.mp3$/i, "") : "My epic clip"}
-              maxLength={200}
-            />
-          </label>
-          <div className="flex items-center justify-between gap-4 sm:col-span-2">
-            <label className="flex items-center gap-3 text-sm select-none">
-              <Toggle
-                checked={makePublic}
-                onChange={setMakePublic}
-                label="Share this clip publicly"
-              />
-              <span className="flex items-center gap-1.5">
-                {makePublic ? <Globe size={14} /> : <Lock size={14} />}
-                {makePublic ? "Public — others can find and add it" : "Private — only you can use it"}
-              </span>
-            </label>
-            <button className="btn-primary" disabled={busy}>
-              <Upload size={16} className="mr-1" /> {busy ? "Uploading…" : "Upload"}
-            </button>
+          )}
+        </div>
+        <Collapsible open={addTab !== null}>
+          <div className="mt-4 pt-4 border-t border-white/10">
+            {addTab === "upload" && (
+              <>
+                <p className="text-sm text-muted mb-4">
+                  Add an .mp3 to your board. Give it a name, or we&apos;ll use the file name.
+                </p>
+                <form onSubmit={onUpload} className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="block text-xs text-muted mb-1">Audio file</span>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept="audio/mpeg,.mp3"
+                      onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
+                      className="input w-full file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-white file:text-xs"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="block text-xs text-muted mb-1">Clip name</span>
+                    <input
+                      className="input w-full"
+                      value={clipName}
+                      onChange={(e) => setClipName(e.target.value)}
+                      placeholder={fileName ? fileName.replace(/\.mp3$/i, "") : "My epic clip"}
+                      maxLength={200}
+                    />
+                  </label>
+                  <div className="flex items-center justify-between gap-4 sm:col-span-2">
+                    <label className="flex items-center gap-3 text-sm select-none">
+                      <Toggle
+                        checked={makePublic}
+                        onChange={setMakePublic}
+                        label="Share this clip publicly"
+                      />
+                      <span className="flex items-center gap-1.5">
+                        {makePublic ? <Globe size={14} /> : <Lock size={14} />}
+                        {makePublic ? "Public — others can find and add it" : "Private — only you can use it"}
+                      </span>
+                    </label>
+                    <button className="btn-primary" disabled={busy}>
+                      <Upload size={16} className="mr-1" /> {busy ? "Uploading…" : "Upload"}
+                    </button>
+                  </div>
+                </form>
+                {err && <p className="text-red-300 text-sm mt-3">{err}</p>}
+              </>
+            )}
+            {addTab === "youtube" && yt.enabled && (
+              <YouTubeImport maxDurationSec={yt.maxDurationSec} onImported={refresh} />
+            )}
           </div>
-        </form>
-        {err && <p className="text-red-300 text-sm mt-3">{err}</p>}
+        </Collapsible>
       </section>
       )}
 
@@ -337,6 +365,169 @@ export function Dashboard({
       </section>
     </div>
   );
+}
+
+// One segment of the "add a sound" button group. Pressed = its panel is shown
+// in the shared content area below the group.
+function AddTabButton({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex-1 flex items-center justify-center gap-2 rounded-xl border px-4 py-3 font-medium transition ${
+        active
+          ? "border-accent bg-accent/10 text-white"
+          : "border-white/10 text-muted hover:bg-white/5 hover:text-white"
+      }`}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+// Paste a YouTube link → server fetches, trims, and transcodes it to an mp3 as
+// a background job. We enqueue, then poll the job until it's done or errors.
+function YouTubeImport({
+  maxDurationSec,
+  onImported,
+}: {
+  maxDurationSec: number;
+  onImported: () => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
+  const [makePublic, setMakePublic] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Cancel any in-flight poll loop if the component unmounts.
+  const cancelled = useRef(false);
+  useEffect(() => () => { cancelled.current = true; }, []);
+
+  async function poll(jobId: string) {
+    // ~3 min ceiling at 2s intervals; the server caps each job at 180s anyway.
+    for (let i = 0; i < 90; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if (cancelled.current) return;
+      const res = await fetch(`/api/sounds/youtube/${jobId}`);
+      if (!res.ok) {
+        setErr("Lost track of the conversion. Refresh and check your board.");
+        setBusy(false);
+        return;
+      }
+      const j = await res.json();
+      if (j.status === "done") {
+        setBusy(false);
+        setUrl("");
+        setName("");
+        setMakePublic(false);
+        onImported();
+        return;
+      }
+      if (j.status === "error") {
+        setErr(j.error ?? "Conversion failed");
+        setBusy(false);
+        return;
+      }
+    }
+    setErr("Conversion is taking too long. Check your board in a moment.");
+    setBusy(false);
+  }
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setErr(null);
+    if (!url.trim()) return;
+    setBusy(true);
+    const res = await fetch("/api/sounds/youtube", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: url.trim(),
+        isPublic: makePublic,
+        ...(name.trim() ? { name: name.trim() } : {}),
+      }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setErr(j.error ?? "Couldn't start the conversion");
+      setBusy(false);
+      return;
+    }
+    const { jobId } = await res.json();
+    poll(jobId);
+  }
+
+  return (
+    <>
+      <p className="text-sm text-muted mb-4">
+        Paste a YouTube link and we&apos;ll turn it into a clip on your board. Audio is trimmed to
+        the first {formatDuration(maxDurationSec)}.
+      </p>
+      <form onSubmit={onSubmit} className="grid gap-4 sm:grid-cols-2">
+        <label className="block">
+          <span className="block text-xs text-muted mb-1">YouTube link</span>
+          <input
+            className="input w-full"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://youtube.com/watch?v=…"
+            inputMode="url"
+            disabled={busy}
+          />
+        </label>
+        <label className="block">
+          <span className="block text-xs text-muted mb-1">Clip name</span>
+          <input
+            className="input w-full"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Defaults to the video title"
+            maxLength={200}
+            disabled={busy}
+          />
+        </label>
+        <div className="flex items-center justify-between gap-4 sm:col-span-2">
+          <label className="flex items-center gap-3 text-sm select-none">
+            <Toggle checked={makePublic} onChange={setMakePublic} label="Share this clip publicly" />
+            <span className="flex items-center gap-1.5">
+              {makePublic ? <Globe size={14} /> : <Lock size={14} />}
+              {makePublic ? "Public — others can find and add it" : "Private — only you can use it"}
+            </span>
+          </label>
+          <button className="btn-primary" disabled={busy}>
+            <Youtube size={16} className="mr-1" /> {busy ? "Converting…" : "Import"}
+          </button>
+        </div>
+      </form>
+      {busy && (
+        <p className="text-muted text-sm mt-3">
+          Fetching and converting — this can take up to a couple of minutes. You can keep using the
+          board.
+        </p>
+      )}
+      {err && <p className="text-red-300 text-sm mt-3">{err}</p>}
+    </>
+  );
+}
+
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${sec} seconds`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s === 0 ? `${m} minute${m > 1 ? "s" : ""}` : `${m}m ${s}s`;
 }
 
 function SoundCard(props: {
@@ -737,6 +928,7 @@ function VirtualMicPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }
 
       <Collapsible open={on}>
         <div className="space-y-5 pt-3">
+          <PeakMeter getPeak={audio.getCablePeak} active={on} />
           {!audio.secureContext && (
             <p className="text-xs text-red-400">
               Microphone access needs a secure context (HTTPS or localhost). Your server URL is
@@ -810,6 +1002,56 @@ function VirtualMicPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }
           </div>
         </div>
       </Collapsible>
+    </div>
+  );
+}
+
+// Live meter of the cable sum (what the virtual mic sends). Polls the mixer's
+// pre-limiter peak each frame with a short peak-hold decay. Red = past 0 dBFS
+// (the limiter is clamping it); amber = into the limiter threshold (-1 dBFS).
+function PeakMeter({ getPeak, active }: { getPeak: () => number; active: boolean }) {
+  const [level, setLevel] = useState(0);
+  const heldRef = useRef(0);
+
+  useEffect(() => {
+    if (!active) {
+      heldRef.current = 0;
+      setLevel(0);
+      return;
+    }
+    let raf = 0;
+    let mounted = true;
+    const tick = () => {
+      const p = getPeak();
+      heldRef.current = Math.max(p, heldRef.current * 0.92); // peak-hold + decay
+      if (mounted) setLevel(heldRef.current);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      mounted = false;
+      cancelAnimationFrame(raf);
+    };
+  }, [active, getPeak]);
+
+  const pct = Math.min(100, level * 100);
+  const clipping = level >= 1.0;
+  const hot = level >= 0.89; // limiter threshold (-1 dBFS) in linear terms
+  const color = clipping ? "bg-red-500" : hot ? "bg-amber-400" : "bg-emerald-500";
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-sm">Mic output level</label>
+        {clipping && <span className="text-xs text-red-400 font-medium">Clipping — limiter active</span>}
+      </div>
+      <div className="h-2.5 w-full rounded-full bg-white/10 overflow-hidden">
+        <div className={`h-full ${color} transition-[width] duration-75`} style={{ width: `${pct}%` }} />
+      </div>
+      <p className="text-xs text-muted mt-1">
+        The summed signal feeding the virtual mic. The limiter stops it hard-clipping, but if it
+        sits in the red the audio still sounds squashed to listeners — lower your mic or clip volumes.
+      </p>
     </div>
   );
 }
