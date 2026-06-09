@@ -66,17 +66,30 @@ function buildKeyMap() {
 const KEY_MAP = buildKeyMap();
 const MODIFIER_TOKENS = new Set(["CTRL", "SHIFT", "ALT", "META"]);
 
+// Keycodes for the modifier keys themselves. We never treat these as "main"
+// keys — modifier state comes from the event flags (ctrlKey, etc.) — so a
+// modifier keydown shouldn't complete a chord on its own.
+const MODIFIER_KEYCODES = new Set();
+if (UiohookKey) {
+  for (const n of ["Ctrl", "CtrlRight", "Alt", "AltRight", "Shift", "ShiftRight", "Meta", "MetaRight"]) {
+    const c = UiohookKey[n];
+    if (typeof c === "number") MODIFIER_KEYCODES.add(c);
+  }
+}
+
+// Combo grammar now allows a *chord*: modifiers + one or more non-modifier keys
+// held together, e.g. "Ctrl+Shift+F5", "A+B".
 function parseCombo(combo) {
   if (typeof combo !== "string") return null;
   const parts = combo
     .split("+")
     .map((p) => p.trim())
     .filter(Boolean);
-  if (parts.length === 0 || parts.length > 4) return null;
+  if (parts.length === 0 || parts.length > 6) return null;
 
   const mods = { ctrl: false, shift: false, alt: false, meta: false };
-  let mainKeycode = null;
-  let mainKeyName = null;
+  const keycodes = [];
+  const keyNames = [];
 
   for (const raw of parts) {
     const tok = raw.toUpperCase();
@@ -86,15 +99,16 @@ function parseCombo(combo) {
       else if (tok === "ALT") mods.alt = true;
       else if (tok === "META") mods.meta = true;
     } else {
-      if (mainKeycode !== null) return null; // more than one non-modifier
       const code = KEY_MAP.get(tok);
       if (typeof code !== "number") return null;
-      mainKeycode = code;
-      mainKeyName = tok;
+      if (!keycodes.includes(code)) {
+        keycodes.push(code);
+        keyNames.push(tok);
+      }
     }
   }
-  if (mainKeycode === null) return null;
-  return { mods, keycode: mainKeycode, mainKeyName };
+  if (keycodes.length === 0) return null; // need at least one non-modifier key
+  return { mods, keycodes, keyNames };
 }
 
 function validateCombo(combo) {
@@ -106,8 +120,9 @@ function validateCombo(combo) {
 // --- Runtime state ---------------------------------------------------------
 
 let started = false;
-let registry = []; // [{ combo, mods, keycode }]
+let registry = []; // [{ combo, mods, keys: Set<keycode> }]
 let onMatchFn = null;
+const heldKeys = new Set(); // currently-held non-modifier keycodes
 
 function setCombos(combos) {
   const seen = new Set();
@@ -120,28 +135,47 @@ function setCombos(combos) {
       console.warn(`[hotkeys] ignoring invalid combo "${combo}": ${v.reason}`);
       continue;
     }
-    registry.push({ combo, ...v.parsed });
+    registry.push({ combo, mods: v.parsed.mods, keys: new Set(v.parsed.keycodes) });
   }
 }
 
+// Fire on the key that *completes* a bound chord: all of the chord's keys held,
+// modifier flags matching exactly, and the just-pressed key part of it. Among
+// satisfied chords the largest (most keys) wins, so a chord suppresses its
+// sub-binds when the extra keys are held first.
 function handleKeydown(e) {
+  if (MODIFIER_KEYCODES.has(e.keycode)) return; // modifiers come from flags
+  if (heldKeys.has(e.keycode)) return; // auto-repeat
+  heldKeys.add(e.keycode);
   if (registry.length === 0) return;
+
+  let best = null;
   for (const r of registry) {
-    if (
-      r.keycode === e.keycode &&
-      r.mods.ctrl === !!e.ctrlKey &&
-      r.mods.shift === !!e.shiftKey &&
-      r.mods.alt === !!e.altKey &&
-      r.mods.meta === !!e.metaKey
-    ) {
-      try {
-        onMatchFn && onMatchFn(r.combo);
-      } catch (err) {
-        console.warn("[hotkeys] onMatch threw:", err && err.message);
+    if (r.mods.ctrl !== !!e.ctrlKey) continue;
+    if (r.mods.shift !== !!e.shiftKey) continue;
+    if (r.mods.alt !== !!e.altKey) continue;
+    if (r.mods.meta !== !!e.metaKey) continue;
+    if (!r.keys.has(e.keycode)) continue;
+    let all = true;
+    for (const k of r.keys) {
+      if (!heldKeys.has(k)) {
+        all = false;
+        break;
       }
-      return;
+    }
+    if (all && (!best || r.keys.size > best.keys.size)) best = r;
+  }
+  if (best) {
+    try {
+      onMatchFn && onMatchFn(best.combo);
+    } catch (err) {
+      console.warn("[hotkeys] onMatch threw:", err && err.message);
     }
   }
+}
+
+function handleKeyup(e) {
+  heldKeys.delete(e.keycode);
 }
 
 function start({ onMatch }) {
@@ -149,6 +183,7 @@ function start({ onMatch }) {
   if (!uIOhook) return false;
   if (started) return true;
   uIOhook.on("keydown", handleKeydown);
+  uIOhook.on("keyup", handleKeyup);
   try {
     uIOhook.start();
     started = true;
@@ -165,6 +200,8 @@ function stop() {
     uIOhook.stop();
   } catch {}
   uIOhook.removeAllListeners("keydown");
+  uIOhook.removeAllListeners("keyup");
+  heldKeys.clear();
   started = false;
 }
 

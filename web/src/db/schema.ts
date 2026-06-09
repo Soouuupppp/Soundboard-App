@@ -132,6 +132,9 @@ export const boardEntries = pgTable("boardEntry", {
   // Optional override label and keybind for this entry.
   label: text("label"),
   keybind: text("keybind"), // e.g. "Ctrl+Shift+1" or "F5"
+  // Optional Valve Index controller bind, e.g. "VR:RightHand:A". Independent of
+  // keybind so an entry can be triggered by keyboard and controller at once.
+  controllerBind: text("controllerBind"),
   position: integer("position").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
