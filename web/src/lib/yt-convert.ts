@@ -80,14 +80,22 @@ async function fail(jobId: string, message: string) {
 // and crashes if it can't — so copy into the job's writable temp dir and point
 // at the copy. The copy dies with workDir; the mounted source stays pristine.
 async function cookieArgs(workDir: string): Promise<string[]> {
+  let st;
   try {
-    const st = await fs.stat(COOKIES_PATH);
-    if (!st.isFile() || st.size === 0) return [];
+    st = await fs.stat(COOKIES_PATH);
+  } catch {
+    return []; // nothing mounted — run without cookies
+  }
+  if (!st.isFile() || st.size === 0) return []; // empty placeholder / not a file
+  try {
     const dest = join(workDir, "cookies.txt");
     await fs.copyFile(COOKIES_PATH, dest);
     return ["--cookies", dest];
-  } catch {
-    // not mounted / unreadable — run without cookies
+  } catch (e) {
+    // The file is present and non-empty but we couldn't read it — almost always
+    // host perms not allowing the container's node user. Warn loudly: otherwise
+    // this silently degrades to a no-cookies run that looks like a bot block.
+    console.error(`[yt-convert] cookies at ${COOKIES_PATH} present but unreadable; running without them:`, e);
     return [];
   }
 }
