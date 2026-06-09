@@ -24,6 +24,11 @@ import { looksLikeMp3, persistSound } from "@/lib/sounds";
 import { soundName } from "@/lib/validation";
 
 const YTDLP = process.env.YTDLP_PATH || "yt-dlp";
+// Optional Netscape cookies.txt to satisfy YouTube's "confirm you're not a bot"
+// check (which routinely fires on datacenter/VPS IPs). Mounted read-only into
+// the container at this path — see docker-compose.yml. Absent/empty → no
+// --cookies, which is fine for IPs YouTube doesn't challenge.
+const COOKIES_PATH = process.env.YTDLP_COOKIES?.trim() || "/secrets/yt-cookies.txt";
 // Hard wall-clock ceiling per job so a stuck download can't hold a slot forever.
 const JOB_TIMEOUT_MS = 180_000;
 
@@ -69,6 +74,18 @@ async function fail(jobId: string, message: string) {
     .where(eq(conversionJobs.id, jobId));
 }
 
+// Only pass --cookies when a non-empty file is actually mounted: handing yt-dlp
+// an empty or absent jar makes it bail on a "malformed cookies file".
+async function cookieArgs(): Promise<string[]> {
+  try {
+    const st = await fs.stat(COOKIES_PATH);
+    if (st.isFile() && st.size > 0) return ["--cookies", COOKIES_PATH];
+  } catch {
+    // not mounted / unreadable — run without cookies
+  }
+  return [];
+}
+
 async function runJob(jobId: string) {
   const [job] = await db.select().from(conversionJobs).where(eq(conversionJobs.id, jobId)).limit(1);
   if (!job || job.status !== "pending") return;
@@ -103,6 +120,7 @@ async function runJob(jobId: string) {
 
     await runYtDlp([
       "--ignore-config",
+      ...(await cookieArgs()),
       "--no-playlist",
       "--no-progress",
       "--no-warnings",
