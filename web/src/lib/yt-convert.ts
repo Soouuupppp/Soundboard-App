@@ -158,6 +158,9 @@ async function runJob(jobId: string) {
       .set({ status: "done", soundId: sound.id, error: null, updatedAt: new Date() })
       .where(eq(conversionJobs.id, jobId));
   } catch (e) {
+    // Log the raw cause (incl. yt-dlp stderr) to the server console / docker
+    // logs; the client only ever sees the short safeError() summary.
+    console.error(`[yt-convert] job ${jobId} (${job.url}) failed:`, e);
     await fail(jobId, safeError(e));
   } finally {
     if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -170,7 +173,15 @@ function runYtDlp(args: string[]): Promise<void> {
       YTDLP,
       args,
       { timeout: JOB_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, windowsHide: true },
-      (err) => (err ? reject(err) : resolve())
+      (err, _stdout, stderr) => {
+        if (err) {
+          // Attach yt-dlp's own stderr so the catch can log why it failed.
+          if (stderr) err.message = `${err.message}\n${stderr}`.trim();
+          reject(err);
+        } else {
+          resolve();
+        }
+      }
     );
   });
 }
