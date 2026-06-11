@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { conversionJobs, users } from "@/db/schema";
-import { getAppSettings, parseAllowedHosts } from "@/lib/app-settings";
+import { getAppSettings, getYtConfigForUser, parseAllowedHosts } from "@/lib/app-settings";
 import { getUserLimits, getUsedBytes } from "@/lib/quota";
 import { looksLikeMp3, persistSound } from "@/lib/sounds";
 import { soundName } from "@/lib/validation";
@@ -39,8 +39,11 @@ const EXTRACTOR_ARGS = process.env.YTDLP_EXTRACTOR_ARGS?.trim() || null;
 // Hard wall-clock ceiling per job so a stuck download can't hold a slot forever.
 const JOB_TIMEOUT_MS = 180_000;
 
-const queue: string[] = [];
+// Queue entries carry the requester so the pump can enforce a per-role
+// concurrency cap (resolved per user) on top of the global worker-pool size.
+const queue: { jobId: string; userId: string }[] = [];
 let active = 0;
+const activeByUser = new Map<string, number>();
 
 // Validate a URL's host against the admin allowlist. Returns the parsed URL or
 // null. Exact host match only — blocks file://, internal IPs, and other
@@ -56,19 +59,35 @@ export function hostAllowed(rawUrl: string, allowedHosts: string[]): boolean {
   return allowedHosts.includes(u.hostname.toLowerCase());
 }
 
-export function enqueueConversion(jobId: string) {
-  queue.push(jobId);
+export function enqueueConversion(jobId: string, userId: string) {
+  queue.push({ jobId, userId });
   void pump();
 }
 
 async function pump() {
-  // Re-read concurrency each tick so admin changes take effect for new jobs.
+  // Re-read settings each tick so admin changes take effect for new jobs. The
+  // global ytConcurrency is the shared worker-pool size; each user is
+  // additionally capped at their role's resolved concurrency.
   const { ytConcurrency } = await getAppSettings();
-  while (active < ytConcurrency && queue.length > 0) {
-    const jobId = queue.shift()!;
+  while (active < ytConcurrency) {
+    // Find the first queued job whose user is still under their per-user cap.
+    let idx = -1;
+    for (let i = 0; i < queue.length; i++) {
+      const { userId } = queue[i];
+      const { concurrency } = await getYtConfigForUser(userId);
+      if ((activeByUser.get(userId) ?? 0) < concurrency) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx === -1) break; // nothing runnable right now
+
+    const { jobId, userId } = queue.splice(idx, 1)[0];
     active++;
+    activeByUser.set(userId, (activeByUser.get(userId) ?? 0) + 1);
     void runJob(jobId).finally(() => {
       active--;
+      activeByUser.set(userId, Math.max(0, (activeByUser.get(userId) ?? 1) - 1));
       void pump();
     });
   }
@@ -121,7 +140,8 @@ async function runJob(jobId: string) {
     .where(eq(conversionJobs.id, jobId));
 
   const settings = await getAppSettings();
-  if (!settings.ytEnabled) return fail(jobId, "YouTube import is disabled");
+  const yt = await getYtConfigForUser(job.userId);
+  if (!yt.enabled) return fail(jobId, "YouTube import is disabled");
   if (!hostAllowed(job.url, parseAllowedHosts(settings.ytAllowedHosts))) {
     return fail(jobId, "This link isn't from an allowed site");
   }
@@ -134,7 +154,7 @@ async function runJob(jobId: string) {
   if (!owner?.discordId) return fail(jobId, "Account isn't set up for uploads");
 
   const limits = await getUserLimits(job.userId);
-  const maxBytes = Math.min(limits.maxFileSize, settings.ytMaxFileSize);
+  const maxBytes = Math.min(limits.maxFileSize, yt.maxFileSize);
 
   let workDir: string | null = null;
   try {
@@ -158,7 +178,7 @@ async function runJob(jobId: string) {
       "--audio-format",
       "mp3",
       "--download-sections",
-      `*0-${settings.ytMaxDurationSec}`,
+      `*0-${yt.maxDurationSec}`,
       "--force-keyframes-at-cuts",
       "--max-filesize",
       String(maxBytes),

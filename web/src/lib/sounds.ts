@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db";
 import { sounds, boardEntries } from "@/db/schema";
 import { ensureUserDir } from "@/lib/storage";
+import { normalizeTags, setSoundTags } from "@/lib/tags";
 
 // Sniff magic bytes — accept ID3 ("ID3") or an MPEG audio sync word
 // (0xFF + 0xEx/Fx). Trims leading null padding some encoders add. Shared by the
@@ -33,6 +34,9 @@ export async function persistSound(opts: {
   originalFilename: string;
   buf: Buffer;
   isPublic: boolean;
+  // Optional caller-supplied tags. Every sound must carry at least one tag, so
+  // when none survive normalization we fall back to the default `misc` tag.
+  tags?: string[];
 }) {
   const dir = await ensureUserDir(opts.discordId);
   const id = randomUUID();
@@ -58,6 +62,11 @@ export async function persistSound(opts: {
     userId: opts.ownerId,
     soundId: row.id,
   });
+
+  // Every sound carries ≥1 tag; default to `misc` when the caller supplied none
+  // (or none survived normalization). setSoundTags upserts the tag rows.
+  const clean = normalizeTags(opts.tags ?? []);
+  await setSoundTags(row.id, clean.length ? clean : ["misc"]);
 
   return row;
 }

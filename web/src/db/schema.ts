@@ -76,6 +76,13 @@ export const roles = pgTable("role", {
   // Whether members of this role may upload their own sounds. When false they
   // can still browse and add public clips to their board — just not upload.
   canUpload: boolean("canUpload").notNull().default(true),
+  // Per-role YouTube-import overrides. null → fall back to the global
+  // appSettings value. The global ytEnabled master toggle still gates
+  // everything; these only narrow/widen the per-role behaviour beneath it.
+  ytEnabledOverride: boolean("ytEnabledOverride"),
+  ytMaxDurationSecOverride: integer("ytMaxDurationSecOverride"),
+  ytMaxFileSizeOverride: bigint("ytMaxFileSizeOverride", { mode: "number" }),
+  ytConcurrencyOverride: integer("ytConcurrencyOverride"),
   isSystem: boolean("isSystem").notNull().default(false), // protects system roles from deletion
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -124,6 +131,27 @@ export const conversionJobs = pgTable("conversionJob", {
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
+// A global, normalized tag. Names are stored lowercased + trimmed and are
+// unique, so the same label is one shared tag across every clip. Renaming or
+// deleting a tag (admin tag management) therefore affects all clips at once.
+export const tags = pgTable("tag", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// Join table: which tags are on which sound. Tags live on the sound (not the
+// board entry), so they're visible to everyone who sees the clip. The app caps
+// this at 3 rows per sound; the DB just enforces uniqueness of the pair.
+export const soundTags = pgTable(
+  "soundTag",
+  {
+    soundId: uuid("soundId").notNull().references(() => sounds.id, { onDelete: "cascade" }),
+    tagId: uuid("tagId").notNull().references(() => tags.id, { onDelete: "cascade" }),
+  },
+  (st) => ({ pk: primaryKey({ columns: [st.soundId, st.tagId] }) })
+);
+
 // An entry on a user's personal board. Always references a sound (own or public).
 export const boardEntries = pgTable("boardEntry", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -136,5 +164,11 @@ export const boardEntries = pgTable("boardEntry", {
   // keybind so an entry can be triggered by keyboard and controller at once.
   controllerBind: text("controllerBind"),
   position: integer("position").notNull().default(0),
+  // ver/1.3.0: Saved vs Board split. Every entry is part of the user's library
+  // ("Saved"); only entries with onBoard=true appear on the playable board and
+  // get keybinds/positions. New entries default to saved-only — the user
+  // explicitly adds them to the board. (bootstrap.sql backfills pre-existing
+  // entries to true so current boards aren't wiped.)
+  onBoard: boolean("onBoard").notNull().default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

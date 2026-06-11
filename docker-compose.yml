@@ -34,6 +34,13 @@ services:
     # for rollback) is handled by scripts/docker-rebuild.mjs — see that file.
     image: soundboard-web:latest
     restart: unless-stopped
+    # Cap resources so a malicious media decode (ffmpeg/yt-dlp on imported audio)
+    # or a memory-heavy request can't starve the host. Honored by `docker compose up`.
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
     depends_on:
       db:
         condition: service_healthy
@@ -69,4 +76,8 @@ services:
       # yt-convert ignores it unless it's non-empty, so leaving it unset is fine.
       - ${YTDLP_COOKIES_FILE:-./web/.empty-cookies.txt}:/secrets/yt-cookies.txt:ro
     ports:
-      - "5050:5050"
+      # Bind to localhost only — the public edge is Cloudflare → reverse proxy on
+      # this host. Publishing on 0.0.0.0 would expose plaintext HTTP directly,
+      # bypassing the proxy's TLS/headers. Use the proxy's source IP in a firewall
+      # rule instead if the proxy lives on another host.
+      - "127.0.0.1:5050:5050"

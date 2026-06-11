@@ -3,6 +3,7 @@ import { desc, eq, sql } from "drizzle-orm";
 import { auth, isAdminSession } from "@/lib/auth";
 import { db } from "@/db";
 import { sounds, users, boardEntries } from "@/db/schema";
+import { getTagsForSounds } from "@/lib/tags";
 
 export const runtime = "nodejs";
 
@@ -33,5 +34,8 @@ export async function GET() {
     .groupBy(sounds.id, users.id)
     .orderBy(desc(sounds.createdAt));
 
-  return NextResponse.json({ sounds: rows });
+  const tagMap = await getTagsForSounds(rows.map((r) => r.id));
+  const out = rows.map((r) => ({ ...r, tags: tagMap.get(r.id) ?? [] }));
+
+  return NextResponse.json({ sounds: out });
 }

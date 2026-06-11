@@ -30,4 +30,7 @@ add_custom_command(TARGET vr-bridge POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/manifests/bindings_knuckles.json"
     "$<TARGET_FILE_DIR:vr-bridge>/bindings_knuckles.json"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/icon.png"
+    "$<TARGET_FILE_DIR:vr-bridge>/icon.png"
   VERBATIM)

@@ -32,6 +32,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Standalone server bundle
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# public/ holds the web manifest + favicons; Next's standalone output does NOT
+# bundle public/, so copy it explicitly or those assets 404 at runtime.
+COPY --from=builder /app/public ./public
 
 # Source needed for the migration runner at startup
 COPY --from=builder /app/src/db ./src/db

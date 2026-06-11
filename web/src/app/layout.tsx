@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { auth, signIn, signOut } from "@/lib/auth";
 import { UserBadge } from "@/components/UserBadge";
+import { ToastProvider } from "@/components/Toast";
 import logo from "./logo.png";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://soundboard.example.com";
@@ -55,7 +56,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         </div>
 
         <header className="sticky top-0 z-20 border-b border-white/5 bg-black/30 backdrop-blur-xl">
-          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
+          <div className="max-w-[1800px] mx-auto px-4 py-3 flex items-center gap-6">
             <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
               <Image src={logo} alt="Soundboard logo" width={32} height={32} priority className="h-8 w-8" />
               <span>Soundboard</span>
@@ -93,7 +94,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </div>
         </header>
-        <main className="max-w-6xl mx-auto px-4 py-10">{children}</main>
+        <main className="max-w-[1800px] mx-auto px-4 py-10">
+          <ToastProvider>{children}</ToastProvider>
+        </main>
       </body>
     </html>
   );

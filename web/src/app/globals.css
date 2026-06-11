@@ -9,6 +9,14 @@ html, body {
   min-height: 100%;
 }
 
+/* The fixed-attachment gradient below is clipped to the body's box. A
+   percentage min-height collapses to content height on short pages (e.g.
+   /public with only a row or two), cutting the gradient off mid-screen — pin
+   the body to at least the viewport so it always fills the window. */
+body {
+  min-height: 100vh;
+}
+
 body {
   background-image:
     radial-gradient(1200px 600px at 10% -10%, rgba(124,140,255,0.18), transparent 60%),

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
-import { Shield, Users, Trash2, Plus, Search, AlertCircle, Music, Play, Globe, Lock, ChevronDown, Upload, Ban, Youtube } from "lucide-react";
+import { Shield, Users, Trash2, Plus, Search, AlertCircle, Music, Play, Globe, Lock, Upload, Ban, Youtube, Tag as TagIcon } from "lucide-react";
 import { formatBytes, parseSize } from "@/lib/utils";
 import { useAudioOutput } from "@/lib/audio-output";
+import { TagChips, TagEditor } from "@/components/Tags";
+import { useToast, useMutate } from "@/components/Toast";
 
 type Role = {
   id: string;
@@ -12,7 +14,12 @@ type Role = {
   defaultMaxTotalStorage: number;
   canUpload: boolean;
   isSystem: boolean;
+  ytEnabledOverride: boolean | null;
+  ytMaxDurationSecOverride: number | null;
+  ytMaxFileSizeOverride: number | null;
+  ytConcurrencyOverride: number | null;
 };
+type TagRow = { id: string; name: string; count: number };
 type User = {
   id: string;
   name: string | null;
@@ -37,6 +44,7 @@ type Sound = {
   ownerImage: string | null;
   ownerDiscordId: string | null;
   boardCount: number;
+  tags: string[];
 };
 type Settings = {
   ytEnabled: boolean;
@@ -47,24 +55,36 @@ type Settings = {
 };
 
 export function AdminPanel() {
+  const toast = useToast();
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [sounds, setSounds] = useState<Sound[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [tags, setTags] = useState<TagRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Active admin section — a row of pill tabs sharing the panel below (mirrors
+  // the /dashboard Control Panel / add-a-sound groups).
+  const [tab, setTab] = useState<"roles" | "users" | "youtube" | "tags" | "content">("roles");
 
   const refresh = async () => {
-    const [r, u, s, cfg] = await Promise.all([
-      fetch("/api/admin/roles").then((x) => x.json()),
-      fetch("/api/admin/users").then((x) => x.json()),
-      fetch("/api/admin/sounds").then((x) => x.json()),
-      fetch("/api/admin/settings").then((x) => x.json()),
-    ]);
-    setRoles(r.roles ?? []);
-    setUsers(u.users ?? []);
-    setSounds(s.sounds ?? []);
-    setSettings(cfg.settings ?? null);
-    setLoading(false);
+    try {
+      const [r, u, s, cfg, t] = await Promise.all([
+        fetch("/api/admin/roles").then((x) => x.json()),
+        fetch("/api/admin/users").then((x) => x.json()),
+        fetch("/api/admin/sounds").then((x) => x.json()),
+        fetch("/api/admin/settings").then((x) => x.json()),
+        fetch("/api/admin/tags").then((x) => x.json()),
+      ]);
+      setRoles(r.roles ?? []);
+      setUsers(u.users ?? []);
+      setSounds(s.sounds ?? []);
+      setSettings(cfg.settings ?? null);
+      setTags(t.tags ?? []);
+    } catch {
+      toast.error("Couldn't load admin data — refresh to retry.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const totalStorage = useMemo(
@@ -90,49 +110,150 @@ export function AdminPanel() {
         </div>
       </header>
 
-      <Section
-        icon={<Shield size={16} />}
-        title="Roles & quotas"
-        subtitle="Quotas accept human sizes like 5 MB, 1.5 GB, 250 KB. Plain numbers are treated as bytes."
-        count={loading ? undefined : roles.length}
-      >
-        <RolesTable roles={roles} onChange={refresh} />
-      </Section>
+      <div className="flex gap-2 flex-wrap">
+        <PillTab icon={<Shield size={16} />} label="Roles" count={loading ? undefined : roles.length} active={tab === "roles"} onClick={() => setTab("roles")} />
+        <PillTab icon={<Users size={16} />} label="Users" count={loading ? undefined : users.length} active={tab === "users"} onClick={() => setTab("users")} />
+        <PillTab icon={<Youtube size={16} />} label="YouTube import" active={tab === "youtube"} onClick={() => setTab("youtube")} />
+        <PillTab icon={<TagIcon size={16} />} label="Tags" count={loading ? undefined : tags.length} active={tab === "tags"} onClick={() => setTab("tags")} />
+        <PillTab icon={<Music size={16} />} label="Content" count={loading ? undefined : sounds.length} active={tab === "content"} onClick={() => setTab("content")} />
+      </div>
 
-      <Section
-        icon={<Users size={16} />}
-        title="Users"
-        subtitle="Assign roles or override individual quotas. Leave overrides blank to use the role default."
-        count={loading ? undefined : users.length}
-      >
-        <UsersTable users={users} roles={roles} onChange={refresh} />
-      </Section>
+      <section className="card">
+        {tab === "roles" && (
+          <>
+            <PanelHead
+              icon={<Shield size={16} />}
+              title="Roles"
+              subtitle="Per-role defaults and overrides. Quotas accept human sizes like 5 MB, 1.5 GB, 250 KB (plain numbers are bytes). The resolution order is user override → role default → env default."
+            />
+            <RolesTable roles={roles} onChange={refresh} />
 
-      <Section
-        icon={<Youtube size={16} />}
-        title="YouTube import"
-        subtitle="Let whitelisted users turn YouTube links into clips. Audio is fetched, trimmed, and transcoded server-side."
-      >
-        {settings ? (
-          <YouTubeSettings settings={settings} onChange={refresh} />
-        ) : (
-          <p className="text-sm text-muted">Loading…</p>
+            <div className="mt-6">
+              <div className="font-medium text-sm mb-1">Per-role overrides — YouTube import</div>
+              <p className="text-xs text-muted mb-3">
+                Leave a field blank to inherit the global value (set under the YouTube import tab).
+                Disabling here turns import off for that role even when the global switch is on; it can
+                never enable import while the global switch is off.
+              </p>
+              {settings ? (
+                <RoleYtTable roles={roles} settings={settings} onChange={refresh} />
+              ) : (
+                <p className="text-sm text-muted">Loading…</p>
+              )}
+            </div>
+          </>
         )}
-      </Section>
-
-      <Section
-        icon={<Music size={16} />}
-        title="Content"
-        subtitle="Every uploaded sound. Preview to review, flip public clips private, or delete violating content."
-        count={loading ? undefined : sounds.length}
-      >
-        <SoundsTable sounds={sounds} onChange={refresh} />
-      </Section>
+        {tab === "users" && (
+          <>
+            <PanelHead
+              icon={<Users size={16} />}
+              title="Users"
+              subtitle="Assign roles or override individual quotas. Leave overrides blank to use the role default."
+            />
+            <UsersTable users={users} roles={roles} onChange={refresh} />
+          </>
+        )}
+        {tab === "youtube" && (
+          <>
+            <PanelHead
+              icon={<Youtube size={16} />}
+              title="YouTube import"
+              subtitle="Let whitelisted users turn YouTube links into clips. Audio is fetched, trimmed, and transcoded server-side. The global toggle is the master switch; per-role overrides narrow it."
+            />
+            {settings ? (
+              <YouTubeSettings settings={settings} onChange={refresh} />
+            ) : (
+              <p className="text-sm text-muted">Loading…</p>
+            )}
+          </>
+        )}
+        {tab === "tags" && (
+          <>
+            <PanelHead
+              icon={<TagIcon size={16} />}
+              title="Tags"
+              subtitle="Every tag in the system. Rename to relabel it on all clips at once (renaming onto an existing tag merges them); delete to strip it from every clip."
+            />
+            <TagsTable tags={tags} onChange={refresh} />
+          </>
+        )}
+        {tab === "content" && (
+          <>
+            <PanelHead
+              icon={<Music size={16} />}
+              title="Content"
+              subtitle="Every uploaded sound. Preview to review, flip clips public or private, or delete violating content."
+            />
+            <SoundsTable sounds={sounds} allTags={tags.map((t) => t.name)} onChange={refresh} />
+          </>
+        )}
+      </section>
     </div>
   );
 }
 
-function YouTubeSettings({ settings, onChange }: { settings: Settings; onChange: () => void }) {
+// One segment of the admin pill-tab group (mirrors the dashboard's AddTabButton).
+function PillTab({
+  icon,
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  count?: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition ${
+        active
+          ? "border-accent bg-accent/10 text-white"
+          : "border-white/10 text-muted hover:bg-white/5 hover:text-white"
+      }`}
+    >
+      {icon}
+      <span>{label}</span>
+      {count !== undefined && <span className="chip">{count}</span>}
+    </button>
+  );
+}
+
+// Icon + title + subtitle header shown atop the active panel.
+function PanelHead({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="flex items-start gap-3 mb-4">
+      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.04] border border-white/10 text-accent">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <h2 className="section-title">{title}</h2>
+        {subtitle && <p className="section-sub">{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
+
+function YouTubeSettings({
+  settings,
+  onChange,
+}: {
+  settings: Settings;
+  onChange: () => void;
+}) {
   const [duration, setDuration] = useState(String(settings.ytMaxDurationSec));
   const [concurrency, setConcurrency] = useState(String(settings.ytConcurrency));
   const [hosts, setHosts] = useState(settings.ytAllowedHosts);
@@ -243,66 +364,259 @@ function YouTubeSettings({ settings, onChange }: { settings: Settings; onChange:
         </p>
       )}
       {saving && <p className="text-xs text-muted">Saving…</p>}
+
+      <p className="text-xs text-muted">
+        Per-role import overrides now live under the <span className="text-white">Roles</span> tab,
+        alongside each role&apos;s quotas.
+      </p>
     </div>
   );
 }
 
-// A collapsible admin sub-panel. Collapsed by default so the page opens as a
-// compact list of sections the admin can expand one at a time.
-function Section({
-  icon,
-  title,
-  subtitle,
-  count,
-  children,
+// Per-role YouTube override editor. Each cell commits independently; blank
+// numeric fields clear the override (PATCH null) so the role inherits the
+// global value.
+function RoleYtTable({
+  roles,
+  settings,
+  onChange,
 }: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle?: string;
-  count?: number;
-  children: React.ReactNode;
+  roles: Role[];
+  settings: Settings;
+  onChange: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const mutate = useMutate();
+  async function update(role: Role, patch: Partial<Role>) {
+    const ok = await mutate(`/api/admin/roles/${role.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }, "Couldn't update YouTube override");
+    if (ok) onChange();
+  }
+
   return (
-    <section className="card !p-0 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="w-full flex items-center gap-3 text-left px-5 py-4 hover:bg-white/[0.02] transition"
-      >
-        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.04] border border-white/10 text-accent">
-          {icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="section-title flex items-center gap-2">
-            {title}
-            {count !== undefined && <span className="chip">{count}</span>}
-          </h2>
-          {subtitle && <p className="section-sub">{subtitle}</p>}
-        </div>
-        <ChevronDown
-          size={18}
-          className={`text-muted shrink-0 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
-        />
-      </button>
-      <Collapsible open={open}>
-        <div className="px-5 pb-5 pt-1">{children}</div>
-      </Collapsible>
-    </section>
+    <div className="rounded-2xl border border-white/10 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[640px]">
+          <thead>
+            <tr className="text-left text-muted text-xs uppercase tracking-wide bg-white/[0.02]">
+              <th className="px-5 py-3 font-medium">Role</th>
+              <th className="px-3 py-3 font-medium">Import</th>
+              <th className="px-3 py-3 font-medium">Max duration (s)</th>
+              <th className="px-3 py-3 font-medium">Max file size</th>
+              <th className="px-5 py-3 font-medium">Concurrency</th>
+            </tr>
+          </thead>
+          <tbody>
+            {roles.map((r) => (
+              <tr key={r.id} className="border-t border-white/5 align-middle">
+                <td className="px-5 py-3">
+                  <span className="font-medium">{r.name}</span>
+                </td>
+                <td className="px-3 py-3">
+                  <select
+                    className="input min-w-[120px] !py-1.5 text-xs"
+                    value={r.ytEnabledOverride == null ? "" : r.ytEnabledOverride ? "on" : "off"}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      update(r, { ytEnabledOverride: v === "" ? null : v === "on" });
+                    }}
+                  >
+                    <option value="">Global ({settings.ytEnabled ? "on" : "off"})</option>
+                    <option value="on">Enabled</option>
+                    <option value="off">Disabled</option>
+                  </select>
+                </td>
+                <td className="px-3 py-3">
+                  <NullableNumber
+                    value={r.ytMaxDurationSecOverride}
+                    placeholder={`(${settings.ytMaxDurationSec})`}
+                    min={1}
+                    max={3600}
+                    onCommit={(v) => update(r, { ytMaxDurationSecOverride: v })}
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <SizeInput
+                    value={r.ytMaxFileSizeOverride}
+                    nullable
+                    placeholder={`(${formatBytes(settings.ytMaxFileSize)})`}
+                    onCommit={(v) => update(r, { ytMaxFileSizeOverride: v })}
+                  />
+                </td>
+                <td className="px-5 py-3">
+                  <NullableNumber
+                    value={r.ytConcurrencyOverride}
+                    placeholder={`(${settings.ytConcurrency})`}
+                    min={1}
+                    max={4}
+                    onCommit={(v) => update(r, { ytConcurrencyOverride: v })}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
-// Animated show/hide using a 0fr↔1fr grid row (no fixed height needed).
-function Collapsible({ open, children }: { open: boolean; children: React.ReactNode }) {
+// A small integer input that commits on blur/Enter; an empty value commits null
+// (inherit). Reverts to the last valid value on out-of-range or non-numeric.
+function NullableNumber({
+  value,
+  onCommit,
+  placeholder,
+  min,
+  max,
+}: {
+  value: number | null;
+  onCommit: (v: number | null) => void;
+  placeholder?: string;
+  min: number;
+  max: number;
+}) {
+  const [v, setV] = useState(value == null ? "" : String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setV(value == null ? "" : String(value));
+  }, [value, focused]);
+
+  function commit() {
+    setFocused(false);
+    const trimmed = v.trim();
+    if (trimmed === "") {
+      if (value !== null) onCommit(null);
+      setV("");
+      return;
+    }
+    const n = Math.round(Number(trimmed));
+    if (!Number.isFinite(n) || n < min || n > max) {
+      setV(value == null ? "" : String(value)); // revert
+      return;
+    }
+    setV(String(n));
+    if (n !== value) onCommit(n);
+  }
+
   return (
-    <div
-      className={`grid transition-all duration-200 ${
-        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-      }`}
-    >
-      <div className="overflow-hidden">{children}</div>
+    <input
+      className="input w-28"
+      value={v}
+      placeholder={placeholder}
+      inputMode="numeric"
+      onFocus={() => setFocused(true)}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          setV(value == null ? "" : String(value));
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
+  );
+}
+
+// Admin tag management: rename inline (blur/Enter), or delete from every clip.
+function TagsTable({ tags, onChange }: { tags: TagRow[]; onChange: () => void }) {
+  const toast = useToast();
+  const mutate = useMutate();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function rename(t: TagRow, name: string) {
+    if (name.trim() === t.name) return;
+    setBusy(t.id);
+    const ok = await mutate(`/api/admin/tags/${t.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }, "Couldn't rename tag");
+    setBusy(null);
+    if (ok) {
+      toast.success("Tag renamed.");
+      onChange();
+    }
+  }
+  async function remove(t: TagRow) {
+    const extra = t.count > 0 ? ` It's used on ${t.count} clip(s).` : "";
+    if (!confirm(`Delete tag "${t.name}"?${extra}`)) return;
+    setBusy(t.id);
+    const ok = await mutate(`/api/admin/tags/${t.id}`, { method: "DELETE" }, "Couldn't delete tag");
+    setBusy(null);
+    if (ok) onChange();
+  }
+
+  if (tags.length === 0) {
+    return <p className="text-sm text-muted">No tags yet — they appear here once clips are tagged.</p>;
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-muted text-xs uppercase tracking-wide bg-white/[0.02]">
+              <th className="px-5 py-3 font-medium">Tag</th>
+              <th className="px-3 py-3 font-medium">Clips</th>
+              <th className="px-5 py-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {tags.map((t) => (
+              <tr key={t.id} className="border-t border-white/5">
+                <td className="px-5 py-3">
+                  <TagNameInput name={t.name} disabled={busy === t.id} onCommit={(n) => rename(t, n)} />
+                </td>
+                <td className="px-3 py-3 text-muted">{t.count}</td>
+                <td className="px-5 py-3 text-right">
+                  <button
+                    className="btn-ghost text-xs !text-red-300 hover:!text-red-200 hover:!bg-red-500/10 !border-red-400/20"
+                    disabled={busy === t.id}
+                    onClick={() => remove(t)}
+                  >
+                    <Trash2 size={13} className="mr-1" /> Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+function TagNameInput({
+  name,
+  onCommit,
+  disabled,
+}: {
+  name: string;
+  onCommit: (name: string) => void;
+  disabled?: boolean;
+}) {
+  const [v, setV] = useState(name);
+  useEffect(() => setV(name), [name]);
+  return (
+    <input
+      className="input w-48"
+      value={v}
+      disabled={disabled}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => (v.trim() && v.trim() !== name ? onCommit(v.trim()) : setV(name))}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          setV(name);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
   );
 }
 
@@ -346,19 +660,20 @@ function Toggle({
 }
 
 function RolesTable({ roles, onChange }: { roles: Role[]; onChange: () => void }) {
+  const mutate = useMutate();
   async function update(role: Role, patch: Partial<Role>) {
-    await fetch(`/api/admin/roles/${role.id}`, {
+    const ok = await mutate(`/api/admin/roles/${role.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
-    });
-    onChange();
+    }, "Couldn't update role");
+    if (ok) onChange();
   }
   async function remove(role: Role) {
     if (role.isSystem) return;
     if (!confirm(`Delete role "${role.name}"?`)) return;
-    await fetch(`/api/admin/roles/${role.id}`, { method: "DELETE" });
-    onChange();
+    const ok = await mutate(`/api/admin/roles/${role.id}`, { method: "DELETE" }, "Couldn't delete role");
+    if (ok) onChange();
   }
 
   return (
@@ -439,12 +754,24 @@ function NewRoleForm({ onCreated }: { onCreated: () => void }) {
     if (f == null) return setErr("Max file size is invalid (try '5 MB')");
     if (t == null) return setErr("Max total storage is invalid (try '50 MB')");
     setBusy(true);
-    await fetch("/api/admin/roles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, defaultMaxFileSize: f, defaultMaxTotalStorage: t, canUpload }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/admin/roles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, defaultMaxFileSize: f, defaultMaxTotalStorage: t, canUpload }),
+      });
+    } catch {
+      setBusy(false);
+      setErr("Network error — couldn't create the role.");
+      return;
+    }
     setBusy(false);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setErr(j.error ?? "Couldn't create the role");
+      return;
+    }
     setName("");
     setCanUpload(true);
     onCreated();
@@ -522,13 +849,14 @@ function UsersTable({
     );
   }, [users, q]);
 
+  const mutate = useMutate();
   async function update(u: User, patch: Partial<User>) {
-    await fetch(`/api/admin/users/${u.id}`, {
+    const ok = await mutate(`/api/admin/users/${u.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
-    });
-    onChange();
+    }, "Couldn't update user");
+    if (ok) onChange();
   }
 
   return (
@@ -731,10 +1059,13 @@ function SizeInput({
   );
 }
 
-function SoundsTable({ sounds, onChange }: { sounds: Sound[]; onChange: () => void }) {
+function SoundsTable({ sounds, allTags, onChange }: { sounds: Sound[]; allTags: string[]; onChange: () => void }) {
+  const mutate = useMutate();
+  const toast = useToast();
   const [q, setQ] = useState("");
   const [publicOnly, setPublicOnly] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [editingTags, setEditingTags] = useState<string | null>(null);
   const audio = useAudioOutput();
   const listId = useId();
 
@@ -766,23 +1097,35 @@ function SoundsTable({ sounds, onChange }: { sounds: Sound[]; onChange: () => vo
 
   async function setPublic(s: Sound, isPublic: boolean) {
     setBusy(s.id);
-    await fetch(`/api/admin/sounds/${s.id}`, {
+    const ok = await mutate(`/api/admin/sounds/${s.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isPublic }),
-    });
+    }, "Couldn't change visibility");
     setBusy(null);
-    onChange();
+    if (ok) onChange();
+  }
+
+  async function saveTags(s: Sound, next: string[]) {
+    const ok = await mutate(`/api/admin/sounds/${s.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags: next }),
+    }, "Couldn't save tags");
+    if (ok) onChange();
   }
 
   async function remove(s: Sound) {
     const extra = s.boardCount > 0 ? `\n\nThis removes it from ${s.boardCount} board(s).` : "";
     if (!confirm(`Delete "${s.name}" by ${s.ownerName ?? "unknown"}? This deletes the file permanently.${extra}`)) return;
     setBusy(s.id);
-    await fetch(`/api/admin/sounds/${s.id}`, { method: "DELETE" });
+    const ok = await mutate(`/api/admin/sounds/${s.id}`, { method: "DELETE" }, "Couldn't delete sound");
     setBusy(null);
-    audio.cancelSound(s.id);
-    onChange();
+    if (ok) {
+      audio.cancelSound(s.id);
+      toast.success("Sound deleted.");
+      onChange();
+    }
   }
 
   return (
@@ -852,6 +1195,32 @@ function SoundsTable({ sounds, onChange }: { sounds: Sound[]; onChange: () => vo
                         <div className="text-[11px] text-muted truncate max-w-[260px]">
                           {s.originalFilename}
                         </div>
+                        {editingTags === s.id ? (
+                          <div className="mt-1.5 max-w-[260px] flex flex-col gap-1">
+                            <TagEditor value={s.tags} suggestions={allTags} onChange={(next) => saveTags(s, next)} />
+                            <button
+                              type="button"
+                              className="btn-ghost text-[11px] self-start !py-0.5"
+                              onClick={() => setEditingTags(null)}
+                            >
+                              Done
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setEditingTags(s.id)}
+                            className="mt-1 flex items-center gap-1.5 text-left max-w-[260px]"
+                            title="Edit tags"
+                          >
+                            <TagIcon size={12} className="text-muted shrink-0" />
+                            {s.tags.length ? (
+                              <TagChips tags={s.tags} />
+                            ) : (
+                              <span className="text-[11px] text-muted/60">Add tags</span>
+                            )}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -881,7 +1250,7 @@ function SoundsTable({ sounds, onChange }: { sounds: Sound[]; onChange: () => vo
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-2">
-                      {s.isPublic && (
+                      {s.isPublic ? (
                         <button
                           className="btn-ghost text-xs"
                           disabled={busy === s.id}
@@ -889,6 +1258,15 @@ function SoundsTable({ sounds, onChange }: { sounds: Sound[]; onChange: () => vo
                           title="Remove from public browse"
                         >
                           Make private
+                        </button>
+                      ) : (
+                        <button
+                          className="btn-ghost text-xs !text-emerald-300 !border-emerald-400/30"
+                          disabled={busy === s.id}
+                          onClick={() => setPublic(s, true)}
+                          title="Publish to public browse"
+                        >
+                          <Globe size={13} className="mr-1" /> Make public
                         </button>
                       )}
                       <button

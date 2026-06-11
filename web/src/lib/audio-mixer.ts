@@ -5,7 +5,8 @@
 // It owns a single AudioContext and routes a set of SOURCES to two destinations:
 //
 //   sources ─┬─► cableBus ─┬─► limiter ─► ctx.destination ─►(setSinkId) virtual cable (game's mic)
-//            │             └─► analyser  (peak meter tap, pre-limiter)
+//            │             └─► analyser  (cable peak meter tap, pre-limiter)
+//            ├─► analyser  (per-input peak meter tap, post-volume)
 //            └─► (per-source monitor send) ─► monitorBus ─► <audio>.setSinkId ─► your ears
 //
 // The limiter sits on the cable path because sources sum at unity: a hot mic +
@@ -43,6 +44,9 @@ type ActiveInput = Source & {
   stream: MediaStream;
   src: MediaStreamAudioSourceNode;
   gain: GainNode;
+  // Post-volume tap so each row can show its own contribution to the cable.
+  analyser: AnalyserNode;
+  peakBuf: Float32Array<ArrayBuffer>;
 };
 
 type AudioWithSink = HTMLAudioElement & {
@@ -65,6 +69,19 @@ const mwarn = (...args: unknown[]) =>
 
 function clamp01(v: number) {
   return Math.max(0, Math.min(1, v));
+}
+
+// Read the max absolute sample currently in an analyser's time-domain buffer,
+// as a linear 0..1+ peak (can exceed 1 when a signal is driving past 0 dBFS).
+function peakOf(analyser: AnalyserNode | null, buf: Float32Array<ArrayBuffer> | null): number {
+  if (!analyser || !buf) return 0;
+  analyser.getFloatTimeDomainData(buf);
+  let peak = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = Math.abs(buf[i]);
+    if (v > peak) peak = v;
+  }
+  return peak;
 }
 
 export class MicMixer {
@@ -101,16 +118,14 @@ export class MicMixer {
   // value (can exceed 1.0 when the sources are driving the limiter into
   // clipping). Cheap enough to poll each animation frame for a meter.
   getCablePeak(): number {
-    const a = this.cableAnalyser;
-    const buf = this.peakBuf;
-    if (!a || !buf) return 0;
-    a.getFloatTimeDomainData(buf);
-    let peak = 0;
-    for (let i = 0; i < buf.length; i++) {
-      const v = Math.abs(buf[i]);
-      if (v > peak) peak = v;
-    }
-    return peak;
+    return peakOf(this.cableAnalyser, this.peakBuf);
+  }
+
+  // Current peak amplitude of a single live input (post its volume gain), linear
+  // 0..1+. Returns 0 if that input isn't open. Cheap enough to poll per frame.
+  getInputPeak(deviceId: string): number {
+    const n = this.inputs.get(deviceId);
+    return n ? peakOf(n.analyser, n.peakBuf) : 0;
   }
 
   async start(cableDeviceId: string) {
@@ -263,6 +278,7 @@ export class MicMixer {
         node.stream.getTracks().forEach((t) => t.stop());
         node.src.disconnect();
         node.gain.disconnect();
+        node.analyser.disconnect();
         node.monitorSend.disconnect();
         this.inputs.delete(id);
       }
@@ -293,8 +309,13 @@ export class MicMixer {
         const gain = this.ctx.createGain();
         gain.gain.value = clamp01(d.volume);
         src.connect(gain);
+        // Post-volume meter tap (analysis only — not connected onward).
+        const analyser = this.ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        gain.connect(analyser);
+        const peakBuf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
         const monitorSend = this.connectSource(gain, d.deviceId);
-        this.inputs.set(d.deviceId, { stream, src, gain, out: gain, monitorSend });
+        this.inputs.set(d.deviceId, { stream, src, gain, out: gain, monitorSend, analyser, peakBuf });
         mlog("input mic open OK", d.deviceId.slice(0, 8));
       } catch (e) {
         mwarn("could not open input", d.deviceId.slice(0, 8), (e as Error)?.name, (e as Error)?.message);
@@ -353,6 +374,7 @@ export class MicMixer {
       node.stream.getTracks().forEach((t) => t.stop());
       node.src.disconnect();
       node.gain.disconnect();
+      node.analyser.disconnect();
       node.monitorSend.disconnect();
     }
     this.inputs.clear();

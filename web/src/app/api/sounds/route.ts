@@ -57,8 +57,17 @@ export async function POST(req: Request) {
   // user's max-file-size plus a small overhead for multipart framing.
   const limits = await getUserLimits(session.user.id);
   const perRequestCap = Math.min(limits.maxFileSize, HARD_UPLOAD_CEILING);
-  const declaredLen = Number(req.headers.get("content-length") ?? "");
-  if (Number.isFinite(declaredLen) && declaredLen > perRequestCap + 4096) {
+  const rawLen = req.headers.get("content-length");
+  const declaredLen = Number(rawLen);
+  // Require a positive declared length so the size cap is enforced *before* we
+  // buffer the body. Without this, a chunked / Content-Length-less request skips
+  // the check and reaches req.formData(), which reads the whole body into memory.
+  // Note: `Number("")` and `Number(null)` are both 0 (finite), so an isFinite
+  // check alone would let a header-less request fall through — require > 0.
+  if (rawLen === null || !Number.isFinite(declaredLen) || declaredLen <= 0) {
+    return NextResponse.json({ error: "missing or invalid content-length" }, { status: 411 });
+  }
+  if (declaredLen > perRequestCap + 4096) {
     return NextResponse.json(
       { error: `file too large (max ${limits.maxFileSize} bytes)` },
       { status: 413 }
@@ -112,6 +121,19 @@ export async function POST(req: Request) {
 
   const isPublic = String(form.get("isPublic") ?? "false") === "true";
 
+  // Optional tags as a JSON array of strings; persistSound normalizes them and
+  // falls back to the default `misc` tag when none are supplied.
+  let tags: string[] = [];
+  const rawTags = form.get("tags");
+  if (typeof rawTags === "string" && rawTags) {
+    try {
+      const arr = JSON.parse(rawTags);
+      if (Array.isArray(arr)) tags = arr.map(String);
+    } catch {
+      /* ignore malformed tags — fall back to misc */
+    }
+  }
+
   const row = await persistSound({
     ownerId: session.user.id,
     discordId: session.user.discordId,
@@ -119,6 +141,7 @@ export async function POST(req: Request) {
     originalFilename: origParsed.data,
     buf,
     isPublic,
+    tags,
   });
 
   return NextResponse.json({ sound: row });

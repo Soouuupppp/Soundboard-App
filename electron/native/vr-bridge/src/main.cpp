@@ -123,7 +123,8 @@ static std::vector<Analog> makeAnalog() {
 // ---- app registration (names us "Soundboard", auto-applies bindings) -------
 
 static void writeVrManifest(const std::string& path, const std::string& exe,
-                            const std::string& actionsPath) {
+                            const std::string& actionsPath,
+                            const std::string& iconPath) {
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f) return;
     f << "{\n"
@@ -134,6 +135,7 @@ static void writeVrManifest(const std::string& path, const std::string& exe,
       << "    \"binary_path_windows\": \"" << jsonEscape(exe) << "\",\n"
       << "    \"is_dashboard_overlay\": false,\n"
       << "    \"action_manifest_path\": \"" << jsonEscape(actionsPath) << "\",\n"
+      << "    \"image_path\": \"" << jsonEscape(iconPath) << "\",\n"
       << "    \"strings\": { \"en_US\": { \"name\": \"Soundboard\", "
          "\"description\": \"Soundboard controller bindings\" } }\n"
       << "  }]\n"
@@ -145,11 +147,13 @@ static void registerApp(const std::string& vrmanifestPath) {
     if (!apps) return;
     vr::EVRApplicationError e = apps->AddApplicationManifest(vrmanifestPath.c_str(), false);
     if (e != vr::VRApplicationError_None) {
-        std::fprintf(stderr, "[vr-bridge] AddApplicationManifest: %d\n", e);
+        std::fprintf(stderr, "[vr-bridge] AddApplicationManifest error %d (%s)\n",
+                     e, vr::VRApplications()->GetApplicationsErrorNameFromEnum(e));
     }
     e = apps->IdentifyApplication(GetCurrentProcessId(), kAppKey);
     if (e != vr::VRApplicationError_None) {
-        std::fprintf(stderr, "[vr-bridge] IdentifyApplication: %d\n", e);
+        std::fprintf(stderr, "[vr-bridge] IdentifyApplication error %d (%s)\n",
+                     e, vr::VRApplications()->GetApplicationsErrorNameFromEnum(e));
     }
 }
 
@@ -157,8 +161,9 @@ static void registerApp(const std::string& vrmanifestPath) {
 // Returns when SteamVR quits (or setup fails); caller reconnects.
 
 static void runSession(vr::IVRSystem* sys, const std::string& actionsPath,
-                       const std::string& vrmanifestPath, const std::string& exe) {
-    writeVrManifest(vrmanifestPath, exe, actionsPath);
+                       const std::string& vrmanifestPath, const std::string& exe,
+                       const std::string& iconPath) {
+    writeVrManifest(vrmanifestPath, exe, actionsPath, iconPath);
     registerApp(vrmanifestPath);
 
     auto* input = vr::VRInput();
@@ -245,6 +250,7 @@ int main(int argc, char** argv) {
     if (actionsPath.empty()) actionsPath = dir + "\\soundboard_actions.json";
     if (dataDir.empty()) dataDir = dir;
     const std::string vrmanifestPath = dataDir + "\\soundboard.vrmanifest";
+    const std::string iconPath = dir + "\\icon.png";
 
     watchStdinForExit();
 
@@ -262,7 +268,7 @@ int main(int argc, char** argv) {
         }
         announcedDisconnected = false;
 
-        runSession(sys, actionsPath, vrmanifestPath, exe);
+        runSession(sys, actionsPath, vrmanifestPath, exe, iconPath);
 
         vr::VR_Shutdown();
         emitStatus(false);

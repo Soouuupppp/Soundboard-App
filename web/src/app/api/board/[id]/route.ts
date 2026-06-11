@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { boardEntries } from "@/db/schema";
-import { PatchBoardEntryBody } from "@/lib/validation";
+import { PatchBoardEntryBody, isUuid } from "@/lib/validation";
 import { clientKey, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -20,6 +20,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (!rl.ok) return tooManyRequests(rl.retryAfter);
 
   const { id } = await params;
+  if (!isUuid(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
   const parsed = PatchBoardEntryBody.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid body", issues: parsed.error.issues }, { status: 400 });
@@ -29,6 +30,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if ("controllerBind" in parsed.data) updates.controllerBind = parsed.data.controllerBind ?? null;
   if ("label" in parsed.data) updates.label = parsed.data.label ?? null;
   if (parsed.data.position !== undefined) updates.position = parsed.data.position;
+  if (parsed.data.onBoard !== undefined) updates.onBoard = parsed.data.onBoard;
   if (Object.keys(updates).length === 0) return NextResponse.json({ ok: true });
 
   const [row] = await db
@@ -51,6 +53,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!rl.ok) return tooManyRequests(rl.retryAfter);
 
   const { id } = await params;
+  if (!isUuid(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
   await db
     .delete(boardEntries)
     .where(and(eq(boardEntries.id, id), eq(boardEntries.userId, session.user.id)));

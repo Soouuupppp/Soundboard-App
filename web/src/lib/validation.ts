@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidVrBindString } from "@/lib/vr-bind";
 
 // Broad-but-safe caps. Generous enough that no real user notices, tight enough
 // that the DB can't be stuffed with megabyte-long strings or weird control chars.
@@ -24,16 +25,22 @@ export const keybind = z
   .max(96)
   .regex(/^[A-Za-z0-9]+(\+[A-Za-z0-9]+){0,5}$/, "invalid keybind");
 
-// Valve Index controller bind: a chord of up to 6 fixed tokens joined by "+",
-// e.g. "VR:LeftHand:TrackpadTouch+VR:RightHand:A".
-const VR_TOKEN =
-  "VR:(LeftHand|RightHand):(A|B|Trigger|Grip|ThumbstickClick|ATouch|TrackpadTouch|TriggerPull)";
+// Valve Index controller bind: either a legacy "+"-joined chord
+// (VR:LeftHand:A+VR:RightHand:Trigger) or the new JSON step/sequence format.
+// lib/vr-bind.ts owns the grammar + caps; we just bound the raw length here.
 export const controllerBind = z
   .string()
-  .max(220)
-  .regex(new RegExp(`^(?:${VR_TOKEN})(?:\\+(?:${VR_TOKEN})){0,5}$`), "invalid controller bind");
+  .max(2000)
+  .refine(isValidVrBindString, "invalid controller bind");
 
 export const uuid = z.string().uuid();
+
+// Guard for dynamic route params that index a uuid column: true only for a
+// well-formed uuid. Routes use it to 404 early instead of letting Postgres throw
+// "invalid input syntax for type uuid" (which surfaces as an unhandled 500).
+export function isUuid(v: string): boolean {
+  return uuid.safeParse(v).success;
+}
 
 // Quota values — non-negative integers, capped at ~1 PiB so nobody fat-fingers
 // a 20-digit number into the admin form and corrupts the bigint column.
@@ -45,10 +52,15 @@ export const roleName = printable(60).pipe(z.string().min(1));
 
 // Request body shapes ------------------------------------------------------
 
+// Tags as sent by the client — loosely bounded here (≤6 raw entries, each
+// ≤40 chars); lib/tags.ts does the real normalize/dedupe/cap-at-3.
+export const tagList = z.array(z.string().max(40)).max(6);
+
 export const PatchSoundBody = z
   .object({
     name: soundName.optional(),
     isPublic: z.boolean().optional(),
+    tags: tagList.optional(),
   })
   .strict();
 
@@ -58,6 +70,8 @@ export const PatchBoardEntryBody = z
     controllerBind: controllerBind.nullable().optional(),
     label: boardLabel.nullable().optional(),
     position: z.number().int().min(0).max(10_000).optional(),
+    // Saved vs Board: move this entry on/off the playable board.
+    onBoard: z.boolean().optional(),
   })
   .strict();
 
@@ -84,8 +98,17 @@ export const PatchRoleBody = z
     defaultMaxFileSize: quotaBytes.optional(),
     defaultMaxTotalStorage: quotaBytes.optional(),
     canUpload: z.boolean().optional(),
+    // Per-role YouTube-import overrides — null clears the override (inherit the
+    // global appSettings value).
+    ytEnabledOverride: z.boolean().nullable().optional(),
+    ytMaxDurationSecOverride: z.number().int().min(1).max(3600).nullable().optional(),
+    ytMaxFileSizeOverride: quotaBytesNullable.optional(),
+    ytConcurrencyOverride: z.number().int().min(1).max(4).nullable().optional(),
   })
   .strict();
+
+// Admin tag rename. The real normalize/cap lives in lib/tags.ts.
+export const PatchTagBody = z.object({ name: z.string().max(40) }).strict();
 
 export const PatchUserBody = z
   .object({

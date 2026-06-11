@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { conversionJobs } from "@/db/schema";
+import { isUuid } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ jobId: 
   if (!session?.user?.id) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { jobId } = await params;
+  if (!isUuid(jobId)) return NextResponse.json({ error: "not found" }, { status: 404 });
   const [job] = await db
     .select({
       status: conversionJobs.status,
