@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { appSettings } from "@/db/schema";
+import { appSettings, roles, users } from "@/db/schema";
 
 const SINGLETON_ID = "singleton";
 
@@ -32,6 +32,52 @@ export async function updateAppSettings(
     .where(eq(appSettings.id, SINGLETON_ID))
     .returning();
   return row;
+}
+
+// Effective YouTube-import config for a single user. Each limit resolves
+// per-role override → global appSettings default. `enabled` keeps the global
+// ytEnabled as a hard master switch: a role can only *disable* below it (a true
+// override never enables import while the master is off).
+export type YtConfig = {
+  enabled: boolean;
+  maxDurationSec: number;
+  maxFileSize: number;
+  concurrency: number;
+};
+
+export async function getYtConfigForUser(userId: string): Promise<YtConfig> {
+  const settings = await getAppSettings();
+
+  let role:
+    | {
+        ytEnabledOverride: boolean | null;
+        ytMaxDurationSecOverride: number | null;
+        ytMaxFileSizeOverride: number | null;
+        ytConcurrencyOverride: number | null;
+      }
+    | null = null;
+
+  const [u] = await db.select({ roleId: users.roleId }).from(users).where(eq(users.id, userId)).limit(1);
+  if (u?.roleId) {
+    const [r] = await db
+      .select({
+        ytEnabledOverride: roles.ytEnabledOverride,
+        ytMaxDurationSecOverride: roles.ytMaxDurationSecOverride,
+        ytMaxFileSizeOverride: roles.ytMaxFileSizeOverride,
+        ytConcurrencyOverride: roles.ytConcurrencyOverride,
+      })
+      .from(roles)
+      .where(eq(roles.id, u.roleId))
+      .limit(1);
+    role = r ?? null;
+  }
+
+  return {
+    enabled: settings.ytEnabled && (role?.ytEnabledOverride ?? true),
+    maxDurationSec: role?.ytMaxDurationSecOverride ?? settings.ytMaxDurationSec,
+    maxFileSize: role?.ytMaxFileSizeOverride ?? settings.ytMaxFileSize,
+    concurrency: role?.ytConcurrencyOverride ?? settings.ytConcurrency,
+  };
 }
 
 // Split the stored comma list into trimmed, lowercased bare hostnames.

@@ -5,7 +5,7 @@ import { conversionJobs } from "@/db/schema";
 import { canUserUpload } from "@/lib/quota";
 import { clientKey, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { PostYoutubeBody } from "@/lib/validation";
-import { getAppSettings, parseAllowedHosts } from "@/lib/app-settings";
+import { getAppSettings, getYtConfigForUser, parseAllowedHosts } from "@/lib/app-settings";
 import { enqueueConversion, hostAllowed } from "@/lib/yt-convert";
 
 export const runtime = "nodejs";
@@ -19,7 +19,8 @@ export async function POST(req: Request) {
   }
 
   const settings = await getAppSettings();
-  if (!settings.ytEnabled) {
+  const yt = await getYtConfigForUser(session.user.id);
+  if (!yt.enabled) {
     return NextResponse.json({ error: "YouTube import is disabled" }, { status: 403 });
   }
 
@@ -56,6 +57,6 @@ export async function POST(req: Request) {
     })
     .returning();
 
-  enqueueConversion(job.id);
+  enqueueConversion(job.id, session.user.id);
   return NextResponse.json({ jobId: job.id });
 }

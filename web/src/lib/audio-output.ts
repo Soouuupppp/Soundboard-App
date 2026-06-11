@@ -24,10 +24,17 @@ type AudioWithSink = HTMLAudioElement & {
   setSinkId?: (id: string) => Promise<void>;
 };
 
+type SinkCapableContext = AudioContext & {
+  setSinkId?: (id: string) => Promise<void>;
+};
+
 type Active = {
   // Normal mode: the only element (plays to the selected output device).
   // Virtual Mic mode: null — playback is fully owned by the mixer (`cable`).
   monitorAudio: AudioWithSink | null;
+  // Normal mode (metered path only): the element's tap into the OutputGraph, so
+  // it can be disconnected when the clip ends. Null on the fallback path.
+  outSource: MediaElementAudioSourceNode | null;
   // Virtual Mic mode only: the clip's injection into the soundboard mix. The
   // mixer fans it out to the cable and every enabled output (monitor) line.
   cable: { gain: GainNode; stop: () => void } | null;
@@ -35,6 +42,85 @@ type Active = {
   entryId?: string;
   perEntryVolume: number;
 };
+
+// OutputGraph — a tiny Web Audio graph for NORMAL-mode playback (Virtual Mic
+// mode off). It exists so the soundboard's output can be metered globally:
+//
+//   <audio>.play() ─► MediaElementSource ─► master ─► analyser ─► ctx.destination ─►(setSinkId) output device
+//
+// Output-device routing moves to ctx.setSinkId here, because
+// createMediaElementSource consumes the element's own output (its .setSinkId no
+// longer routes). Requires AudioContext.setSinkId (Chromium 110+); callers fall
+// back to a plain <audio>.setSinkId path (no meter) when it's unavailable.
+class OutputGraph {
+  private ctx: SinkCapableContext | null = null;
+  private master: GainNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private peakBuf: Float32Array<ArrayBuffer> | null = null;
+
+  // Build the graph on first use and (re)apply the output device. Synchronous so
+  // a clip can attach + play in the same tick; sink/resume settle in the
+  // background. (The AudioContext constructor and node wiring are synchronous.)
+  ensure(deviceId: string) {
+    if (!this.ctx) {
+      const ctx = new AudioContext() as SinkCapableContext;
+      const master = ctx.createGain();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      master.connect(analyser);
+      analyser.connect(ctx.destination);
+      this.ctx = ctx;
+      this.master = master;
+      this.analyser = analyser;
+      this.peakBuf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
+    }
+    void this.applySink(deviceId);
+    if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
+  }
+
+  private async applySink(deviceId: string) {
+    const ctx = this.ctx;
+    if (!ctx || typeof ctx.setSinkId !== "function") return;
+    const target = deviceId && deviceId !== "default" ? deviceId : "";
+    await ctx.setSinkId(target).catch(() => {});
+  }
+
+  async setDevice(deviceId: string) {
+    await this.applySink(deviceId);
+  }
+
+  // Route a playing element through the graph; returns its source node (to
+  // disconnect on cleanup), or null if the graph isn't ready.
+  attach(el: HTMLMediaElement): MediaElementAudioSourceNode | null {
+    if (!this.ctx || !this.master) return null;
+    const src = this.ctx.createMediaElementSource(el);
+    src.connect(this.master);
+    return src;
+  }
+
+  getPeak(): number {
+    const a = this.analyser;
+    const buf = this.peakBuf;
+    if (!a || !buf) return 0;
+    a.getFloatTimeDomainData(buf);
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = Math.abs(buf[i]);
+      if (v > peak) peak = v;
+    }
+    return peak;
+  }
+
+  async close() {
+    if (this.ctx) {
+      try { await this.ctx.close(); } catch { /* ignore */ }
+    }
+    this.ctx = null;
+    this.master = null;
+    this.analyser = null;
+    this.peakBuf = null;
+  }
+}
 
 function read(): Stored {
   if (typeof window === "undefined") return {};
@@ -83,6 +169,15 @@ export type AudioOutput = {
   // Current peak level of the cable sum (linear, 0..1+; >1 = driving the limiter
   // into clipping). Returns 0 when the mixer isn't running.
   getCablePeak: () => number;
+  // Global output peak (linear, 0..1+): the cable sum in Virtual Mic mode, else
+  // the normal-mode output graph. 0 when nothing is playing / metering is
+  // unavailable (no AudioContext.setSinkId in normal mode).
+  getOutputPeak: () => number;
+  // Per-input peak (linear, 0..1+) for a capture line, post its volume. 0 unless
+  // that input is live in the mixer. Lets each source row show its own meter.
+  getInputPeak: (deviceId: string) => number;
+  // True when normal-mode output can be metered (AudioContext.setSinkId present).
+  supportsOutputMeter: boolean;
   mixerError: string | null;
   labelsError: string | null;
   supportsContextSink: boolean;
@@ -109,6 +204,9 @@ export function useAudioOutput(): AudioOutput {
   masterRef.current = masterVolume;
 
   const mixerRef = useRef<MicMixer | null>(null);
+  // Normal-mode output graph (lazily created on first normal-mode play) so the
+  // soundboard output can be metered when Virtual Mic mode is off.
+  const outGraphRef = useRef<OutputGraph | null>(null);
   const virtualMicModeRef = useRef(virtualMicMode);
   virtualMicModeRef.current = virtualMicMode;
 
@@ -300,12 +398,17 @@ export function useAudioOutput(): AudioOutput {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [virtualMicMode]);
 
-  // React to output-device (cable) changes while the mode is already running.
+  // React to output-device changes while running. In Virtual Mic mode this is
+  // the cable target; in normal mode it reroutes the metered output graph.
   useEffect(() => {
-    if (!virtualMicModeRef.current || !mixerRef.current?.isReady()) return;
-    mixerRef.current.setCableDevice(deviceId).catch((e) => {
-      setMixerError(String((e as Error)?.message || e));
-    });
+    if (virtualMicModeRef.current) {
+      if (!mixerRef.current?.isReady()) return;
+      mixerRef.current.setCableDevice(deviceId).catch((e) => {
+        setMixerError(String((e as Error)?.message || e));
+      });
+    } else {
+      outGraphRef.current?.setDevice(deviceId).catch(() => {});
+    }
   }, [deviceId]);
 
   // React to input selection/volume changes while the mode is already running.
@@ -325,12 +428,16 @@ export function useAudioOutput(): AudioOutput {
     mixerRef.current.setMonitored(monitored);
   }, [monitored]);
 
-  // Tear the mixer down on unmount so mic capture stops cleanly.
+  // Tear the mixer + output graph down on unmount so mic capture and the
+  // output AudioContext stop cleanly.
   useEffect(() => {
     return () => {
       const m = mixerRef.current;
       mixerRef.current = null;
       m?.stop();
+      const g = outGraphRef.current;
+      outGraphRef.current = null;
+      g?.close();
     };
   }, []);
 
@@ -357,7 +464,7 @@ export function useAudioOutput(): AudioOutput {
     if (useMixer) {
       // The mixer owns playback in this mode: it fans the clip out to the cable
       // (what the game hears) and every enabled output line (what you monitor).
-      const entry: Active = { monitorAudio: null, cable: null, soundId, entryId, perEntryVolume };
+      const entry: Active = { monitorAudio: null, outSource: null, cable: null, soundId, entryId, perEntryVolume };
       activeRef.current.push(entry);
       recomputePlaying();
       const cleanup = () => removeActive(entry);
@@ -369,21 +476,36 @@ export function useAudioOutput(): AudioOutput {
     // Normal mode: single element to the selected output device.
     const mon = new Audio(url) as AudioWithSink;
     mon.volume = vol;
-    const entry: Active = { monitorAudio: mon, cable: null, soundId, entryId, perEntryVolume };
+    const entry: Active = { monitorAudio: mon, outSource: null, cable: null, soundId, entryId, perEntryVolume };
     activeRef.current.push(entry);
     recomputePlaying();
 
-    const cleanup = () => removeActive(entry);
+    const cleanup = () => {
+      try { entry.outSource?.disconnect(); } catch {/* ignore */}
+      removeActive(entry);
+    };
     mon.addEventListener("ended", cleanup);
     mon.addEventListener("error", cleanup);
 
-    const start = () => mon.play().catch(cleanup);
-    if (supportsSinkId && deviceId && deviceId !== "default" && mon.setSinkId) {
-      mon.setSinkId(deviceId).then(start).catch(start);
+    if (supportsContextSink) {
+      // Metered path: route through the output graph (it owns device routing via
+      // ctx.setSinkId, so don't also call mon.setSinkId). attach() consuming the
+      // element's output is what lets the analyser meter it.
+      if (!outGraphRef.current) outGraphRef.current = new OutputGraph();
+      outGraphRef.current.ensure(deviceId);
+      entry.outSource = outGraphRef.current.attach(mon);
+      mon.play().catch(cleanup);
     } else {
-      start();
+      // Fallback (no AudioContext.setSinkId): play the element directly to the
+      // chosen device. No global meter in this build.
+      const start = () => mon.play().catch(cleanup);
+      if (supportsSinkId && deviceId && deviceId !== "default" && mon.setSinkId) {
+        mon.setSinkId(deviceId).then(start).catch(start);
+      } else {
+        start();
+      }
     }
-  }, [deviceId, supportsSinkId, recomputePlaying, removeActive]);
+  }, [deviceId, supportsSinkId, supportsContextSink, recomputePlaying, removeActive]);
 
   const updateEntryVolume = useCallback((entryId: string, perEntryVolume: number) => {
     for (const a of activeRef.current) {
@@ -403,6 +525,7 @@ export function useAudioOutput(): AudioOutput {
         entry.monitorAudio.currentTime = 0;
       }
     } catch {/* ignore */}
+    try { entry.outSource?.disconnect(); } catch {/* ignore */}
     try { entry.cable?.stop(); } catch {/* ignore */}
     removeActive(entry);
   }, [removeActive]);
@@ -418,6 +541,18 @@ export function useAudioOutput(): AudioOutput {
   }, [stopEntry]);
 
   const getCablePeak = useCallback(() => mixerRef.current?.getCablePeak() ?? 0, []);
+  // Global output: cable sum in Virtual Mic mode, else the normal-mode graph.
+  const getOutputPeak = useCallback(
+    () =>
+      (virtualMicModeRef.current
+        ? mixerRef.current?.getCablePeak()
+        : outGraphRef.current?.getPeak()) ?? 0,
+    [],
+  );
+  const getInputPeak = useCallback(
+    (id: string) => mixerRef.current?.getInputPeak(id) ?? 0,
+    [],
+  );
 
   return {
     deviceId,
@@ -446,6 +581,9 @@ export function useAudioOutput(): AudioOutput {
     setMonitored,
     soundboardKey: SOUNDBOARD_KEY,
     getCablePeak,
+    getOutputPeak,
+    getInputPeak,
+    supportsOutputMeter: supportsContextSink,
     mixerError,
     labelsError,
     supportsContextSink,

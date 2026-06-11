@@ -4,6 +4,7 @@ import { auth, isAdminSession } from "@/lib/auth";
 import { db } from "@/db";
 import { sounds } from "@/db/schema";
 import { openReadStream, statStorageFile } from "@/lib/storage";
+import { isUuid } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const session = await auth();
   if (!session?.user?.id) return new Response("unauthorized", { status: 401 });
   const { id } = await params;
+  if (!isUuid(id)) return new Response("not found", { status: 404 });
 
   const [row] = await db.select().from(sounds).where(eq(sounds.id, id)).limit(1);
   if (!row) return new Response("not found", { status: 404 });

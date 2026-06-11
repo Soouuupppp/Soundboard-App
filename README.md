@@ -2,23 +2,24 @@
 
 > 🎉 **Public & free instance available at [soundboard.soouuupppp.com](https://soundboard.soouuupppp.com)** — log in with Discord and start building your board, no setup required.
 
-Discord-authenticated soundboard dashboard. Upload mp3s, organize them on a board, assign keybinds, and share publicly. **Virtual Mic mode** mixes your mics and the soundboard into a virtual cable so clips come through as your mic in games and calls. Ships with a Windows Electron wrapper that registers OS-level global shortcuts so keybinds work even when the browser isn't focused.
+Discord-authenticated soundboard dashboard. Upload mp3s (or import straight from YouTube), trim them in a built-in waveform clip editor, tag and organize them in a **Saved** library, promote a curated subset onto a playable **Board**, assign keyboard **and Valve Index VR controller** binds, and share clips publicly for others to browse and add to their own library. **Virtual Mic mode** mixes your mics and the soundboard into a virtual cable so clips come through as your mic in games and calls. Ships with a Windows Electron wrapper that registers OS-level global shortcuts (and listens to VR controllers via a native OpenVR sidecar) so binds work even when the browser isn't focused.
 
 **Author:** Soouuupppp · [soouuupppp.com](https://soouuupppp.com) · [soouuuppppgames@gmail.com](mailto:soouuuppppgames@gmail.com) · [github.com/Soouuupppp](https://github.com/Soouuupppp)
 
 ## Stack
 
-- **web/** — Next.js 15 (App Router, TS), Tailwind glassy dark UI, Auth.js (Discord), Drizzle ORM, Postgres. In-browser Virtual Mic mixer built on the Web Audio API (`setSinkId` routing).
-- **electron/** — Windows wrapper around the web app; passthrough low-level keyboard hook (`uiohook-napi`) → IPC → renderer event (keys still reach whatever app currently has focus)
+- **web/** — Next.js 15 (App Router, TS), Tailwind glassy dark UI, Auth.js (Discord), Drizzle ORM, Postgres, Zod validation. In-browser Virtual Mic mixer built on the Web Audio API (`setSinkId` routing); client-side clip editor on `wavesurfer.js` + `@breezystack/lamejs`. CSP/nonce + CSRF defense live in `middleware.ts`.
+- **electron/** — Windows wrapper around the web app; passthrough low-level keyboard hook (`uiohook-napi`) → IPC → renderer event (keys still reach whatever app currently has focus). Valve Index controllers are read by a bundled **C++/OpenVR sidecar** (`electron/native/vr-bridge`).
+- **YouTube import** — `yt-dlp` + `ffmpeg` (installed in the web Dockerfile); runs in-process, admin-gated with per-role limits.
 - **Postgres** — official `postgres:16-alpine` image
-- **docker compose** — `web` and `db` services, each their own image. Bind-mount volumes: `./data_public` (uploads) and `./data_db` (postgres). Both gitignored.
+- **docker compose** — `web` and `db` services, each their own image. The container listens on **5050** (compose maps `127.0.0.1:5050:5050`). Bind-mount volumes: `./data_public` (uploads) and `./data_db` (postgres). Both gitignored.
 
 ## Quick start
 
 ```bash
 cp .env.example .env       # fill in DISCORD_CLIENT_ID/SECRET, AUTH_SECRET, DISCORD_ADMIN_IDS
 docker compose up --build
-# http://localhost:3000
+# http://localhost:5050   (the container listens on 5050; compose binds it to localhost)
 ```
 
 ### Discord OAuth
@@ -53,10 +54,31 @@ The Electron app reads keybinds from the logged-in user's board (via an exposed 
 - Each user can have individual overrides (`maxFileSizeOverride`, `maxTotalStorageOverride`) editable from `/admin`.
 - Quota resolution: user override → role default → env `DEFAULT_*`.
 
+- **Upload permission** is gated per-role (`canUpload`) with a per-user override. Users who can't upload can still browse and save public clips.
+
+## Library, board & tags
+
+- Every clip you own or save lives in your **Saved** library. You explicitly promote a curated subset onto the playable **Board**, which is the only place that gets positions, keybinds, and VR binds. The dashboard has Saved/Board pill tabs; Board has a drag-reorder mode, Saved has tag-filter chips.
+- **Tags** are global and normalized — one lowercase label is one shared tag across every clip — joined to sounds many-to-many. Each clip carries **1–3 tags**; uploads with no tag fall back to a default `misc` tag. Admins rename/merge/delete tags globally in `/admin`.
+- Cards are compact by default (play/cancel + name + read-only bind chips + volume); a pencil expands them into full editing.
+
+## Clip editor
+
+Before any upload (file or YouTube), an in-browser editor (`wavesurfer.js` + Regions) lets you trim with a **delete model**: drag to select spans, `Del`/`Backspace` removes them, `Space` plays. The export is the kept complement, concatenated and re-encoded to mp3 client-side (`@breezystack/lamejs`) with volume baked in. The original file is never stored.
+
+## YouTube import
+
+Paste a YouTube link and the server converts it in-process (`yt-dlp` → `ffmpeg`), capped by duration and file size. It's **admin-gated**: a global master toggle plus limits (`appSettings`), with per-role overrides. A job row tracks each request (pending → running → done/error) and the client polls for the result. Configurable via `YTDLP_*` env (cookies/proxy/extractor args) for getting past datacenter-IP bot checks.
+
+## Keybinds & VR controller binds
+
+- Board entries can carry a keyboard **chord** (a set of keys held together, e.g. `Ctrl+Shift+F5`) and/or a Valve Index **controller bind**, independently. A bindable **cancel-all** action and master/per-entry enable toggles round it out.
+- Controller binds are **step/sequence macros** with per-input **down/up edges**, built in a full-screen drag-flow editor with a live test area. The 16 Index inputs per hand (incl. touch + analog trigger-pull) all map to bindable down/up actions. In the Electron app the native OpenVR sidecar streams button edges → IPC → playback.
+
 ## Public sounds
 
-- Sounds flipped to **Public** appear in `/public` for every other user to browse, play, and add to their own board.
-- Authors are filtered out of their own public listing — you can't re-add a clip you already own. Your uploads are auto-placed on your board.
+- Sounds flipped to **Public** appear in `/public` for every other user to browse, play, and add to their own library.
+- Authors are filtered out of their own public listing — you can't re-add a clip you already own, and adding the same clip twice is a no-op. Your uploads are auto-placed on your board.
 
 ## Virtual Mic mode
 

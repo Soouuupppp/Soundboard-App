@@ -6,12 +6,22 @@ CREATE TABLE IF NOT EXISTS "role" (
   "defaultMaxFileSize" BIGINT NOT NULL,
   "defaultMaxTotalStorage" BIGINT NOT NULL,
   "canUpload" BOOLEAN NOT NULL DEFAULT TRUE,
+  "ytEnabledOverride" BOOLEAN,
+  "ytMaxDurationSecOverride" INTEGER,
+  "ytMaxFileSizeOverride" BIGINT,
+  "ytConcurrencyOverride" INTEGER,
   "isSystem" BOOLEAN NOT NULL DEFAULT FALSE,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 -- Added after initial release; backfill existing deployments. Existing roles
 -- default to TRUE so current users aren't suddenly blocked from uploading.
 ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "canUpload" BOOLEAN NOT NULL DEFAULT TRUE;
+-- ver/1.3.0: per-role YouTube-import overrides (NULL = inherit the global
+-- appSettings value). Backfill for DBs created before these columns existed.
+ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "ytEnabledOverride" BOOLEAN;
+ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "ytMaxDurationSecOverride" INTEGER;
+ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "ytMaxFileSizeOverride" BIGINT;
+ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "ytConcurrencyOverride" INTEGER;
 
 CREATE TABLE IF NOT EXISTS "user" (
   "id" TEXT PRIMARY KEY,
@@ -85,6 +95,43 @@ CREATE INDEX IF NOT EXISTS "boardEntry_user_idx" ON "boardEntry" ("userId");
 -- keybind. ALTER is for DBs created before this column existed (CREATE TABLE
 -- IF NOT EXISTS above won't add it to an existing table).
 ALTER TABLE "boardEntry" ADD COLUMN IF NOT EXISTS "controllerBind" TEXT;
+-- ver/1.3.0: Saved vs Board split. Add the column with DEFAULT TRUE so existing
+-- entries (which predate the split) are backfilled onto the board and current
+-- boards aren't wiped; then flip the default to FALSE so newly saved entries
+-- land in Saved only until the user explicitly adds them to the board. Both
+-- statements are idempotent: once the column exists ADD won't re-apply the
+-- TRUE default, and SET DEFAULT FALSE is a no-op thereafter.
+ALTER TABLE "boardEntry" ADD COLUMN IF NOT EXISTS "onBoard" BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE "boardEntry" ALTER COLUMN "onBoard" SET DEFAULT FALSE;
+
+-- ver/1.3.0: global, normalized tags. Names are lowercased + trimmed and unique,
+-- so a label is one shared tag across all clips (rename/delete cascades).
+CREATE TABLE IF NOT EXISTS "tag" (
+  "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "name" TEXT NOT NULL UNIQUE,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Which tags are on which sound. Tags live on the sound, so everyone who sees
+-- the clip sees them. App caps at 3 per sound; the composite PK dedupes pairs.
+CREATE TABLE IF NOT EXISTS "soundTag" (
+  "soundId" UUID NOT NULL REFERENCES "sound"("id") ON DELETE CASCADE,
+  "tagId" UUID NOT NULL REFERENCES "tag"("id") ON DELETE CASCADE,
+  PRIMARY KEY ("soundId", "tagId")
+);
+CREATE INDEX IF NOT EXISTS "soundTag_tag_idx" ON "soundTag" ("tagId");
+
+-- ver/1.3.0: every sound must carry at least one tag. Seed the default `misc`
+-- tag, then backfill it onto any existing sound that has no tags yet (leaves
+-- already-tagged sounds untouched). Idempotent.
+INSERT INTO "tag" ("name") VALUES ('misc') ON CONFLICT ("name") DO NOTHING;
+INSERT INTO "soundTag" ("soundId", "tagId")
+SELECT s."id", t."id"
+FROM "sound" s
+CROSS JOIN "tag" t
+WHERE t."name" = 'misc'
+  AND NOT EXISTS (SELECT 1 FROM "soundTag" st WHERE st."soundId" = s."id")
+ON CONFLICT DO NOTHING;
 
 -- Global app settings: single row keyed by id='singleton'. Holds the
 -- admin-editable YouTube-import knobs. INSERT seeds defaults; ON CONFLICT keeps

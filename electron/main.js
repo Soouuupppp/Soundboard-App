@@ -4,6 +4,7 @@ const {
   dialog,
   ipcMain,
   Menu,
+  screen,
   shell,
 } = require("electron");
 const path = require("path");
@@ -342,11 +343,37 @@ function lockdownWindow(win) {
   });
 }
 
+// Return the saved bounds only if they still land on a connected display, so a
+// window last positioned on a now-disconnected monitor doesn't open off-screen.
+function visibleBounds(b) {
+  if (!b || b.x == null || b.y == null || b.width == null || b.height == null) return null;
+  const onScreen = screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x < a.x + a.width && b.x + b.width > a.x && b.y < a.y + a.height && b.y + b.height > a.y;
+  });
+  return onScreen ? b : null;
+}
+
 function createWindow(url) {
   currentOrigin = originOf(url);
+
+  // First-launch default: comfortable on the common 1920×1080, clamped to 90% of
+  // the actual work area so it never overflows a smaller laptop screen. After the
+  // first run we restore the user's last size/position/maximized state instead.
+  const { workAreaSize } = screen.getPrimaryDisplay();
+  const defaultWidth = Math.min(1600, Math.round(workAreaSize.width * 0.9));
+  const defaultHeight = Math.min(900, Math.round(workAreaSize.height * 0.9));
+
+  const saved = readSettings().bounds ?? {};
+  const restore = visibleBounds(saved);
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: restore?.width ?? defaultWidth,
+    height: restore?.height ?? defaultHeight,
+    x: restore?.x,
+    y: restore?.y,
+    minWidth: 900,
+    minHeight: 600,
     title: "Soundboard",
     icon: appIconPath(),
     webPreferences: {
@@ -356,8 +383,33 @@ function createWindow(url) {
       sandbox: true,
     },
   });
+  if (saved.maximized) mainWindow.maximize();
+
   lockdownWindow(mainWindow);
   mainWindow.loadURL(url);
+
+  // Persist size/position so the window reopens where the user left it.
+  // getNormalBounds() returns the restored (un-maximized) bounds even while
+  // maximized, so un-maximizing later restores the right size. Resize/move are
+  // debounced; close saves immediately, before the window is destroyed.
+  let saveTimer = null;
+  const persistBounds = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    writeSettings({
+      ...readSettings(),
+      bounds: { ...mainWindow.getNormalBounds(), maximized: mainWindow.isMaximized() },
+    });
+  };
+  const debounced = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(persistBounds, 400);
+  };
+  mainWindow.on("resize", debounced);
+  mainWindow.on("move", debounced);
+  mainWindow.on("close", () => {
+    clearTimeout(saveTimer);
+    persistBounds();
+  });
 }
 
 function buildMenu() {

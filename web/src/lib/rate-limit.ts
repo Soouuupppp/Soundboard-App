@@ -46,8 +46,14 @@ export function rateLimit(key: string, opts: RateLimitOptions): RateLimitResult 
 /** Resolve a stable key for the caller: user id if logged in, else best-effort IP. */
 export function clientKey(req: Request, userId: string | null): string {
   if (userId) return `u:${userId}`;
+  // Behind Cloudflare, CF-Connecting-IP is the real client IP and is rewritten by
+  // Cloudflare on every request, so it can't be spoofed by the client. Prefer it
+  // over X-Forwarded-For, whose first entry a client *can* pre-populate to dodge
+  // an IP-keyed limit. (All current rate-limited routes key on userId, so this
+  // only matters if/when an unauthenticated rate-limited endpoint is added.)
+  const cf = req.headers.get("cf-connecting-ip");
   const xff = req.headers.get("x-forwarded-for");
-  const ip = xff?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "anon";
+  const ip = cf?.trim() || xff?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "anon";
   return `ip:${ip}`;
 }
 

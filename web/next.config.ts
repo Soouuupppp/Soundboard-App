@@ -1,25 +1,10 @@
 import type { NextConfig } from "next";
 
-// Content Security Policy. We use a hash/nonce-free policy that's strict but
-// compatible with Next.js's inline boot script (`'unsafe-inline'` on script-src
-// is required for the framework's hydration shim until we wire up a nonce).
-// `connect-src` allows the same origin plus Discord CDN for OAuth avatar fetches.
-const csp = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https://cdn.discordapp.com",
-  "media-src 'self' blob:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "frame-ancestors 'none'",
-  "form-action 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-].join("; ");
-
+// Static security headers. The Content-Security-Policy is intentionally NOT here:
+// it's set per-request in middleware.ts so each response can carry a fresh nonce
+// on `script-src` (which lets us drop `'unsafe-inline'`). Setting it in both
+// places would emit two conflicting CSP headers.
 const securityHeaders = [
-  { key: "Content-Security-Policy", value: csp },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

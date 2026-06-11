@@ -2,7 +2,9 @@
 
 Wraps the running web app in a desktop window and registers the user's
 configured keybinds as OS-level global shortcuts. Press a key from anywhere
-and the corresponding sound plays in the wrapped app.
+and the corresponding sound plays in the wrapped app. It also reads **Valve
+Index VR controllers** through a bundled native OpenVR sidecar, so controller
+binds fire the same way — even when the app isn't focused.
 
 **Author:** Soouuupppp · [soouuupppp.com](https://soouuupppp.com) · [soouuuppppgames@gmail.com](mailto:soouuuppppgames@gmail.com) · [github.com/Soouuupppp](https://github.com/Soouuupppp)
 
@@ -24,6 +26,22 @@ You can also force a URL via env var (skips the prompt):
 SOUNDBOARD_URL=http://localhost:5050 pnpm --filter electron start
 ```
 
+## VR controller bridge (native)
+
+Valve Index support is provided by `native/vr-bridge` — a small C++/OpenVR
+background app (`vr-bridge.exe`) that reads the controllers via the SteamVR
+Input system and prints button edges as JSON on stdout. The `dist*` scripts
+build it automatically (via `build:native`), but you can build it on its own:
+
+```bash
+pnpm --filter electron build:native   # CMake → resources/vr/vr-bridge.exe
+```
+
+Requires Windows with the **Visual Studio 2022 C++ workload** and **CMake**. In
+dev runs the app looks for the CMake `build/Release` output; packaged builds
+ship the exe under `resources/vr`. A missing exe just disables VR input quietly
+(keybinds still work).
+
 ## Build a Windows .exe to share
 
 Set your public server URL first so it's baked into the binary — your friends
@@ -44,8 +62,8 @@ SOUNDBOARD_URL=https://soundboard.example.com pnpm --filter electron dist:win
 
 Outputs to `electron/dist/`:
 
-- `Soundboard-1.1.0-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
-- `Soundboard-1.1.0-x64-portable.exe` — single-file executable, no install.
+- `Soundboard-1.3.0-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
+- `Soundboard-1.3.0-x64-portable.exe` — single-file executable, no install.
 
 Send one of these to your friends. They open it, log in with Discord, done.
 Power users can still change the URL later via **File → Change server URL…**
@@ -109,6 +127,10 @@ electron-builder's [code signing docs](https://www.electron.build/code-signing).
 - When a watched combo matches, the main process sends an IPC message; the
   preload re-emits it as a `soundboard:globalKey` `CustomEvent` on `window`
   and the dashboard listener triggers playback.
+- VR input flows the same way: `vr-controllers.js` spawns the native
+  `vr-bridge.exe`, forwards each button edge over IPC → `soundboard:vrInput` /
+  `soundboard:vrStatus` `CustomEvent`s, and the dashboard's matcher fires the
+  bound clip.
 
 ## Notes / caveats
 

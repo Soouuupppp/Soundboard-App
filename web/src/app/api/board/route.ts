@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { boardEntries, sounds, users } from "@/db/schema";
 import { PostBoardEntryBody } from "@/lib/validation";
+import { getTagsForSounds } from "@/lib/tags";
 import { clientKey, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -25,7 +26,10 @@ export async function GET() {
     .where(eq(boardEntries.userId, session.user.id))
     .orderBy(boardEntries.position);
 
-  return NextResponse.json({ entries: rows });
+  const tagMap = await getTagsForSounds(rows.map((r) => r.sound.id));
+  const entries = rows.map((r) => ({ ...r, tags: tagMap.get(r.sound.id) ?? [] }));
+
+  return NextResponse.json({ entries });
 }
 
 // POST /api/board — add an existing sound to the user's board (own or public).
@@ -56,6 +60,15 @@ export async function POST(req: Request) {
   if (s.ownerId === session.user.id) {
     return NextResponse.json({ error: "cannot add your own clip from public" }, { status: 400 });
   }
+
+  // A Saved library is a *set* of references — adding the same clip twice is a
+  // no-op. Return the existing entry idempotently instead of creating a dupe.
+  const [dupe] = await db
+    .select()
+    .from(boardEntries)
+    .where(and(eq(boardEntries.userId, session.user.id), eq(boardEntries.soundId, s.id)))
+    .limit(1);
+  if (dupe) return NextResponse.json({ entry: dupe });
 
   const [row] = await db
     .insert(boardEntries)
