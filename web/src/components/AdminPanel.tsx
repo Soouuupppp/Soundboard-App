@@ -6,6 +6,7 @@ import { formatBytes, parseSize } from "@/lib/utils";
 import { useAudioOutput } from "@/lib/audio-output";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { useToast, useMutate } from "@/components/Toast";
+import { Select } from "@/components/Select";
 
 type Role = {
   id: string;
@@ -415,18 +416,19 @@ function RoleYtTable({
                   <span className="font-medium">{r.name}</span>
                 </td>
                 <td className="px-3 py-3">
-                  <select
-                    className="input min-w-[120px] !py-1.5 text-xs"
+                  <Select
+                    className="min-w-[120px] !py-1.5 text-xs"
+                    aria-label="Import override"
                     value={r.ytEnabledOverride == null ? "" : r.ytEnabledOverride ? "on" : "off"}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      update(r, { ytEnabledOverride: v === "" ? null : v === "on" });
-                    }}
-                  >
-                    <option value="">Global ({settings.ytEnabled ? "on" : "off"})</option>
-                    <option value="on">Enabled</option>
-                    <option value="off">Disabled</option>
-                  </select>
+                    onChange={(v) =>
+                      update(r, { ytEnabledOverride: v === "" ? null : v === "on" })
+                    }
+                    options={[
+                      { value: "", label: `Global (${settings.ytEnabled ? "on" : "off"})` },
+                      { value: "on", label: "Enabled" },
+                      { value: "off", label: "Disabled" },
+                    ]}
+                  />
                 </td>
                 <td className="px-3 py-3">
                   <NullableNumber
@@ -903,18 +905,16 @@ function UsersTable({
                 </td>
                 <td className="px-3 py-3 text-muted text-xs font-mono">{u.discordId ?? "—"}</td>
                 <td className="px-3 py-3">
-                  <select
-                    className="input min-w-[120px]"
+                  <Select
+                    className="min-w-[120px]"
+                    aria-label="Role"
                     value={u.roleId ?? ""}
-                    onChange={(e) => update(u, { roleId: e.target.value || null })}
-                  >
-                    <option value="">(none)</option>
-                    {roles.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => update(u, { roleId: v || null })}
+                    options={[
+                      { value: "", label: "(none)" },
+                      ...roles.map((r) => ({ value: r.id, label: r.name })),
+                    ]}
+                  />
                 </td>
                 <td className="px-3 py-3">
                   <UploadOverride user={u} onChange={update} />
@@ -972,18 +972,19 @@ function UploadOverride({
       >
         {effective ? <Upload size={16} /> : <Ban size={16} />}
       </span>
-      <select
-        className="input min-w-[110px] !py-1.5 text-xs"
+      <Select
+        className="min-w-[110px] !py-1.5 text-xs"
+        aria-label="Upload override"
         value={value}
-        onChange={(e) => {
-          const v = e.target.value;
-          onChange(user, { canUploadOverride: v === "" ? null : v === "allow" });
-        }}
-      >
-        <option value="">Role ({roleAllows ? "allowed" : "blocked"})</option>
-        <option value="allow">Allow</option>
-        <option value="block">Block</option>
-      </select>
+        onChange={(v) =>
+          onChange(user, { canUploadOverride: v === "" ? null : v === "allow" })
+        }
+        options={[
+          { value: "", label: `Role (${roleAllows ? "allowed" : "blocked"})` },
+          { value: "allow", label: "Allow" },
+          { value: "block", label: "Block" },
+        ]}
+      />
     </div>
   );
 }

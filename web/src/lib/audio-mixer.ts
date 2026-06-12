@@ -4,10 +4,10 @@
 //
 // It owns a single AudioContext and routes a set of SOURCES to two destinations:
 //
-//   sources ─┬─► cableBus ─┬─► limiter ─► ctx.destination ─►(setSinkId) virtual cable (game's mic)
-//            │             └─► analyser  (cable peak meter tap, pre-limiter)
+//   sources ─┬─► cableBus(micOutVol) ─┬─► limiter ─► ctx.destination ─►(setSinkId) virtual cable (game's mic)
+//            │                        └─► analyser  (cable peak meter tap, post-micOutVol, pre-limiter)
 //            ├─► analyser  (per-input peak meter tap, post-volume)
-//            └─► (per-source monitor send) ─► monitorBus ─► <audio>.setSinkId ─► your ears
+//            └─► (per-source monitor send 0..1) ─► monitorBus ─► <audio>.setSinkId ─► your ears
 //
 // The limiter sits on the cable path because sources sum at unity: a hot mic +
 // a clip can push the sum past 0 dBFS and hard-clip the virtual mic (which the
@@ -23,10 +23,14 @@
 //     bus in Windows, which then shows up here as a capture device.
 //   • SOUNDBOARD   — clips injected with injectClip().
 //
-// Every source always reaches the cable. Each source additionally has a "monitor
-// send" gain (0 or 1) that decides whether you also hear it locally on the chosen
-// monitor device — so e.g. you can monitor the soundboard without hearing your
-// own mic echoed back. The cable target device is the app's "Output device".
+// Every source reaches the cable through its own cable-send gain (the per-source
+// "volume"), and the summed cable additionally passes through a master
+// "mic output volume" (cableBus.gain) before the limiter. Each source also has a
+// "monitor send" gain (0..1) that decides how loudly you hear it locally on the
+// chosen monitor device — so e.g. you can monitor the soundboard without hearing
+// your own mic echoed back. (The monitor send taps the post-cable-volume signal,
+// so a source muted on the cable is also silent in the monitor.) The cable target
+// device is the app's "Output device".
 
 export type MixerInputState = { deviceId: string; enabled: boolean; volume: number };
 
@@ -105,8 +109,13 @@ export class MicMixer {
   private inputs = new Map<string, ActiveInput>();
   private cableDeviceId = "default";
   private monitorDeviceId = "default";
-  // Which source keys are routed to the monitor bus (deviceIds + special keys).
-  private monitoredKeys = new Set<string>([SOUNDBOARD_KEY]);
+  // Per-source monitor-send level (deviceIds + special keys), 0..1; 0 = silent
+  // locally. Default: monitor the soundboard at unity so the mode isn't silent.
+  private monitorLevels = new Map<string, number>([[SOUNDBOARD_KEY, 1]]);
+  // Master gain on the summed cable ("mic output volume") and the soundboard's
+  // own cable-send, both 0..1. Stored so start() can apply them on (re)create.
+  private cableVolume = 1;
+  private soundboardVolume = 1;
   // Serialize source reconciliation so overlapping calls can't double-open one.
   private syncChain: Promise<unknown> = Promise.resolve();
 
@@ -133,6 +142,7 @@ export class MicMixer {
     mlog("start: creating AudioContext, cableDeviceId =", cableDeviceId || "(default)");
     const ctx = new AudioContext() as SinkCapableContext;
     const cableBus = ctx.createGain();
+    cableBus.gain.value = this.cableVolume; // master "mic output volume", pre-limiter
     // Limiter between the summed sources and the cable: catches peaks so a hot
     // sum doesn't hard-clip the virtual mic. Tuned as a fast brickwall limiter
     // (near-unity below ~-1 dBFS, hard knee, high ratio).
@@ -157,9 +167,10 @@ export class MicMixer {
     monitorEl.srcObject = monitorDest.stream;
 
     const soundboardBus = ctx.createGain();
+    soundboardBus.gain.value = this.soundboardVolume; // soundboard cable-send
     soundboardBus.connect(cableBus);
     const soundboardMonitorSend = ctx.createGain();
-    soundboardMonitorSend.gain.value = this.monitoredKeys.has(SOUNDBOARD_KEY) ? 1 : 0;
+    soundboardMonitorSend.gain.value = this.monitorLevels.get(SOUNDBOARD_KEY) ?? 0;
     soundboardBus.connect(soundboardMonitorSend).connect(monitorBus);
 
     this.ctx = ctx;
@@ -239,23 +250,48 @@ export class MicMixer {
     if (this.ctx) await this.applyMonitorSink(deviceId);
   }
 
-  // Set which source keys are heard on the monitor device. Applied to every
-  // currently-active source's monitor send (0 = silent locally, 1 = monitored).
-  setMonitored(keys: Iterable<string>) {
-    this.monitoredKeys = new Set(keys);
+  // Master "mic output volume" on the cable sum (pre-limiter), 0..1.
+  setMicOutputVolume(volume: number) {
+    this.cableVolume = clamp01(volume);
+    if (this.cableBus) this.cableBus.gain.value = this.cableVolume;
+  }
+
+  // The soundboard's cable-send level, 0..1.
+  setSoundboardVolume(volume: number) {
+    this.soundboardVolume = clamp01(volume);
+    if (this.soundboardBus) this.soundboardBus.gain.value = this.soundboardVolume;
+  }
+
+  // Set one source's monitor-send level (0 = silent locally). Keyed by deviceId
+  // or SOUNDBOARD_KEY; applied live if that source is currently active.
+  setMonitorSend(key: string, level: number) {
+    const v = clamp01(level);
+    this.monitorLevels.set(key, v);
+    if (key === SOUNDBOARD_KEY) {
+      if (this.soundboardMonitorSend) this.soundboardMonitorSend.gain.value = v;
+    } else {
+      const node = this.inputs.get(key);
+      if (node) node.monitorSend.gain.value = v;
+    }
+  }
+
+  // Bulk-replace the monitor-send levels (used on (re)sync). Missing keys reset
+  // to 0; every live source's send is reapplied.
+  setMonitorSends(levels: Record<string, number>) {
+    this.monitorLevels = new Map(Object.entries(levels).map(([k, v]) => [k, clamp01(v)]));
     for (const [id, node] of this.inputs) {
-      node.monitorSend.gain.value = this.monitoredKeys.has(id) ? 1 : 0;
+      node.monitorSend.gain.value = this.monitorLevels.get(id) ?? 0;
     }
     if (this.soundboardMonitorSend) {
-      this.soundboardMonitorSend.gain.value = this.monitoredKeys.has(SOUNDBOARD_KEY) ? 1 : 0;
+      this.soundboardMonitorSend.gain.value = this.monitorLevels.get(SOUNDBOARD_KEY) ?? 0;
     }
   }
 
   // Wire a freshly-created source: feed the cable always, and the monitor bus
-  // through a send gain gated by whether this key is currently monitored.
+  // through a send gain at this key's current monitor level.
   private connectSource(out: AudioNode, key: string): GainNode {
     const monitorSend = this.ctx!.createGain();
-    monitorSend.gain.value = this.monitoredKeys.has(key) ? 1 : 0;
+    monitorSend.gain.value = this.monitorLevels.get(key) ?? 0;
     out.connect(this.cableBus!);
     out.connect(monitorSend).connect(this.monitorBus!);
     return monitorSend;

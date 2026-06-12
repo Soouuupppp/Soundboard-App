@@ -1,0 +1,63 @@
+{
+  "controller_type": "oculus_touch",
+  "name": "Soundboard Default (Touch)",
+  "description": "Default Soundboard bindings for Oculus/Meta Touch controllers (Quest, Rift)",
+  "category": "steamvr_input",
+  "bindings": {
+    "/actions/soundboard": {
+      "sources": [
+        { "path": "/user/hand/left/input/x", "mode": "button",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/quest_left_x" },
+            "touch": { "output": "/actions/soundboard/in/quest_left_x_touch" }
+          } },
+        { "path": "/user/hand/left/input/y", "mode": "button",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/quest_left_y" },
+            "touch": { "output": "/actions/soundboard/in/quest_left_y_touch" }
+          } },
+        { "path": "/user/hand/left/input/trigger", "mode": "trigger",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/quest_left_trigger" },
+            "touch": { "output": "/actions/soundboard/in/quest_left_trigger_touch" }
+          } },
+        { "path": "/user/hand/left/input/grip", "mode": "trigger",
+          "inputs": { "click": { "output": "/actions/soundboard/in/quest_left_grip" } } },
+        { "path": "/user/hand/left/input/joystick", "mode": "joystick",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/quest_left_thumbstick" },
+            "touch": { "output": "/actions/soundboard/in/quest_left_thumbstick_touch" }
+          } },
+        { "path": "/user/hand/left/input/thumbrest", "mode": "button",
+          "inputs": { "touch": { "output": "/actions/soundboard/in/quest_left_thumbrest_touch" } } },
+        { "path": "/user/hand/left/input/applicationmenu", "mode": "button",
+          "inputs": { "click": { "output": "/actions/soundboard/in/quest_left_menu" } } },
+
+        { "path": "/user/hand/right/input/a", "mode": "button",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/quest_right_a" },
+            "touch": { "output": "/actions/soundboard/in/quest_right_a_touch" }
+          } },
+        { "path": "/user/hand/right/input/b", "mode": "button",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/quest_right_b" },
+            "touch": { "output": "/actions/soundboard/in/quest_right_b_touch" }
+          } },
+        { "path": "/user/hand/right/input/trigger", "mode": "trigger",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/quest_right_trigger" },
+            "touch": { "output": "/actions/soundboard/in/quest_right_trigger_touch" }
+          } },
+        { "path": "/user/hand/right/input/grip", "mode": "trigger",
+          "inputs": { "click": { "output": "/actions/soundboard/in/quest_right_grip" } } },
+        { "path": "/user/hand/right/input/joystick", "mode": "joystick",
+          "inputs": {
+            "click": { "output": "/actions/soundboard/in/quest_right_thumbstick" },
+            "touch": { "output": "/actions/soundboard/in/quest_right_thumbstick_touch" }
+          } },
+        { "path": "/user/hand/right/input/thumbrest", "mode": "button",
+          "inputs": { "touch": { "output": "/actions/soundboard/in/quest_right_thumbrest_touch" } } }
+      ]
+    }
+  }
+}

@@ -9,6 +9,7 @@ import { useAudioOutput } from "@/lib/audio-output";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { ClipEditor } from "@/components/ClipEditor";
 import { useToast } from "@/components/Toast";
+import { Select } from "@/components/Select";
 import { decodeAudio } from "@/lib/audio-edit";
 import {
   isModToken,
@@ -25,8 +26,11 @@ import {
   VrBindPreview,
   parseVrBind,
   serializeVrBind,
+  getProfileBind,
+  setProfileBind,
   formatVrAction,
-  VR_INPUTS_BY_HAND,
+  vrInputsByHand,
+  VR_PROFILES,
   parseToken,
   MAX_STEPS,
   MAX_ACTIONS_PER_STEP,
@@ -35,6 +39,7 @@ import {
   type VrStep,
   type VrBind,
   type VrBindMode,
+  type VrProfile,
   type VrPreviewProgress,
 } from "@/lib/vr-bind";
 
@@ -97,6 +102,8 @@ export function Dashboard({
   const [addTab, setAddTab] = useState<"upload" | "youtube" | "browse" | null>(null);
   // Controller binds are independent of keybinds (separate capture + state).
   const [capturingVrFor, setCapturingVrFor] = useState<string | null>(null);
+  // Cancel-all's controller bind editor is open (no entry id — board-level).
+  const [capturingCancelAllVr, setCapturingCancelAllVr] = useState(false);
   const [vrConnected, setVrConnected] = useState(false);
   const [hasDesktop, setHasDesktop] = useState(false);
 
@@ -113,10 +120,14 @@ export function Dashboard({
   // (no boardEntry to hang it on), so it lives in localStorage. `null` = unbound.
   const [cancelAllKeybind, setCancelAllKeybindState] = useState<string | null>(null);
   const [capturingCancelAll, setCapturingCancelAll] = useState(false);
+  // Cancel-all's controller bind — same device-local pattern (serialized VrBind).
+  const [cancelAllControllerBind, setCancelAllControllerBindState] = useState<string | null>(null);
   useEffect(() => {
     try {
       const v = localStorage.getItem("soundboard:cancelAllKeybind");
       if (v) setCancelAllKeybindState(v);
+      const c = localStorage.getItem("soundboard:cancelAllControllerBind");
+      if (c) setCancelAllControllerBindState(c);
     } catch {}
   }, []);
   const setCancelAllKeybind = useCallback((combo: string | null) => {
@@ -124,6 +135,13 @@ export function Dashboard({
     try {
       if (combo) localStorage.setItem("soundboard:cancelAllKeybind", combo);
       else localStorage.removeItem("soundboard:cancelAllKeybind");
+    } catch {}
+  }, []);
+  const setCancelAllControllerBind = useCallback((bind: string | null) => {
+    setCancelAllControllerBindState(bind);
+    try {
+      if (bind) localStorage.setItem("soundboard:cancelAllControllerBind", bind);
+      else localStorage.removeItem("soundboard:cancelAllControllerBind");
     } catch {}
   }, []);
 
@@ -249,6 +267,9 @@ export function Dashboard({
   // device-local pattern. A bind fires only when both are on.
   const [controllersEnabled, setControllersEnabledState] = useState(true);
   const [controllerEnabled, setControllerEnabled] = useState<Record<string, boolean>>({});
+  // Controller hardware profile (Index vs Quest/Touch) — relabels the bind UI;
+  // tokens are unchanged. Device-local, mirrors the enable switches.
+  const [controllerProfile, setControllerProfileState] = useState<VrProfile>("index");
   useEffect(() => {
     try {
       const g = localStorage.getItem("soundboard:keybindsEnabled");
@@ -259,7 +280,13 @@ export function Dashboard({
       if (cg != null) setControllersEnabledState(cg === "true");
       const vr = localStorage.getItem("soundboard:controllerEnabled");
       if (vr) setControllerEnabled(JSON.parse(vr));
+      const prof = localStorage.getItem("soundboard:controllerProfile");
+      if (prof === "index" || prof === "quest") setControllerProfileState(prof);
     } catch {}
+  }, []);
+  const setControllerProfile = useCallback((p: VrProfile) => {
+    setControllerProfileState(p);
+    try { localStorage.setItem("soundboard:controllerProfile", p); } catch {}
   }, []);
   const setKeybindsEnabled = useCallback((on: boolean) => {
     setKeybindsEnabledState(on);
@@ -445,11 +472,18 @@ export function Dashboard({
       : entries.flatMap((e) => {
           if (!e.entry.onBoard || !e.entry.controllerBind) return [];
           if (controllerEnabled[e.entry.id] === false) return []; // per-clip switch off
-          const bind = parseVrBind(e.entry.controllerBind);
+          // Only the current profile's bind is active (binds are per-profile).
+          const bind = parseVrBind(getProfileBind(e.entry.controllerBind, controllerProfile));
           return bind ? [{ id: e.entry.id, bind }] : [];
         });
+    // Cancel-all is a board-level bind routed through the same matcher via the
+    // sentinel id (gated only by the master controller switch, like its keybind).
+    if (controllersEnabled) {
+      const cab = parseVrBind(getProfileBind(cancelAllControllerBind, controllerProfile));
+      if (cab) binds.push({ id: CANCEL_ALL_BIND, bind: cab });
+    }
     vrMatcherRef.current!.setBinds(binds);
-  }, [entries, controllersEnabled, controllerEnabled]);
+  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, controllerProfile]);
 
   // Feed press/release edges to the matcher; play the most-specific bind that
   // completes. Skipped while the bind editor is open (and the matcher is reset
@@ -457,21 +491,22 @@ export function Dashboard({
   useEffect(() => {
     function onVrInput(ev: Event) {
       const detail = (ev as CustomEvent<{ token: string; pressed: boolean }>).detail;
-      if (!detail?.token || capturingVrFor) return;
+      if (!detail?.token || capturingVrFor || capturingCancelAllVr) return;
       const edge: VrEdge = detail.pressed ? "down" : "up";
       const hitId = vrMatcherRef.current!.feed(detail.token, edge, performance.now());
-      if (hitId) {
+      if (hitId === CANCEL_ALL_BIND) cancelAll();
+      else if (hitId) {
         const soundId = vrSoundByEntry.get(hitId);
         if (soundId) playEntry(hitId, soundId);
       }
     }
     window.addEventListener("soundboard:vrInput", onVrInput as EventListener);
     return () => window.removeEventListener("soundboard:vrInput", onVrInput as EventListener);
-  }, [capturingVrFor, vrSoundByEntry, playEntry]);
+  }, [capturingVrFor, capturingCancelAllVr, vrSoundByEntry, playEntry, cancelAll]);
 
   useEffect(() => {
     vrMatcherRef.current!.reset();
-  }, [capturingVrFor]);
+  }, [capturingVrFor, capturingCancelAllVr]);
 
   // SteamVR connection status from the native bridge.
   useEffect(() => {
@@ -698,6 +733,7 @@ export function Dashboard({
       controllersGloballyEnabled={controllersEnabled}
       controllerEnabled={controllerEnabled[e.entry.id] !== false}
       onToggleController={(on) => toggleEntryController(e.entry.id, on)}
+      controllerProfile={controllerProfile}
       onCaptureStart={() => setCapturingFor(e.entry.id)}
       onCaptureCancel={() => setCapturingFor(null)}
       onCaptured={(combo) => {
@@ -712,9 +748,12 @@ export function Dashboard({
       onControllerCaptureCancel={() => setCapturingVrFor(null)}
       onControllerCaptured={(token) => {
         setCapturingVrFor(null);
-        setControllerBind(e.entry.id, token);
+        // Merge into this profile's slot, preserving the other profile's bind.
+        setControllerBind(e.entry.id, setProfileBind(e.entry.controllerBind, controllerProfile, token));
       }}
-      onClearController={() => setControllerBind(e.entry.id, null)}
+      onClearController={() =>
+        setControllerBind(e.entry.id, setProfileBind(e.entry.controllerBind, controllerProfile, null))
+      }
       onRemove={() => removeEntry(e.entry.id)}
       onDeleteSound={() => deleteSound(e.sound.id)}
       onTogglePublic={(next) => togglePublic(e.sound.id, next)}
@@ -904,6 +943,18 @@ export function Dashboard({
                 />
               </label>
             )}
+            {hasDesktop && (
+              <label className="flex items-center gap-2 text-sm select-none" title="Relabels controller binds to match your headset's controllers">
+                <span className="text-muted">Controllers</span>
+                <Select
+                  className="!py-1.5 text-xs min-w-[9rem]"
+                  aria-label="Controller profile"
+                  value={controllerProfile}
+                  onChange={(v) => setControllerProfile(v as VrProfile)}
+                  options={VR_PROFILES.map((p) => ({ value: p.value, label: p.label }))}
+                />
+              </label>
+            )}
           </div>
         </div>
 
@@ -955,6 +1006,40 @@ export function Dashboard({
                       ×
                     </button>
                   )}
+                  {/* Controller bind for Cancel all — only meaningful in the
+                      desktop app (where the VR bridge runs). */}
+                  {hasDesktop && (
+                    <>
+                      <span className="h-4 w-px bg-white/10" aria-hidden />
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs"
+                        onClick={() => setCapturingCancelAllVr(true)}
+                        title="Set a controller bind for Cancel all"
+                      >
+                        <Gamepad2 size={14} className="mr-1" />
+                        {getProfileBind(cancelAllControllerBind, controllerProfile) ? (
+                          <VrBindChips value={getProfileBind(cancelAllControllerBind, controllerProfile)!} />
+                        ) : (
+                          "Set controller"
+                        )}
+                      </button>
+                      {getProfileBind(cancelAllControllerBind, controllerProfile) && (
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs !px-1.5"
+                          onClick={() =>
+                            setCancelAllControllerBind(
+                              setProfileBind(cancelAllControllerBind, controllerProfile, null),
+                            )
+                          }
+                          title="Clear cancel-all controller bind"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
                 {boardList.length > 1 && (
                   <button
@@ -969,6 +1054,21 @@ export function Dashboard({
                 )}
               </div>
             </div>
+            {/* Cancel-all controller bind editor (portals to body). */}
+            {capturingCancelAllVr && (
+              <VrBindPicker
+                initial={getProfileBind(cancelAllControllerBind, controllerProfile)}
+                vrConnected={vrConnected}
+                profile={controllerProfile}
+                onCancel={() => setCapturingCancelAllVr(false)}
+                onConfirm={(serialized) => {
+                  setCapturingCancelAllVr(false);
+                  setCancelAllControllerBind(
+                    setProfileBind(cancelAllControllerBind, controllerProfile, serialized),
+                  );
+                }}
+              />
+            )}
             {boardList.length > 0 && (
               <MasonryGrid className="grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                 {boardList.map((e) =>
@@ -1641,6 +1741,7 @@ function SoundCard(props: {
   controllersGloballyEnabled: boolean;
   controllerEnabled: boolean;
   onToggleController: (on: boolean) => void;
+  controllerProfile: VrProfile;
   // Compact-by-default card: collapsed shows play + name + read-only binds +
   // volume; the pencil expands it into the full CRUD editor below.
   expanded: boolean;
@@ -1655,7 +1756,10 @@ function SoundCard(props: {
   const { entry, capturing } = props;
   const { sound, ownerName } = entry;
   const hasKeybind = !!entry.entry.keybind;
-  const hasController = !!entry.entry.controllerBind;
+  // Controller binds are per-profile: only the current profile's slot is shown
+  // and edited here, so switching profiles "clears" the visible bind.
+  const controllerBind = getProfileBind(entry.entry.controllerBind, props.controllerProfile);
+  const hasController = !!controllerBind;
   const [editingTags, setEditingTags] = useState(false);
 
   // Capture a keyboard chord: hold the keys together, release to confirm.
@@ -1764,8 +1868,8 @@ function SoundCard(props: {
             title="Controller bind"
           >
             <Gamepad2 size={11} className="shrink-0" />
-            {entry.entry.controllerBind ? (
-              <VrBindChips value={entry.entry.controllerBind} />
+            {controllerBind ? (
+              <VrBindChips value={controllerBind} />
             ) : (
               <span>—</span>
             )}
@@ -1931,27 +2035,28 @@ function SoundCard(props: {
               }
             >
               <Gamepad2 size={14} className="mr-1 shrink-0" />
-              {entry.entry.controllerBind ? (
+              {controllerBind ? (
                 <span
                   className={
                     !props.controllerEnabled || !props.controllersGloballyEnabled ? "line-through opacity-60" : ""
                   }
                 >
-                  <VrBindChips value={entry.entry.controllerBind} />
+                  <VrBindChips value={controllerBind} />
                 </span>
               ) : (
                 <span className="truncate">{props.hasDesktop ? "Set controller" : "Desktop app required"}</span>
               )}
             </button>
-            {entry.entry.controllerBind && (
+            {controllerBind && (
               <button className="btn-ghost text-xs" onClick={props.onClearController} title="Clear">×</button>
             )}
           </div>
 
           {props.controllerCapturing && (
             <VrBindPicker
-              initial={entry.entry.controllerBind}
+              initial={controllerBind}
               vrConnected={props.vrConnected}
+              profile={props.controllerProfile}
               onCancel={props.onControllerCaptureCancel}
               onConfirm={props.onControllerCaptured}
             />
@@ -2016,22 +2121,25 @@ function ControlPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
         <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-accent">
           <Settings size={16} />
         </span>
-        <div className="min-w-0">
-          <h2 className="section-title">Control Panel</h2>
-          <p className="section-sub hidden sm:block">
+        {/* Title shrinks (truncating) so the status cluster gets the horizontal
+            room — the device chip + meter are the more useful at-a-glance info. */}
+        <div className="min-w-0 shrink">
+          <h2 className="section-title truncate">Control Panel</h2>
+          <p className="section-sub hidden sm:block truncate">
             Output{audio.supportsSinkId ? ", volume & Virtual Mic" : " & volume"}
           </p>
         </div>
 
-        {/* Live status cluster (output device · Virtual Mic state · output meter). */}
-        <div className="ml-auto flex items-center gap-2 min-w-0">
-          <span className="chip hidden sm:inline-flex max-w-[11rem]" title={outputLabel}>
+        {/* Live status cluster (output device · Virtual Mic state · output meter).
+            flex-1 claims the leftover width so the chip + meter can stretch. */}
+        <div className="ml-auto flex flex-1 items-center justify-end gap-2 min-w-0">
+          <span className="chip hidden sm:inline-flex min-w-0 max-w-[14rem] md:max-w-[22rem]" title={outputLabel}>
             <Volume2 size={12} className="shrink-0" />
             <span className="truncate">{outputLabel}</span>
           </span>
           {audio.supportsSinkId && (
             <span
-              className={`chip gap-1 ${
+              className={`chip gap-1 shrink-0 ${
                 audio.virtualMicMode ? "!border-accent/40 !bg-accent/15 !text-white" : ""
               }`}
             >
@@ -2044,7 +2152,7 @@ function ControlPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
             <LevelMeter
               getPeak={audio.getOutputPeak}
               active={meterActive}
-              className="h-1.5 w-12 sm:w-20"
+              className="h-1.5 w-16 sm:w-28 md:w-36"
             />
           )}
           <ChevronDown
@@ -2076,88 +2184,141 @@ function ControlPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
           <div className="mt-4 grid gap-3">
             {tab === "output" && (
               <>
-                {/* Output device row. */}
-                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Volume2 size={14} className="text-accent shrink-0" />
-                    <span className="text-sm font-medium">Output device</span>
-                  </div>
-                  {audio.supportsSinkId ? (
-                    <>
-                      <select
-                        className="input w-full"
-                        value={audio.deviceId}
-                        onChange={(e) => audio.setDeviceId(e.target.value)}
-                      >
-                        <option value="default">System default</option>
-                        {audio.devices.map((d) => (
-                          <option key={d.deviceId} value={d.deviceId}>
-                            {d.label || `Output ${d.deviceId.slice(0, 6)}`}
-                          </option>
-                        ))}
-                      </select>
-                      {labelsHidden && (
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs mt-2"
-                          onClick={() => audio.requestLabelsPermission()}
-                        >
-                          Show device names (grants mic permission once)
-                        </button>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted">
-                      This browser doesn&apos;t support per-element output selection. Use OS audio settings.
+                {/* Output device + Monitor device on one row; volume below. */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Volume2 size={14} className="text-accent shrink-0" />
+                      <span className="text-sm font-medium">Output device</span>
+                    </div>
+                    {audio.supportsSinkId ? (
+                      <>
+                        <Select
+                          className="w-full"
+                          aria-label="Output device"
+                          value={audio.deviceId}
+                          onChange={(v) => audio.setDeviceId(v)}
+                          options={[
+                            { value: "default", label: "System default" },
+                            ...audio.devices.map((d) => ({
+                              value: d.deviceId,
+                              label: d.label || `Output ${d.deviceId.slice(0, 6)}`,
+                            })),
+                          ]}
+                        />
+                        {labelsHidden && (
+                          <button
+                            type="button"
+                            className="btn-ghost text-xs mt-2"
+                            onClick={() => audio.requestLabelsPermission()}
+                          >
+                            Show device names (grants mic permission once)
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted">
+                        This browser doesn&apos;t support per-element output selection. Use OS audio settings.
+                      </p>
+                    )}
+                    <p className="text-xs text-muted mt-2">
+                      {audio.virtualMicMode
+                        ? "In Virtual Mic mode this is the cable the soundboard + mics feed into — pick its recording side as your mic in-game."
+                        : "Where the soundboard plays so you can hear it."}
                     </p>
+                  </div>
+
+                  {/* Monitor device — local listening for Virtual Mic mode. */}
+                  {audio.supportsSinkId && (
+                    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Headphones size={14} className="text-accent shrink-0" />
+                        <span className="text-sm font-medium">Monitor device</span>
+                      </div>
+                      <Select
+                        className="w-full"
+                        aria-label="Monitor device"
+                        value={audio.monitorDeviceId}
+                        onChange={(v) => audio.setMonitorDeviceId(v)}
+                        options={[
+                          { value: "default", label: "System default" },
+                          ...audio.devices.map((d) => ({
+                            value: d.deviceId,
+                            label: d.label || `Output ${d.deviceId.slice(0, 6)}`,
+                          })),
+                        ]}
+                      />
+                      <p className="text-xs text-muted mt-2">
+                        Where you hear the Virtual Mic monitor locally. Set each source&apos;s monitor
+                        toggle in the Virtual Mic tab.
+                      </p>
+                    </div>
                   )}
-                  <p className="text-xs text-muted mt-2">
-                    {audio.virtualMicMode
-                      ? "In Virtual Mic mode this is the cable the soundboard + mics feed into — pick its recording side as your mic in-game."
-                      : "Where the soundboard plays so you can hear it."}
-                  </p>
                 </div>
 
-                {/* Master volume row. */}
-                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                  <div className="flex items-center gap-2 mb-2">
+                {/* Master volume — compact row. */}
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
+                  <div className="flex items-center gap-3">
                     <Volume2 size={14} className="text-accent shrink-0" />
-                    <span className="text-sm font-medium">Master volume</span>
-                    <span className="ml-auto text-xs text-muted tabular-nums">
-                      {Math.round(audio.masterVolume * 100)}%
+                    <span className="text-sm font-medium shrink-0">Master volume</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={audio.masterVolume}
+                      onChange={(e) => audio.setMasterVolume(Number(e.target.value))}
+                      className="flex-1 accent-accent"
+                      aria-label="Master volume"
+                    />
+                    <span className="text-xs text-muted w-8 text-right tabular-nums">
+                      {Math.round(audio.masterVolume * 100)}
                     </span>
                   </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={audio.masterVolume}
-                    onChange={(e) => audio.setMasterVolume(Number(e.target.value))}
-                    className="w-full accent-accent"
-                    aria-label="Master volume"
-                  />
-                  <p className="text-xs text-muted mt-2">Applied on top of each sound&apos;s per-button volume.</p>
                 </div>
               </>
             )}
 
             {tab === "mic" && audio.supportsSinkId && (
               <>
-                {/* Enable row — the primary action for this tab. */}
-                <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Mic size={15} className="text-accent shrink-0" />
-                    <div className="min-w-0">
-                      <span className="text-sm font-medium block">Virtual Mic mode</span>
-                      <span className="text-xs text-muted">Mix mics + soundboard into a cable as your in-game mic.</span>
+                {/* Enable + mic output volume — the primary controls for this tab. */}
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Mic size={15} className="text-accent shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-sm font-medium block">Virtual Mic mode</span>
+                        <span className="text-xs text-muted">Mix mics + soundboard into a cable as your in-game mic.</span>
+                      </div>
                     </div>
+                    <Toggle
+                      checked={audio.virtualMicMode}
+                      onChange={audio.setVirtualMicMode}
+                      label="Toggle Virtual Mic mode"
+                    />
                   </div>
-                  <Toggle
-                    checked={audio.virtualMicMode}
-                    onChange={audio.setVirtualMicMode}
-                    label="Toggle Virtual Mic mode"
-                  />
+                  <div className="mt-3 flex items-center gap-3">
+                    <span className="text-sm shrink-0">Mic output volume</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={audio.micOutputVolume}
+                      onChange={(e) => audio.setMicOutputVolume(Number(e.target.value))}
+                      className="flex-1 accent-accent"
+                      aria-label="Mic output volume"
+                    />
+                    <span className="text-xs text-muted w-8 text-right tabular-nums">
+                      {Math.round(audio.micOutputVolume * 100)}
+                    </span>
+                  </div>
+                  {/* Live mic output level lives with the volume it reflects. */}
+                  {audio.virtualMicMode && (
+                    <div className="mt-3">
+                      <PeakMeter getPeak={audio.getCablePeak} active={audio.virtualMicMode} />
+                    </div>
+                  )}
                 </div>
                 <VirtualMicPanel audio={audio} />
               </>
@@ -2271,21 +2432,13 @@ function VirtualMicPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }
   const labelsHidden =
     audio.inputDevices.length === 0 || audio.inputDevices.some((d) => !d.label);
 
-  // The lines actually going through the virtual mic right now — these are the
-  // only things the monitor lets you tick on/off.
-  const monitorLines: { key: string; label: string }[] = [
-    { key: audio.soundboardKey, label: "Soundboard" },
-    ...audio.inputDevices
-      .filter((d) => audio.inputs.find((i) => i.deviceId === d.deviceId)?.enabled)
-      .map((d) => ({ key: d.deviceId, label: d.label || `Capture ${d.deviceId.slice(0, 6)}` })),
-  ];
-
   return (
     <div>
       <p className="text-xs text-muted">
         Mix your capture devices (mics, virtual cables, GoXLR buses) and the soundboard into a
-        virtual audio cable, then pick that cable as your mic in-game. Choose a monitor device to
-        also hear it locally.
+        virtual audio cable, then pick that cable as your mic in-game. Each source has a cable send
+        (what the game hears) and a monitor send (what you hear locally, on the monitor device set
+        in the Output tab).
       </p>
 
       {!audio.supportsContextSink && on && (
@@ -2299,7 +2452,6 @@ function VirtualMicPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }
 
       <Collapsible open={on}>
         <div className="space-y-5 pt-3">
-          <PeakMeter getPeak={audio.getCablePeak} active={on} />
           {!audio.secureContext && (
             <p className="text-xs text-red-400">
               Microphone access needs a secure context (HTTPS or localhost). Your server URL is
@@ -2327,56 +2479,41 @@ function VirtualMicPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }
               <span className="text-sm font-medium">Sources → virtual mic</span>
             </div>
             <p className="text-xs text-muted mb-3">
-              Every capture device Windows reports — mics, plus virtual cables (VB-Audio,
-              VoiceMeeter) and GoXLR buses (e.g. Broadcast Stream Mix) whose recording side shows up
-              here. Tick what the game should hear. To route an app&apos;s audio in, send it to a
-              cable / GoXLR bus in Windows and it&apos;ll appear in this list.
+              The soundboard plus every capture device Windows reports — mics, virtual cables
+              (VB-Audio, VoiceMeeter) and GoXLR buses (e.g. Broadcast Stream Mix). Enable a source to
+              feed it to the game and set its cable volume; flip Monitor to also hear it locally (at
+              the same level). To route an app&apos;s audio in, send it to a cable / GoXLR bus in
+              Windows and it&apos;ll appear here.
             </p>
-            <DeviceLineList
-              emptyLabel="No capture devices detected."
-              fallbackName="Capture"
-              devices={audio.inputDevices}
-              isOn={(id) => audio.inputs.find((i) => i.deviceId === id)?.enabled ?? false}
-              volumeOf={(id) => audio.inputs.find((i) => i.deviceId === id)?.volume ?? 1}
-              onToggle={audio.setInputEnabled}
-              onVolume={audio.setInputVolume}
-              getPeak={audio.getInputPeak}
-              metersActive={on}
-            />
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Headphones size={14} className="text-accent shrink-0" />
-              <span className="text-sm font-medium">Monitor</span>
-            </div>
-            <select
-              className="input w-full"
-              value={audio.monitorDeviceId}
-              onChange={(e) => audio.setMonitorDeviceId(e.target.value)}
-            >
-              <option value="default">System default</option>
-              {audio.devices.map((d) => (
-                <option key={d.deviceId} value={d.deviceId}>
-                  {d.label || `Output ${d.deviceId.slice(0, 6)}`}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-muted mt-2 mb-2">
-              The device you hear locally. Tick which of the live mic lines to monitor — your mic is
-              off by default so you don&apos;t echo yourself.
-            </p>
-            <div className="space-y-1.5">
-              {monitorLines.map((line) => (
-                <label key={line.key} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={audio.monitored.includes(line.key)}
-                    onChange={(e) => audio.setMonitored(line.key, e.target.checked)}
+            {/* Condensed grid — up to 3 sources per row. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+              {/* Soundboard line — always on, so no enable toggle. */}
+              <SourceMixRow
+                name="Soundboard"
+                volume={audio.soundboardVolume}
+                onVolume={(v) => audio.setSoundboardVolume(v)}
+                monitorOn={(audio.monitorSends[audio.soundboardKey] ?? 0) > 0}
+                onMonitor={(b) => audio.setMonitorSend(audio.soundboardKey, b ? 1 : 0)}
+              />
+              {audio.inputDevices.length === 0 ? (
+                <p className="text-xs text-muted">No capture devices detected.</p>
+              ) : (
+                audio.inputDevices.map((d) => (
+                  <SourceMixRow
+                    key={d.deviceId}
+                    name={d.label || `Capture ${d.deviceId.slice(0, 6)}`}
+                    enabled={audio.inputs.find((i) => i.deviceId === d.deviceId)?.enabled ?? false}
+                    onEnable={(b) => audio.setInputEnabled(d.deviceId, b)}
+                    volume={audio.inputs.find((i) => i.deviceId === d.deviceId)?.volume ?? 1}
+                    onVolume={(v) => audio.setInputVolume(d.deviceId, v)}
+                    monitorOn={(audio.monitorSends[d.deviceId] ?? 0) > 0}
+                    onMonitor={(b) => audio.setMonitorSend(d.deviceId, b ? 1 : 0)}
+                    getPeak={audio.getInputPeak}
+                    peakId={d.deviceId}
+                    metersActive={on}
                   />
-                  <span className="truncate" title={line.label}>{line.label}</span>
-                </label>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -2435,107 +2572,84 @@ function PeakMeter({ getPeak, active }: { getPeak: () => number; active: boolean
   );
 }
 
-function DeviceLineList({
-  emptyLabel,
-  fallbackName,
-  devices,
-  isOn,
-  volumeOf,
-  onToggle,
-  onVolume,
-  getPeak,
-  metersActive,
-}: {
-  emptyLabel: string;
-  fallbackName: string;
-  devices: MediaDeviceInfo[];
-  isOn: (deviceId: string) => boolean;
-  volumeOf: (deviceId: string) => number;
-  onToggle: (deviceId: string, enabled: boolean) => void;
-  onVolume: (deviceId: string, volume: number) => void;
-  // Per-input live level (post-volume). When supplied, each enabled row shows
-  // its own meter so you can see which source is actually feeding the cable.
-  getPeak?: (deviceId: string) => number;
-  metersActive?: boolean;
-}) {
-  if (devices.length === 0) return <p className="text-xs text-muted">{emptyLabel}</p>;
-  return (
-    <div className="space-y-1.5">
-      {devices.map((d) => (
-        <DeviceLine
-          key={d.deviceId}
-          device={d}
-          enabled={isOn(d.deviceId)}
-          volume={volumeOf(d.deviceId)}
-          fallbackName={fallbackName}
-          onToggle={onToggle}
-          onVolume={onVolume}
-          getPeak={getPeak}
-          metersActive={metersActive}
-        />
-      ))}
-    </div>
-  );
-}
-
-// One capture-device row: enable checkbox + volume, plus its own level meter
-// when enabled (so you can confirm signal is reaching the cable).
-function DeviceLine({
-  device,
+// One mix source (a capture device or the soundboard): an Enable switch (omitted
+// for the always-on soundboard), a cable-volume slider (what the game hears), and
+// a Monitor toggle (hear it locally at the same level — the monitor send taps the
+// post-volume signal, so "on" == matches the cable). Volume + Monitor are
+// disabled until the source is enabled. Shows its own level meter when active.
+function SourceMixRow({
+  name,
   enabled,
+  onEnable,
   volume,
-  fallbackName,
-  onToggle,
   onVolume,
+  monitorOn,
+  onMonitor,
   getPeak,
+  peakId,
   metersActive,
 }: {
-  device: MediaDeviceInfo;
-  enabled: boolean;
+  name: string;
+  // Omit enabled/onEnable for an always-on source (the soundboard).
+  enabled?: boolean;
+  onEnable?: (on: boolean) => void;
   volume: number;
-  fallbackName: string;
-  onToggle: (deviceId: string, enabled: boolean) => void;
-  onVolume: (deviceId: string, volume: number) => void;
-  getPeak?: (deviceId: string) => number;
+  onVolume: (v: number) => void;
+  monitorOn: boolean;
+  onMonitor: (on: boolean) => void;
+  getPeak?: (id: string) => number;
+  peakId?: string;
   metersActive?: boolean;
 }) {
-  const name = device.label || `${fallbackName} ${device.deviceId.slice(0, 6)}`;
+  const hasEnable = typeof enabled === "boolean";
+  const active = hasEnable ? enabled! : true;
   // Stable per-row getter so the meter's rAF loop doesn't restart each render.
   const peakGetter = useCallback(
-    () => getPeak?.(device.deviceId) ?? 0,
-    [getPeak, device.deviceId],
+    () => (getPeak && peakId ? getPeak(peakId) : 0),
+    [getPeak, peakId],
   );
   return (
     <div
-      className={`rounded-lg border px-3 py-2 transition-colors ${
-        enabled ? "border-white/10 bg-white/[0.03]" : "border-white/5 bg-transparent"
+      className={`rounded-lg border px-2.5 py-2 transition-colors ${
+        active ? "border-white/10 bg-white/[0.03]" : "border-white/5 bg-transparent"
       }`}
     >
-      <div className="flex items-center gap-3">
-        <label className="inline-flex items-center gap-2 text-sm w-1/2 min-w-0">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => onToggle(device.deviceId, e.target.checked)}
-          />
-          <span className="truncate" title={name}>{name}</span>
-        </label>
+      <div className="flex items-center gap-2 mb-1.5">
+        {hasEnable && (
+          <Toggle size="sm" checked={active} onChange={onEnable!} label={`Enable ${name}`} />
+        )}
+        <span className="text-sm truncate min-w-0" title={name}>{name}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Mic size={12} className="shrink-0 text-muted" />
         <input
           type="range"
           min={0}
           max={1}
           step={0.01}
           value={volume}
-          disabled={!enabled}
-          onChange={(e) => onVolume(device.deviceId, Number(e.target.value))}
+          disabled={!active}
+          onChange={(e) => onVolume(Number(e.target.value))}
           className="flex-1 accent-accent disabled:opacity-40"
-          aria-label={`Volume for ${name}`}
+          aria-label={`Cable volume for ${name}`}
         />
-        <span className="text-xs text-muted w-8 text-right tabular-nums">
+        <span className="text-xs text-muted w-7 text-right tabular-nums">
           {Math.round(volume * 100)}
         </span>
       </div>
-      {getPeak && enabled && (
+      <div className="flex items-center justify-between gap-2 mt-1.5">
+        <span className="flex items-center gap-1 text-xs text-muted">
+          <Headphones size={12} className="shrink-0" /> Monitor
+        </span>
+        <Toggle
+          size="sm"
+          checked={monitorOn}
+          onChange={onMonitor}
+          disabled={!active}
+          label={`Monitor ${name}`}
+        />
+      </div>
+      {getPeak && peakId && active && (
         <LevelMeter getPeak={peakGetter} active={!!metersActive} className="h-1 w-full mt-2" />
       )}
     </div>
@@ -2623,11 +2737,13 @@ function VrPaletteRow({ input, onAdd }: { input: string; onAdd: (a: VrAction) =>
 function VrBindPicker({
   initial,
   vrConnected,
+  profile = "index",
   onCancel,
   onConfirm,
 }: {
   initial: string | null;
   vrConnected: boolean;
+  profile?: VrProfile;
   onCancel: () => void;
   onConfirm: (serialized: string) => void;
 }) {
@@ -2791,7 +2907,7 @@ function VrBindPicker({
 
         {/* Palette */}
         <div className="grid grid-cols-2 gap-3">
-          {VR_INPUTS_BY_HAND.map((group) => (
+          {vrInputsByHand(profile).map((group) => (
             <div key={group.hand} className="flex flex-col gap-1">
               <div className="px-0.5 text-[11px] font-medium text-muted">{group.label}</div>
               {group.inputs.map((input) => (

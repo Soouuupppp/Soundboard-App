@@ -111,6 +111,33 @@ static std::vector<Digital> makeDigital() {
     add("VR:RightHand:ThumbstickClick", "right_thumbstick");
     add("VR:RightHand:ATouch", "right_a_touch");
     add("VR:RightHand:TrackpadTouch", "right_trackpad_touch");
+
+    // Quest/Touch lives in a SEPARATE token namespace ("VRQ:") so its binds never
+    // collide with Index ("VR:"). Both action sets are always registered; only the
+    // ones the active controller's binding maps actually fire, so on an Index only
+    // VR:* emit and on a Touch only VRQ:* emit. Keep in sync with web/src/lib/
+    // vr-bind.ts (QUEST_LEFT_KEYS / QUEST_RIGHT_KEYS) + bindings_touch.json.
+    add("VRQ:LeftHand:X", "quest_left_x");
+    add("VRQ:LeftHand:XTouch", "quest_left_x_touch");
+    add("VRQ:LeftHand:Y", "quest_left_y");
+    add("VRQ:LeftHand:YTouch", "quest_left_y_touch");
+    add("VRQ:LeftHand:Trigger", "quest_left_trigger");
+    add("VRQ:LeftHand:TriggerTouch", "quest_left_trigger_touch");
+    add("VRQ:LeftHand:Grip", "quest_left_grip");
+    add("VRQ:LeftHand:ThumbstickClick", "quest_left_thumbstick");
+    add("VRQ:LeftHand:ThumbstickTouch", "quest_left_thumbstick_touch");
+    add("VRQ:LeftHand:ThumbrestTouch", "quest_left_thumbrest_touch");
+    add("VRQ:LeftHand:Menu", "quest_left_menu");
+    add("VRQ:RightHand:A", "quest_right_a");
+    add("VRQ:RightHand:ATouch", "quest_right_a_touch");
+    add("VRQ:RightHand:B", "quest_right_b");
+    add("VRQ:RightHand:BTouch", "quest_right_b_touch");
+    add("VRQ:RightHand:Trigger", "quest_right_trigger");
+    add("VRQ:RightHand:TriggerTouch", "quest_right_trigger_touch");
+    add("VRQ:RightHand:Grip", "quest_right_grip");
+    add("VRQ:RightHand:ThumbstickClick", "quest_right_thumbstick");
+    add("VRQ:RightHand:ThumbstickTouch", "quest_right_thumbstick_touch");
+    add("VRQ:RightHand:ThumbrestTouch", "quest_right_thumbrest_touch");
     return v;
 }
 static std::vector<Analog> makeAnalog() {

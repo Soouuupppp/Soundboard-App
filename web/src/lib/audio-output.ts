@@ -17,7 +17,10 @@ type Stored = {
   virtualMicMode?: boolean;
   inputs?: MixerInputState[];
   monitorDeviceId?: string;
-  monitored?: string[];
+  monitored?: string[]; // legacy binary monitor selection (migrated → monitorSends)
+  monitorSends?: Record<string, number>; // per-source monitor level, 0..1
+  micOutputVolume?: number; // master cable gain
+  soundboardVolume?: number; // soundboard cable-send
 };
 
 type AudioWithSink = HTMLAudioElement & {
@@ -158,13 +161,20 @@ export type AudioOutput = {
   setVirtualMicMode: (on: boolean) => void;
   inputDevices: MediaDeviceInfo[];
   inputs: MixerInputState[];
+  // Enable (open + mix) a capture line — its own switch.
   setInputEnabled: (deviceId: string, enabled: boolean) => void;
+  // Cable-send level for a capture line (independent of the enable switch).
   setInputVolume: (deviceId: string, volume: number) => void;
-  // Local monitoring: one device + which active mic-lines are heard on it.
+  // Master "mic output volume" (cable sum) and the soundboard's cable-send.
+  micOutputVolume: number;
+  setMicOutputVolume: (v: number) => void;
+  soundboardVolume: number;
+  setSoundboardVolume: (v: number) => void;
+  // Local monitoring: one device + a per-source send level (0..1, 0 = off).
   monitorDeviceId: string;
   setMonitorDeviceId: (id: string) => void;
-  monitored: string[];
-  setMonitored: (key: string, on: boolean) => void;
+  monitorSends: Record<string, number>;
+  setMonitorSend: (key: string, level: number) => void;
   soundboardKey: string;
   // Current peak level of the cable sum (linear, 0..1+; >1 = driving the limiter
   // into clipping). Returns 0 when the mixer isn't running.
@@ -194,8 +204,14 @@ export function useAudioOutput(): AudioOutput {
   const [virtualMicMode, setVirtualMicModeState] = useState(false);
   const [inputs, setInputs] = useState<MixerInputState[]>([]);
   const [monitorDeviceId, setMonitorDeviceIdState] = useState("default");
-  // Default to monitoring the soundboard so the mode isn't silent locally.
-  const [monitored, setMonitoredState] = useState<string[]>([SOUNDBOARD_KEY]);
+  // Per-source monitor level (0..1; 0 = not monitored). Default: monitor the
+  // soundboard at unity so the mode isn't silent locally.
+  const [monitorSends, setMonitorSendsState] = useState<Record<string, number>>({
+    [SOUNDBOARD_KEY]: 1,
+  });
+  // Master "mic output volume" (cable sum) and the soundboard's cable-send.
+  const [micOutputVolume, setMicOutputVolumeState] = useState(1);
+  const [soundboardVolume, setSoundboardVolumeState] = useState(1);
   const [mixerError, setMixerError] = useState<string | null>(null);
   const [labelsError, setLabelsError] = useState<string | null>(null);
 
@@ -217,7 +233,14 @@ export function useAudioOutput(): AudioOutput {
     if (typeof s.virtualMicMode === "boolean") setVirtualMicModeState(s.virtualMicMode);
     if (Array.isArray(s.inputs)) setInputs(s.inputs);
     if (typeof s.monitorDeviceId === "string") setMonitorDeviceIdState(s.monitorDeviceId);
-    if (Array.isArray(s.monitored)) setMonitoredState(s.monitored);
+    if (typeof s.micOutputVolume === "number") setMicOutputVolumeState(s.micOutputVolume);
+    if (typeof s.soundboardVolume === "number") setSoundboardVolumeState(s.soundboardVolume);
+    if (s.monitorSends && typeof s.monitorSends === "object") {
+      setMonitorSendsState(s.monitorSends);
+    } else if (Array.isArray(s.monitored)) {
+      // Migrate the legacy binary selection: each monitored key → full send.
+      setMonitorSendsState(Object.fromEntries(s.monitored.map((k) => [k, 1])));
+    }
   }, []);
 
   // Live-update every playing clip when master volume changes (both copies).
@@ -275,6 +298,7 @@ export function useAudioOutput(): AudioOutput {
     write({ ...read(), virtualMicMode: on });
   }, []);
 
+  // Enable (open + mix) a capture line — its own switch, independent of volume.
   const setInputEnabled = useCallback((id: string, enabled: boolean) => {
     setInputs((prev) => {
       const found = prev.find((i) => i.deviceId === id);
@@ -286,6 +310,7 @@ export function useAudioOutput(): AudioOutput {
     });
   }, []);
 
+  // Cable-send level for a capture line (independent of its enable switch).
   const setInputVolume = useCallback((id: string, volume: number) => {
     const v = clamp(volume);
     // Apply to the live node immediately for a smooth slider; persist the state.
@@ -305,13 +330,27 @@ export function useAudioOutput(): AudioOutput {
     write({ ...read(), monitorDeviceId: id });
   }, []);
 
-  const setMonitored = useCallback((key: string, on: boolean) => {
-    setMonitoredState((prev) => {
-      const has = prev.includes(key);
-      const next = on ? (has ? prev : [...prev, key]) : prev.filter((k) => k !== key);
+  const setMicOutputVolume = useCallback((v: number) => {
+    const c = clamp(v);
+    setMicOutputVolumeState(c);
+    mixerRef.current?.setMicOutputVolume(c);
+    write({ ...read(), micOutputVolume: c });
+  }, []);
+
+  const setSoundboardVolume = useCallback((v: number) => {
+    const c = clamp(v);
+    setSoundboardVolumeState(c);
+    mixerRef.current?.setSoundboardVolume(c);
+    write({ ...read(), soundboardVolume: c });
+  }, []);
+
+  const setMonitorSend = useCallback((key: string, level: number) => {
+    const v = clamp(level);
+    setMonitorSendsState((prev) => {
+      const next = { ...prev, [key]: v };
       // Apply live immediately; the effect also reconciles but this is snappier.
-      mixerRef.current?.setMonitored(next);
-      write({ ...read(), monitored: next });
+      mixerRef.current?.setMonitorSend(key, v);
+      write({ ...read(), monitorSends: next });
       return next;
     });
   }, []);
@@ -378,7 +417,9 @@ export function useAudioOutput(): AudioOutput {
           // The app's Output device doubles as the cable target in this mode.
           if (!mixerRef.current.isReady()) await mixerRef.current.start(deviceId);
           if (cancelled) return;
-          mixerRef.current.setMonitored(monitored);
+          mixerRef.current.setMicOutputVolume(micOutputVolume);
+          mixerRef.current.setSoundboardVolume(soundboardVolume);
+          mixerRef.current.setMonitorSends(monitorSends);
           await mixerRef.current.setMonitorDevice(monitorDeviceId);
           await mixerRef.current.syncInputs(inputs);
           setMixerError(null);
@@ -425,8 +466,8 @@ export function useAudioOutput(): AudioOutput {
 
   useEffect(() => {
     if (!virtualMicModeRef.current || !mixerRef.current?.isReady()) return;
-    mixerRef.current.setMonitored(monitored);
-  }, [monitored]);
+    mixerRef.current.setMonitorSends(monitorSends);
+  }, [monitorSends]);
 
   // Tear the mixer + output graph down on unmount so mic capture and the
   // output AudioContext stop cleanly.
@@ -575,10 +616,14 @@ export function useAudioOutput(): AudioOutput {
     inputs,
     setInputEnabled,
     setInputVolume,
+    micOutputVolume,
+    setMicOutputVolume,
+    soundboardVolume,
+    setSoundboardVolume,
     monitorDeviceId,
     setMonitorDeviceId,
-    monitored,
-    setMonitored,
+    monitorSends,
+    setMonitorSend,
     soundboardKey: SOUNDBOARD_KEY,
     getCablePeak,
     getOutputPeak,

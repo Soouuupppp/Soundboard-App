@@ -6,8 +6,8 @@ Guidance for Claude Code when working in this repo.
 
 A Discord-authenticated soundboard. Users log in with Discord, upload mp3s (or
 import from YouTube), tag and organize them in a **Saved** library, promote a
-curated subset onto a playable **Board**, assign keyboard **and Valve Index VR
-controller** binds, and optionally share clips publicly for others to browse and
+curated subset onto a playable **Board**, assign keyboard **and VR controller**
+binds (Valve Index or Meta Quest/Touch), and optionally share clips publicly for others to browse and
 add to their own library. A **Virtual Mic mode** mixes mics + the soundboard
 into a virtual audio cable so the sounds come through as your mic in
 games/calls. An **Electron wrapper** registers the board's keybinds as OS-level
@@ -26,13 +26,14 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   server URL in a `BrowserWindow` and adds global hotkeys + VR controller input.
   **Windows-only.**
   - **`electron/native/vr-bridge/`** — a small **C++/OpenVR** background app
-    (`vr-bridge.exe`) that reads Valve Index controllers and prints button edges
-    as JSON. Built with CMake; staged into `electron/resources/vr` for packaging.
+    (`vr-bridge.exe`) that reads Valve Index / Meta Quest (Touch) controllers and
+    prints button edges as JSON. Built with CMake; staged into
+    `electron/resources/vr` for packaging.
 - Root `package.json` is just convenience scripts that delegate into the
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.3.0**).
+(currently **1.3.1**).
 
 ## Stack
 
@@ -143,12 +144,12 @@ pnpm up / pnpm down # docker compose up --build / down
   original file is never stored.
 
 ### Keybinds & chords
-- `lib/chord.ts` is the shared chord model for **both** keyboard and controller
-  binds: a bind is a *set* of inputs held together, serialized "+"-joined and
-  canonically ordered. Two never-mixed namespaces: keyboard
-  (`"Ctrl+Shift+F5"`) and controller (`"VR:LeftHand:A+VR:RightHand:Trigger"`).
-  Matching fires on the input that *completes* a bound set; **largest wins**
-  (`pickLargest`), so a chord suppresses its sub-binds.
+- `lib/chord.ts` is the **keyboard** chord model: a bind is a *set* of keys held
+  together, serialized "+"-joined and canonically ordered (`"Ctrl+Shift+F5"`).
+  Matching fires on the key that *completes* a bound set; **largest wins**
+  (`pickLargest`), so a chord suppresses its sub-binds. (Controller binds use the
+  separate step/sequence model in `lib/vr-bind.ts`, below — the `parseVrChord`/
+  `canonicalVrChord` helpers in `chord.ts` are legacy and unused.)
 - Keybinds only apply to **on-board** entries, gated by a master keybinds toggle
   + per-entry enable. A **cancel-all** action is a first-class bindable button on
   the Board tab; it routes through the same matching via the `CANCEL_ALL_BIND`
@@ -158,21 +159,26 @@ pnpm up / pnpm down # docker compose up --build / down
   (`Dashboard.tsx`) coalesces with a ~60ms per-entry window so each trigger plays
   once.
 
-### VR controller binds (Valve Index)
+### VR controller binds (Valve Index & Meta Quest/Touch)
 The full path, web ⇄ Electron ⇄ native:
 - **Native** `electron/native/vr-bridge/src/main.cpp` — a background OpenVR app
   (`VRApplication_Background`, no rendering, doesn't steal focus). It reads the
-  Index via the SteamVR Input action system and prints line-delimited JSON on
-  stdout: `{"t":"status","steamvr":bool}`, `{"t":"down|up","token":"VR:…"}`.
-  Action manifests live in `native/vr-bridge/manifests/`
-  (`soundboard_actions.json`, `bindings_knuckles.json`); a generated
-  `.vrmanifest` (names the app "Soundboard") is written into the Electron
-  userData dir at runtime.
-- **The 16 inputs** come from `makeDigital()` + `makeAnalog()` — per hand: `A`,
-  `B`, `Trigger`, `TriggerPull` (analog pull, hysteresis-thresholded, distinct
-  from the `Trigger` click), `Grip`, `ThumbstickClick`, `ATouch`,
-  `TrackpadTouch`. **Touch + analog-pull are first-class bindable** (locked owner
-  decision) — never filter them out.
+  controller via the SteamVR Input action system and prints line-delimited JSON on
+  stdout: `{"t":"status","steamvr":bool}`, `{"t":"down|up","token":"VR:…"}` (Index)
+  or `"VRQ:…"` (Quest). Action manifests live in `native/vr-bridge/manifests/`
+  (`soundboard_actions.json` + the per-controller bindings `bindings_knuckles.json`
+  for Index and `bindings_touch.json` for Touch, both listed in
+  `default_bindings`); a generated `.vrmanifest` (names the app "Soundboard") is
+  written into the Electron userData dir at runtime.
+- **Inputs** come from `makeDigital()` + `makeAnalog()`, which register **both**
+  controllers' action tables. Index (per hand): `A`, `B`, `Trigger`, `TriggerPull`
+  (analog pull, hysteresis-thresholded, distinct from the `Trigger` click), `Grip`,
+  `ThumbstickClick`, `ATouch`, `TrackpadTouch` → `VR:Hand:Key`. Quest/Touch is
+  asymmetric (left `X`/`Y` + `Menu`, right `A`/`B`; plus `Trigger`, `TriggerTouch`,
+  `Grip`, `ThumbstickClick`, `ThumbstickTouch`, face-button touch, `ThumbrestTouch`)
+  → `VRQ:Hand:Key`. **Touch + analog-pull are first-class bindable** (locked owner
+  decision) — never filter them out. Only the action set the connected controller's
+  binding maps actually fires, so an Index emits `VR:*` and a Touch emits `VRQ:*`.
 - **Electron** `vr-controllers.js` spawns the sidecar (path from `vrPaths()` in
   `main.js`: `resources/vr` when packaged, the CMake `build/Release` in dev),
   self-restarts it on crash with backoff, and forwards edges via IPC. `main.js`
@@ -181,8 +187,8 @@ The full path, web ⇄ Electron ⇄ native:
   quietly.
 - **Bind model + engine** live in `web/src/lib/vr-bind.ts`. A bind is an
   **ordered list of steps**; each step is a **set of simultaneous actions**; an
-  **action** = one input + one **edge** (`down`/`up`), so all 16 inputs expose 32
-  actions. Two modes: **simul** (one step — hold a group together / fire on a
+  **action** = one input + one **edge** (`down`/`up`), so each input exposes two
+  actions (↓/↑). Two modes: **simul** (one step — hold a group together / fire on a
   release) and **seq** (multi-step combo). Matching: a `down` action is
   state-based (satisfied while held), an `up` action is event-based (its release
   fires during the active step); the bind fires when the **last step completes**.
@@ -203,28 +209,59 @@ The full path, web ⇄ Electron ⇄ native:
   missing = on). A bind fires only when both are on; disabled binds are dropped
   from `setBinds`.
 - **Composing a bind:** the controller-bind button opens **`VrBindPicker`**, a
-  **full-screen drag-flow builder**: a palette of all 32 actions (grouped by
-  hand, each input with ↓/↑) is dragged or clicked into a **current-step** group;
+  **full-screen drag-flow builder**: a palette of the active profile's actions
+  (`vrInputsByHand(profile)`, grouped by hand, each input with ↓/↑) is dragged or
+  clicked into a **current-step** group;
   "Add as next step" commits a step in seq mode; a live **test area**
   (`VrBindPreview`) shows progress as you physically perform the bind. Persisted
   as a serialized `VrBind` JSON string in `controllerBind` (`serializeVrBind`).
-- **Storage + compat:** new binds are JSON (leading `{`); **legacy `+`-joined
-  chord strings auto-convert** on read (`parseVrBind`) to a single simultaneous
-  step of `down` actions, so old binds keep working. `lib/validation.ts` bounds
-  the raw length and delegates the grammar/caps to `isValidVrBindString`. Stored
-  binds render as wrapping per-action pills with `→` step separators
-  (`VrBindChips`).
+- **Storage + compat:** a single bind serializes to JSON (leading `{`); **legacy
+  `+`-joined chord strings auto-convert** on read (`parseVrBind`) to a single
+  simultaneous step of `down` actions, so old binds keep working. `lib/validation.ts`
+  bounds the raw length and delegates the grammar/caps to
+  `isValidControllerBindString` (accepts a single bind or the profile map below).
+  Stored binds render as wrapping per-action pills with `→` step separators
+  (`VrBindChips`); labels come from the token alone (`formatVrAction`), so a stored
+  Quest bind shows Quest labels regardless of the device's current profile.
+- **Controller profiles (Index vs Quest/Touch):** a device-local dropdown
+  (`soundboard:controllerProfile`) in the controller-toggle card picks the
+  hardware. The two profiles expose **different physical inputs** and live in
+  **separate token namespaces** — Index uses `VR:Hand:Key` (unchanged, the
+  original 8/hand), Quest uses `VRQ:Hand:Key` (asymmetric: left X/Y + Menu, right
+  A/B; plus face/trigger/thumbstick touches + thumbrest, no trackpad/analog-pull).
+  Because the namespaces are disjoint, **a bind built on one controller never
+  fires on the other** (owner decision). `lib/vr-bind.ts` owns the per-profile key
+  lists (`vrInputsByHand(profile)`), labels (`parseToken`/`formatVrAction`, token
+  encodes profile so no profile arg needed), and the union `VALID_INPUTS`. The
+  native bridge registers **both** action sets and emits whichever the active
+  controller's binding maps (`bindings_knuckles.json` → `VR:*`,
+  `bindings_touch.json` → `VRQ:*`); the manifest/`main.cpp` action table must stay
+  in sync with the web key lists.
+- **Per-profile bind storage:** each `boardEntry.controllerBind` (and the
+  device-local cancel-all bind) holds a **profile map**
+  `{"index":"<serialized>","quest":"<serialized>"}` — switching profile shows /
+  edits / activates only that profile's slot, so the other is preserved and the
+  visible bind "clears" on switch. `lib/vr-bind.ts` owns the map helpers
+  (`parseProfileBinds`/`getProfileBind`/`setProfileBind`); a bare serialized bind
+  (pre-profiles) reads as the Index slot. `isValidControllerBindString` validates
+  either form (the validation cap is 4096 to fit two binds).
+- **Cancel-all** has its own device-local controller bind
+  (`soundboard:cancelAllControllerBind`) alongside its keybind, routed through
+  `VrMatcher` via the `CANCEL_ALL_BIND` sentinel.
 
 ### Virtual Mic mode
 The audio engine lives in three files:
 - `web/src/lib/audio-mixer.ts` — `MicMixer`, a single `AudioContext` that sums
   **sources** (capture devices + injected soundboard clips) into a **cableBus**
-  → `ctx.destination` routed via `setSinkId` to the chosen output device (the
-  virtual cable = the game's mic). A parallel **monitorBus** with per-source
-  monitor-send gains lets you hear chosen lines locally without echoing your own
-  mic into the monitor. A pre-limiter **cableAnalyser** drives the cable meter;
-  each live input also has its **own post-volume analyser** (`getInputPeak`) for
-  per-source meters.
+  → limiter → `ctx.destination`, routed via `setSinkId` to the chosen output
+  device (the virtual cable = the game's mic). `cableBus.gain` is the master
+  **"mic output volume"** (pre-limiter, `setMicOutputVolume`); each input has its
+  own cable-send gain (its volume) and the soundboard line has `setSoundboardVolume`.
+  A parallel **monitorBus** with per-source **monitor-send** gains (`setMonitorSend`,
+  tapping the post-volume signal so "on" matches the cable level) lets you hear
+  chosen lines locally without echoing your own mic. A pre-limiter **cableAnalyser**
+  drives the cable meter; each live input also has its **own post-volume analyser**
+  (`getInputPeak`) for per-source meters.
 - `web/src/lib/audio-output.ts` — `useAudioOutput()` hook: device enumeration,
   persisted settings (localStorage `soundboard:output`), normal-vs-mixer
   playback, and mixer lifecycle. **Normal-mode metering:** when
@@ -239,7 +276,12 @@ The audio engine lives in three files:
 - `web/src/components/Dashboard.tsx` — the UI. The **Control Panel** is a
   collapsed-by-default card whose slim status bar surfaces the output device,
   Virtual Mic on/off, and a live global output meter (`LevelMeter`); expanding it
-  reveals the Output & Virtual Mic pill tabs (Sources / Monitor sections).
+  reveals two pill tabs. **Output & volume:** Output device + Monitor device on
+  one row, a compact Master-volume row below. **Virtual Mic mode:** a card with
+  the enable toggle + the **mic-output-volume** slider + its level meter, then the
+  sources as a 3-up responsive grid of `SourceMixRow`s — each an **Enable toggle +
+  cable-volume slider + Monitor toggle** (the always-on Soundboard line omits the
+  enable). Native `<select>`s are gone; all dropdowns use the shared `Select`.
 
 **Design constraint (important):** sources are **capture devices / cables
 only** — no system loopback, no native code. Routing "any app's audio" into the
@@ -265,12 +307,24 @@ native WASAPI addon were both deliberately rejected (security + cost) — see th
 - Auto-update: installed clients poll the latest GitHub Release for a
   `latest.yml`. Portable .exe builds don't auto-update. See `electron/README.md`.
 
+### Layout & navigation
+- The dashboard is the **single page** — public browsing is embedded via
+  `PublicBrowse` (no standalone `/public` route). `app/layout.tsx` renders a
+  **minimal header**: `components/SiteHeader.tsx` (a client wrapper that hides on
+  scroll-down / reappears on scroll-up) holding the logo, and `components/UserMenu.tsx`
+  (the upload-quota meter + an avatar dropdown with Admin + Sign out). The sign-in/
+  sign-out **server actions** are defined in the layout and passed into `UserMenu`
+  as props.
+- `components/Select.tsx` is the shared dark dropdown primitive (portal-based, so
+  its menu escapes `overflow` clipping) — used everywhere instead of native
+  `<select>`.
+
 ### User-facing notifications
 - `components/Toast.tsx` — `ToastProvider` + `useToast` (mounted in the root
   layout), with a `fromResponse` helper (reads a failed Response's `{error}`,
   friendly 429 message) and a `useMutate` hook for fire-and-forget mutations.
   Client fetch/mutation paths route 4xx/5xx/network/429 failures through it
-  instead of failing silently. Passive background loads (nav storage meter, tag
+  instead of failing silently. Passive background loads (header quota meter, tag
   autocomplete prefetch) deliberately stay silent.
 
 ### `lib/` map
@@ -311,33 +365,75 @@ process) · `yt-convert.ts` (YouTube worker) · `audio-mixer.ts` / `audio-output
 
 ## Project status
 
-The **1.3.0 UX overhaul** is feature-complete: the Saved/Board split, mandatory
-tags + `misc` default, inline public browser, wavesurfer multi-segment clip
-editor, cancel-all-as-a-bind, admin pill redesign with per-role overrides + tag
-editing, new-user onboarding overlay, nonce-based CSP, and the toast notification
-system all shipped.
-
-The **controller binds were then re-architected** beyond the original picker:
-binds are now **step/sequence macros with down/up edges** (`lib/vr-bind.ts`),
-edited in a **full-screen drag-flow builder with a live test area**
-(`VrBindPicker`). See the "VR controller binds" concept above.
-
-A **pre-release security audit** (1.3.0) hardened four things, all now locked:
+**1.3.0 shipped** (feature-complete): the Saved/Board split, mandatory tags +
+`misc` default, inline public browser, wavesurfer multi-segment clip editor,
+cancel-all-as-a-bind, admin pill redesign with per-role overrides + tag editing,
+new-user onboarding overlay, nonce-based CSP, toast notifications, and the
+re-architected **step/sequence controller binds** with the full-screen drag-flow
+builder (`lib/vr-bind.ts`, `VrBindPicker`). A pre-release security audit hardened
 the upload `Content-Length` guard, system-role rename protection, idempotent
-public-clip adds, and dropping `ownerId` from `/api/public/sounds` (see the
-relevant concept sections + Security notes above).
+public-clip adds, and `ownerId` removal from `/api/public/sounds`.
 
-**Caveats for the next agent:**
-- The nonce-based CSP (`middleware.ts`) keeps `script-src 'self'` rather than
-  `'strict-dynamic'` as a more forgiving fallback. The CSP + nonce only behave in
-  a real build (a mismatch blocks all scripts), so it **can't be exercised on the
-  host with `next dev`** — if hydration ever breaks in prod, suspect the nonce
-  plumbing here first.
-- **VR bind matching is unverified against real hardware** in this environment
-  (built + typechecked only). The `VrMatcher` engine is pure and unit-testable;
-  the temporal-prefix caveat (above) is a known, accepted limitation.
-- No per-role **sound-count** quota exists (quotas are file size + total
-  storage only). Don't add one without an explicit owner decision.
+**1.3.1 shipped** (UX compaction + Quest support): the shared dark `Select`
+dropdown (replaces all native `<select>`), the compacted Control Panel (output +
+monitor on one row, compact master volume, a 3-up source grid with Enable +
+cable-volume + Monitor-toggle rows, a master "mic output volume" gain), full
+**Meta Quest/Touch controller support** (accurate per-controller input map in a
+separate `VRQ:` token namespace + native `bindings_touch.json`), **per-profile
+controller binds** (each entry/cancel-all stores `{index,quest}`; switching
+profile swaps which is shown/active), a controller bind for **cancel-all**, and a
+**minimal hide-on-scroll header** with an avatar dropdown (the standalone
+`/public` page was removed — the dashboard is the single page).
+
+### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
+
+Version bumped to **1.3.1** across all three `package.json` + docs. Owner
+decisions below are **locked**. Ordered for the build cycle: the shared dropdown
+primitive first (it unblocks the control panel + Quest profile), then the control
+panel, then the controller work (which touches `VrBindPicker` once), then the
+header/routing change last so it doesn't churn the panels mid-flight.
+
+1. **Custom dark dropdown component** — replace all **5 native `<select>`** (2 in
+   `Dashboard.tsx`, 3 in `AdminPanel.tsx`) with a reusable styled dropdown that
+   matches the glassy dark UI (fixes the white/gray native popup). No more native
+   `<option>` rendering anywhere. *(Shared primitive — tasks 2 & 4 consume it.)*
+   **Progress: ✅ Done**
+2. **Control Panel vertical compaction** —
+   - *Output & volume tab:* output device + monitor device on one row, a compact
+     master-volume row below (the monitor-device dropdown moved up from the
+     Virtual Mic panel).
+   - *Virtual Mic tab:* a card with Toggle + **Mic output volume** (a master gain
+     on `cableBus` in `audio-mixer.ts`, pre-limiter) + the cable level meter.
+     Below it the sources as a 3-up grid: each row = **Enable toggle + cable-volume
+     slider + Monitor toggle** (Monitor "on" matches the cable level via the
+     post-volume `monitorSend`). The Soundboard line is always-on (no enable). The
+     old Monitor checkbox card is gone.
+   **Progress: ✅ Done** *(monitor is a toggle, not a slider, and enable is its own
+   switch — refined in post-review hotfix.)*
+3. **Control Panel header** — give more horizontal space to the output-device
+   chip + level meter in the slim status bar. *(Same component as task 2 — land
+   in one pass.)*
+   **Progress: ✅ Done**
+4. **Index ↔ Quest controller profile** — a dropdown in the controller-toggle
+   card (next to the keybinds/controller switches) to pick the controller type,
+   **device-local in localStorage**. Full support: native `vr-bridge` ships a
+   Quest/Touch SteamVR binding file (`default_bindings` entry so SteamVR
+   auto-maps), and the web bind picker shows the profile's input palette.
+   **Progress: ✅ Done** *(superseded by the hotfix below — Quest now has its own
+   accurate input map + `VRQ:` token namespace, not just relabels.)*
+5. **Controller cancel-all bind** — give cancel-all a controller bind alongside
+   its keyboard one. Reuse the now-profile-aware `VrBindPicker` (step/seq, down/up
+   edges); store **device-local in localStorage** (mirrors
+   `soundboard:cancelAllKeybind`); route through `VrMatcher` via the
+   `CANCEL_ALL_BIND` sentinel.
+   **Progress: ✅ Done**
+6. **Minimal hide-on-scroll header** — collapse the nav to a small header: logo +
+   "Soundboard", the upload-quota meter, and a **user-icon dropdown** (Admin +
+   Sign out). Header hides on scroll-down, reappears on scroll-up. The dashboard
+   is the single page — **remove the standalone `app/public/page.tsx`** (public
+   browsing is already embedded via `PublicBrowse`); drop the `My board`/`Public`
+   nav links.
+   **Progress: ✅ Done**
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions

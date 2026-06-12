@@ -3,7 +3,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 import { auth, signIn, signOut } from "@/lib/auth";
-import { UserBadge } from "@/components/UserBadge";
+import { SiteHeader } from "@/components/SiteHeader";
+import { UserMenu } from "@/components/UserMenu";
 import { ToastProvider } from "@/components/Toast";
 import logo from "./logo.png";
 
@@ -55,32 +56,26 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <div className="absolute bottom-[-200px] left-1/3 h-[420px] w-[420px] rounded-full bg-cyan-400/10 blur-3xl animate-floatSlow" style={{ animationDelay: "6s" }} />
         </div>
 
-        <header className="sticky top-0 z-20 border-b border-white/5 bg-black/30 backdrop-blur-xl">
+        <SiteHeader>
           <div className="max-w-[1800px] mx-auto px-4 py-3 flex items-center gap-6">
             <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
               <Image src={logo} alt="Soundboard logo" width={32} height={32} priority className="h-8 w-8" />
               <span>Soundboard</span>
             </Link>
-            {session?.user && (
-              <nav className="flex items-center gap-1 text-sm">
-                <NavLink href="/dashboard">My board</NavLink>
-                <NavLink href="/public">Public</NavLink>
-                {isAdmin && <NavLink href="/admin">Admin</NavLink>}
-              </nav>
-            )}
             <div className="ml-auto flex items-center gap-3 text-sm">
               {session?.user ? (
-                <>
-                  <UserBadge name={session.user.name ?? null} image={session.user.image ?? null} />
-                  <form
-                    action={async () => {
-                      "use server";
-                      await signOut({ redirectTo: "/" });
-                    }}
-                  >
-                    <button className="btn-ghost">Sign out</button>
-                  </form>
-                </>
+                // Admin + Sign out collapse into the avatar dropdown; the quota
+                // meter sits beside it. (The standalone "My board"/"Public" nav
+                // is gone — the dashboard is the single page.)
+                <UserMenu
+                  name={session.user.name ?? null}
+                  image={session.user.image ?? null}
+                  isAdmin={isAdmin}
+                  signOutAction={async () => {
+                    "use server";
+                    await signOut({ redirectTo: "/" });
+                  }}
+                />
               ) : (
                 <form
                   action={async () => {
@@ -93,22 +88,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               )}
             </div>
           </div>
-        </header>
+        </SiteHeader>
         <main className="max-w-[1800px] mx-auto px-4 py-10">
           <ToastProvider>{children}</ToastProvider>
         </main>
       </body>
     </html>
-  );
-}
-
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="px-3 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/[0.06] transition"
-    >
-      {children}
-    </Link>
   );
 }

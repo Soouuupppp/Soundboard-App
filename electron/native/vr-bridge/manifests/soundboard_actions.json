@@ -1,6 +1,7 @@
 {
   "default_bindings": [
-    { "controller_type": "knuckles", "binding_url": "bindings_knuckles.json" }
+    { "controller_type": "knuckles", "binding_url": "bindings_knuckles.json" },
+    { "controller_type": "oculus_touch", "binding_url": "bindings_touch.json" }
   ],
   "action_sets": [
     { "name": "/actions/soundboard", "usage": "single" }
@@ -22,7 +23,30 @@
     { "name": "/actions/soundboard/in/right_thumbstick", "type": "boolean" },
     { "name": "/actions/soundboard/in/right_trigger_pull", "type": "vector1" },
     { "name": "/actions/soundboard/in/right_a_touch", "type": "boolean" },
-    { "name": "/actions/soundboard/in/right_trackpad_touch", "type": "boolean" }
+    { "name": "/actions/soundboard/in/right_trackpad_touch", "type": "boolean" },
+
+    { "name": "/actions/soundboard/in/quest_left_x", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_x_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_y", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_y_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_trigger", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_trigger_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_grip", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_thumbstick", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_thumbstick_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_thumbrest_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_left_menu", "type": "boolean" },
+
+    { "name": "/actions/soundboard/in/quest_right_a", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_a_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_b", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_b_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_trigger", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_trigger_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_grip", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_thumbstick", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_thumbstick_touch", "type": "boolean" },
+    { "name": "/actions/soundboard/in/quest_right_thumbrest_touch", "type": "boolean" }
   ],
   "localization": [
     {
@@ -42,7 +66,29 @@
       "/actions/soundboard/in/right_thumbstick": "Right Thumbstick Click",
       "/actions/soundboard/in/right_trigger_pull": "Right Trigger Pull",
       "/actions/soundboard/in/right_a_touch": "Right A Touch",
-      "/actions/soundboard/in/right_trackpad_touch": "Right Trackpad Touch"
+      "/actions/soundboard/in/right_trackpad_touch": "Right Trackpad Touch",
+
+      "/actions/soundboard/in/quest_left_x": "Left X (Touch)",
+      "/actions/soundboard/in/quest_left_x_touch": "Left X Touch (Touch)",
+      "/actions/soundboard/in/quest_left_y": "Left Y (Touch)",
+      "/actions/soundboard/in/quest_left_y_touch": "Left Y Touch (Touch)",
+      "/actions/soundboard/in/quest_left_trigger": "Left Trigger (Touch)",
+      "/actions/soundboard/in/quest_left_trigger_touch": "Left Trigger Touch (Touch)",
+      "/actions/soundboard/in/quest_left_grip": "Left Grip (Touch)",
+      "/actions/soundboard/in/quest_left_thumbstick": "Left Thumbstick Click (Touch)",
+      "/actions/soundboard/in/quest_left_thumbstick_touch": "Left Thumbstick Touch (Touch)",
+      "/actions/soundboard/in/quest_left_thumbrest_touch": "Left Thumbrest Touch (Touch)",
+      "/actions/soundboard/in/quest_left_menu": "Left Menu (Touch)",
+      "/actions/soundboard/in/quest_right_a": "Right A (Touch)",
+      "/actions/soundboard/in/quest_right_a_touch": "Right A Touch (Touch)",
+      "/actions/soundboard/in/quest_right_b": "Right B (Touch)",
+      "/actions/soundboard/in/quest_right_b_touch": "Right B Touch (Touch)",
+      "/actions/soundboard/in/quest_right_trigger": "Right Trigger (Touch)",
+      "/actions/soundboard/in/quest_right_trigger_touch": "Right Trigger Touch (Touch)",
+      "/actions/soundboard/in/quest_right_grip": "Right Grip (Touch)",
+      "/actions/soundboard/in/quest_right_thumbstick": "Right Thumbstick Click (Touch)",
+      "/actions/soundboard/in/quest_right_thumbstick_touch": "Right Thumbstick Touch (Touch)",
+      "/actions/soundboard/in/quest_right_thumbrest_touch": "Right Thumbrest Touch (Touch)"
     }
   ]
 }

@@ -45,6 +45,7 @@ const artifacts = [
   "openvr_api.dll",
   "soundboard_actions.json",
   "bindings_knuckles.json",
+  "bindings_touch.json",
 ];
 
 fs.mkdirSync(outDir, { recursive: true });
