@@ -31,53 +31,78 @@ export type VrStep = VrAction[]; // simultaneous group
 export type VrBindMode = "simul" | "seq";
 export type VrBind = { mode: VrBindMode; steps: VrStep[] };
 
-// The 16 physical inputs, mirrored from the native bridge's makeDigital() +
-// makeAnalog() (electron/native/vr-bridge/src/main.cpp). Touch + analog
-// trigger-pull are first-class, bindable inputs (locked owner decision).
-export const VR_INPUT_KEYS = [
-  "A",
-  "B",
-  "Trigger",
-  "TriggerPull",
-  "Grip",
-  "ThumbstickClick",
-  "ATouch",
-  "TrackpadTouch",
-] as const;
-export type VrInputKey = (typeof VR_INPUT_KEYS)[number];
-
 export const VR_HANDS = ["LeftHand", "RightHand"] as const;
 export type VrHand = (typeof VR_HANDS)[number];
 
-export function vrToken(hand: VrHand, key: VrInputKey): string {
-  return `VR:${hand}:${key}`;
+// Controller profile. Index and Quest/Touch expose DIFFERENT physical inputs and
+// live in SEPARATE token namespaces ("VR:" vs "VRQ:"), so a bind built for one
+// controller never fires on the other (locked owner decision). Index keeps the
+// original "VR:" namespace so previously-stored binds keep working untouched.
+export type VrProfile = "index" | "quest";
+export const VR_PROFILES: { value: VrProfile; label: string }[] = [
+  { value: "index", label: "Valve Index" },
+  { value: "quest", label: "Quest / Touch" },
+];
+const PREFIX: Record<VrProfile, string> = { index: "VR", quest: "VRQ" };
+
+// Per-profile input keys, by hand. These mirror the native bridge's action table
+// (electron/native/vr-bridge/src/main.cpp) — keep them in sync. Index is
+// symmetric; Quest/Touch is asymmetric (left = X/Y + Menu, right = A/B), has no
+// trackpad/analog-pull, and adds a thumbrest touch + face/trigger touches.
+const INDEX_KEYS = ["A", "B", "Trigger", "TriggerPull", "Grip", "ThumbstickClick", "ATouch", "TrackpadTouch"];
+const QUEST_LEFT_KEYS = ["X", "XTouch", "Y", "YTouch", "Trigger", "TriggerTouch", "Grip", "ThumbstickClick", "ThumbstickTouch", "ThumbrestTouch", "Menu"];
+const QUEST_RIGHT_KEYS = ["A", "ATouch", "B", "BTouch", "Trigger", "TriggerTouch", "Grip", "ThumbstickClick", "ThumbstickTouch", "ThumbrestTouch"];
+
+function keysFor(profile: VrProfile, hand: VrHand): string[] {
+  if (profile === "index") return INDEX_KEYS;
+  return hand === "LeftHand" ? QUEST_LEFT_KEYS : QUEST_RIGHT_KEYS;
 }
 
-// All 16 input tokens, grouped by hand, in palette order.
-export const VR_INPUTS_BY_HAND: { hand: VrHand; label: string; inputs: string[] }[] = [
-  { hand: "LeftHand", label: "Left hand", inputs: VR_INPUT_KEYS.map((k) => vrToken("LeftHand", k)) },
-  { hand: "RightHand", label: "Right hand", inputs: VR_INPUT_KEYS.map((k) => vrToken("RightHand", k)) },
-];
+export function vrToken(profile: VrProfile, hand: VrHand, key: string): string {
+  return `${PREFIX[profile]}:${hand}:${key}`;
+}
 
-// "VR:RightHand:TriggerPull" -> { hand: "R", key: "Trigger pull" }
+// Input tokens grouped by hand for the given profile, in palette order.
+export function vrInputsByHand(
+  profile: VrProfile,
+): { hand: VrHand; label: string; inputs: string[] }[] {
+  return [
+    { hand: "LeftHand", label: "Left hand", inputs: keysFor(profile, "LeftHand").map((k) => vrToken(profile, "LeftHand", k)) },
+    { hand: "RightHand", label: "Right hand", inputs: keysFor(profile, "RightHand").map((k) => vrToken(profile, "RightHand", k)) },
+  ];
+}
+
+// Display label per raw key. The token's key is unambiguous across profiles, so
+// the profile isn't needed to render a label (a stored Quest bind shows Quest
+// labels even if the device's current profile is Index).
 const KEY_LABELS: Record<string, string> = {
   A: "A",
   B: "B",
+  X: "X",
+  Y: "Y",
   Trigger: "Trigger",
   TriggerPull: "Trigger pull",
+  TriggerTouch: "Trigger touch",
   Grip: "Grip",
   ThumbstickClick: "Thumbstick",
+  ThumbstickTouch: "Thumbstick touch",
   ATouch: "A touch",
+  BTouch: "B touch",
+  XTouch: "X touch",
+  YTouch: "Y touch",
   TrackpadTouch: "Trackpad touch",
+  ThumbrestTouch: "Thumbrest touch",
+  Menu: "Menu",
 };
 
+// "VRQ:LeftHand:X" -> { hand: "L", key: "X" }. Accepts both namespaces.
 export function parseToken(token: string): { hand: "L" | "R"; key: string } | null {
-  const m = /^VR:(LeftHand|RightHand):(.+)$/.exec(token);
+  const m = /^VRQ?:(LeftHand|RightHand):(.+)$/.exec(token);
   if (!m) return null;
   return { hand: m[1] === "LeftHand" ? "L" : "R", key: KEY_LABELS[m[2]] ?? m[2] };
 }
 
-// "VR:RightHand:A" + "down" -> "R A ↓"
+// "VR:RightHand:A" + "down" -> "R A ↓".
 export function formatVrAction(a: VrAction): string {
   const p = parseToken(a.input);
   const base = p ? `${p.hand} ${p.key}` : a.input;
@@ -157,11 +182,14 @@ export function bindWeight(bind: VrBind): number {
 export const MAX_STEPS = 8;
 export const MAX_ACTIONS_PER_STEP = 4;
 export const MAX_TOTAL_ACTIONS = 16;
-const VALID_INPUTS = new Set(
-  VR_HANDS.flatMap((h) => VR_INPUT_KEYS.map((k) => vrToken(h, k)))
+// Union of every valid token across both profiles.
+const VALID_INPUTS = new Set<string>(
+  (["index", "quest"] as VrProfile[]).flatMap((p) =>
+    VR_HANDS.flatMap((h) => keysFor(p, h).map((k) => vrToken(p, h, k))),
+  ),
 );
 
-// Server-side guard: is this a well-formed bind string (new JSON or legacy)?
+// Server-side guard: is this a well-formed single bind string (JSON or legacy)?
 export function isValidVrBindString(value: string): boolean {
   const bind = parseVrBind(value);
   if (!bind) return false;
@@ -175,6 +203,87 @@ export function isValidVrBindString(value: string): boolean {
     }
   }
   return total > 0 && total <= MAX_TOTAL_ACTIONS;
+}
+
+// --- per-profile binds -------------------------------------------------------
+// A board entry (and cancel-all) keeps a SEPARATE controller bind per profile, so
+// switching Index↔Quest swaps which bind is shown/edited/active — the other one
+// is preserved untouched. On disk a `controllerBind` is either a profile map
+// {"index":"<serialized>","quest":"<serialized>"} (each key optional) or, for
+// binds saved before profiles existed, a bare serialized bind = the Index one.
+
+export type ProfileBinds = Partial<Record<VrProfile, string>>;
+
+// A serialized VrBind also starts with "{" — distinguish a profile map by its
+// index/quest keys and the absence of a bind's "steps" key.
+function isProfileMap(o: unknown): o is Record<string, unknown> {
+  return (
+    !!o &&
+    typeof o === "object" &&
+    !Array.isArray(o) &&
+    !("steps" in o) &&
+    ("index" in o || "quest" in o)
+  );
+}
+
+export function parseProfileBinds(value: string | null | undefined): ProfileBinds {
+  const t = value?.trim();
+  if (!t) return {};
+  if (t.startsWith("{")) {
+    try {
+      const o: unknown = JSON.parse(t);
+      if (isProfileMap(o)) {
+        const out: ProfileBinds = {};
+        for (const p of ["index", "quest"] as VrProfile[]) {
+          const v = (o as Record<string, unknown>)[p];
+          if (typeof v === "string" && v) out[p] = v;
+        }
+        return out;
+      }
+    } catch {
+      /* fall through — treat as a single (legacy) bind */
+    }
+  }
+  return { index: t }; // legacy bare bind → the Index profile
+}
+
+// The serialized bind for one profile, or null.
+export function getProfileBind(value: string | null | undefined, profile: VrProfile): string | null {
+  return parseProfileBinds(value)[profile] ?? null;
+}
+
+// Merge `bind` (or clear with null) into `value` for `profile`; returns the
+// serialized map to store, or null when no profile has a bind left.
+export function setProfileBind(
+  value: string | null | undefined,
+  profile: VrProfile,
+  bind: string | null,
+): string | null {
+  const map = parseProfileBinds(value);
+  if (bind) map[profile] = bind;
+  else delete map[profile];
+  if (!map.index && !map.quest) return null;
+  return JSON.stringify(map);
+}
+
+// Server-side guard for a stored `controllerBind`: a single bind (legacy) or a
+// profile map whose every present value is itself a valid bind.
+export function isValidControllerBindString(value: string): boolean {
+  const t = value.trim();
+  if (t.startsWith("{")) {
+    try {
+      const o: unknown = JSON.parse(t);
+      if (isProfileMap(o)) {
+        const vals = (["index", "quest"] as VrProfile[])
+          .map((p) => (o as Record<string, unknown>)[p])
+          .filter((v): v is string => typeof v === "string" && v.length > 0);
+        return vals.length > 0 && vals.every(isValidVrBindString);
+      }
+    } catch {
+      return false;
+    }
+  }
+  return isValidVrBindString(value);
 }
 
 // --- matching engine --------------------------------------------------------

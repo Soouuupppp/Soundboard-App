@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isValidVrBindString } from "@/lib/vr-bind";
+import { isValidControllerBindString } from "@/lib/vr-bind";
 
 // Broad-but-safe caps. Generous enough that no real user notices, tight enough
 // that the DB can't be stuffed with megabyte-long strings or weird control chars.
@@ -25,13 +25,13 @@ export const keybind = z
   .max(96)
   .regex(/^[A-Za-z0-9]+(\+[A-Za-z0-9]+){0,5}$/, "invalid keybind");
 
-// Valve Index controller bind: either a legacy "+"-joined chord
-// (VR:LeftHand:A+VR:RightHand:Trigger) or the new JSON step/sequence format.
-// lib/vr-bind.ts owns the grammar + caps; we just bound the raw length here.
+// Controller bind: a single bind (legacy "+"-chord or JSON step/sequence) or a
+// per-profile map {"index":…,"quest":…} of those. lib/vr-bind.ts owns the
+// grammar + caps; we just bound the raw length here (a map holds up to two binds).
 export const controllerBind = z
   .string()
-  .max(2000)
-  .refine(isValidVrBindString, "invalid controller bind");
+  .max(4096)
+  .refine(isValidControllerBindString, "invalid controller bind");
 
 export const uuid = z.string().uuid();
 
