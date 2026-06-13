@@ -108,7 +108,7 @@ export function UserMenu({
         {open && (
           <div
             role="menu"
-            className="absolute right-0 mt-2 w-44 glass rounded-lg p-1 shadow-xl z-30"
+            className="absolute right-0 mt-2 w-44 popover rounded-lg p-1 shadow-xl z-30"
           >
             {isAdmin && (
               <Link

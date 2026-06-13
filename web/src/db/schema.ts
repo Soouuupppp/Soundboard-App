@@ -112,6 +112,15 @@ export const appSettings = pgTable("appSettings", {
   ytAllowedHosts: text("ytAllowedHosts")
     .notNull()
     .default("youtube.com,youtu.be,www.youtube.com,m.youtube.com,music.youtube.com"),
+  // Admin MOTD banner (shown to signed-in users). motdUpdatedAt is the dismissal
+  // version token — bumped only when the MOTD content changes (see
+  // lib/app-settings.ts), NOT the row-wide updatedAt.
+  motdEnabled: boolean("motdEnabled").notNull().default(false),
+  motdMessage: text("motdMessage").notNull().default(""),
+  motdLinkLabel: text("motdLinkLabel"),
+  motdLinkUrl: text("motdLinkUrl"),
+  motdSeverity: text("motdSeverity").notNull().default("info"), // info | warning | success
+  motdUpdatedAt: timestamp("motdUpdatedAt"),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 

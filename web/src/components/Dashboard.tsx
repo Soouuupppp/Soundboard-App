@@ -5,7 +5,8 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown, Youtube, Gamepad2, Tag, Pencil, Plus, GripVertical, ListOrdered, LayoutGrid, Bookmark, Search, Check, HelpCircle, Headphones } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
-import { useAudioOutput } from "@/lib/audio-output";
+import { type AudioOutput } from "@/lib/audio-output";
+import { useAudio } from "@/components/AudioProvider";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { ClipEditor } from "@/components/ClipEditor";
 import { useToast } from "@/components/Toast";
@@ -111,6 +112,9 @@ export function Dashboard({
   const [boardTab, setBoardTab] = useState<"board" | "saved">("board");
   const [reordering, setReordering] = useState(false);
   const [savedTagFilter, setSavedTagFilter] = useState<string[]>([]);
+  // Saved tab: limit to the user's own uploads (exclude saved references to
+  // other people's public clips). Ephemeral, like the tag filter.
+  const [savedMineOnly, setSavedMineOnly] = useState(false);
   // Which card is expanded into full CRUD (only one at a time keeps it tidy).
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   // Drag-reorder state (Board tab only): the entry id being dragged.
@@ -233,7 +237,7 @@ export function Dashboard({
     } catch {}
   }, []);
   // --- Audio playback (allows overlap: new Audio per trigger) ---
-  const audio = useAudioOutput();
+  const audio = useAudio();
   const { play: audioPlay, updateEntryVolume, cancelAll } = audio;
   const setVolume = useCallback((entryId: string, v: number) => {
     setVolumes((prev) => {
@@ -250,12 +254,14 @@ export function Dashboard({
   // so without this guard the clip would play twice. The window is far below
   // human re-press cadence, so intentional spamming still works.
   const lastPlayRef = useRef<Map<string, number>>(new Map());
-  const playEntry = useCallback((entryId: string, soundId: string) => {
+  // `preview` (Saved-tab card plays) forces the local-only route so it never
+  // leaks into the virtual-mic cable; Board plays / binds leave it false.
+  const playEntry = useCallback((entryId: string, soundId: string, preview = false) => {
     const now = (typeof performance !== "undefined" ? performance.now() : Date.now());
     const last = lastPlayRef.current.get(entryId) ?? 0;
     if (now - last < 60) return;
     lastPlayRef.current.set(entryId, now);
-    audioPlay(soundId, volumes[entryId] ?? 1, entryId);
+    audioPlay(soundId, volumes[entryId] ?? 1, entryId, preview);
   }, [audioPlay, volumes]);
 
   // --- Keybind enable state (persisted in localStorage, this device only) ---
@@ -665,10 +671,14 @@ export function Dashboard({
     for (const e of entries) for (const t of e.tags) set.add(t);
     return [...set].sort();
   }, [entries]);
+  // Saved list: optional "my uploads only" + tag filter, combined with AND.
   const savedList = useMemo(() => {
-    if (savedTagFilter.length === 0) return entries;
-    return entries.filter((e) => e.tags.some((t) => savedTagFilter.includes(t)));
-  }, [entries, savedTagFilter]);
+    return entries.filter((e) => {
+      if (savedMineOnly && e.sound.ownerId !== user.id) return false;
+      if (savedTagFilter.length > 0 && !e.tags.some((t) => savedTagFilter.includes(t))) return false;
+      return true;
+    });
+  }, [entries, savedTagFilter, savedMineOnly, user.id]);
   // Sounds already in the library — lets the inline public browser mark/disable
   // clips the user has already saved.
   const savedSoundIds = useMemo(() => new Set(entries.map((e) => e.sound.id)), [entries]);
@@ -723,7 +733,7 @@ export function Dashboard({
       onTagsChange={(next) => saveTags(e.sound.id, next)}
       capturing={capturingFor === e.entry.id}
       isPlaying={audio.playingSoundIds.has(e.sound.id)}
-      onPlay={() => playEntry(e.entry.id, e.sound.id)}
+      onPlay={() => playEntry(e.entry.id, e.sound.id, view === "saved")}
       onCancel={() => audio.cancelSound(e.sound.id)}
       volume={volumes[e.entry.id] ?? 1}
       onVolumeChange={(v) => setVolume(e.entry.id, v)}
@@ -1106,10 +1116,22 @@ export function Dashboard({
               </p>
             ) : (
               <>
-                {savedTagPool.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                  {/* My-uploads-only filter, in front of the tag chips. */}
+                  <button
+                    type="button"
+                    aria-pressed={savedMineOnly}
+                    onClick={() => setSavedMineOnly((v) => !v)}
+                    className={`rounded-full px-2.5 py-0.5 text-[11px] transition mr-1 ${
+                      savedMineOnly ? "bg-accent/20 text-white" : "bg-white/10 text-muted hover:text-white"
+                    }`}
+                  >
+                    My uploads
+                  </button>
+                  {savedTagPool.length > 0 && (
                     <Tag size={13} className="text-muted shrink-0" />
-                    {savedTagPool.map((t) => {
+                  )}
+                  {savedTagPool.map((t) => {
                       const on = savedTagFilter.includes(t);
                       return (
                         <button
@@ -1138,9 +1160,12 @@ export function Dashboard({
                       </button>
                     )}
                   </div>
-                )}
                 {savedList.length === 0 ? (
-                  <p className="text-muted text-sm">No saved clips match the selected tags.</p>
+                  <p className="text-muted text-sm">
+                    {savedMineOnly
+                      ? "No saved clips match the current filters."
+                      : "No saved clips match the selected tags."}
+                  </p>
                 ) : (
                   <MasonryGrid className="grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                     {savedList.map((e) => renderCard(e, "saved"))}
@@ -1252,7 +1277,7 @@ function BrowsePublicPanel({
   savedSoundIds,
   onAdded,
 }: {
-  audio: ReturnType<typeof useAudioOutput>;
+  audio: AudioOutput;
   savedSoundIds: Set<string>;
   onAdded: () => void;
 }) {
@@ -1377,7 +1402,7 @@ function BrowsePublicPanel({
               <li key={s.id} className="card flex items-center gap-3">
                 <button
                   className="btn-primary !rounded-xl !px-3 !py-2.5 shrink-0"
-                  onClick={() => audio.play(s.id)}
+                  onClick={() => audio.play(s.id, 1, undefined, true)}
                   title="Play"
                   aria-label={`Play ${s.name}`}
                 >
@@ -1755,7 +1780,6 @@ function SoundCard(props: {
 }) {
   const { entry, capturing } = props;
   const { sound, ownerName } = entry;
-  const hasKeybind = !!entry.entry.keybind;
   // Controller binds are per-profile: only the current profile's slot is shown
   // and edited here, so switching profiles "clears" the visible bind.
   const controllerBind = getProfileBind(entry.entry.controllerBind, props.controllerProfile);
@@ -1821,6 +1845,114 @@ function SoundCard(props: {
   // props.controllerCapturing is set) — no live hold-and-release capture here.
   const { expanded } = props;
 
+  const keyDisabled = !!entry.entry.keybind && (!props.keybindEnabled || !props.keybindsGloballyEnabled);
+  const controllerDisabled = !!controllerBind && (!props.controllerEnabled || !props.controllersGloballyEnabled);
+
+  // Stacked bind block — one bind per line (keyboard, then controller). In edit
+  // mode each line is [enable toggle] [bind value — tap to (re)capture] [× clear];
+  // read-only mode (collapsed Board card) shows just the value, struck through
+  // when disabled. Backs both the Board and Saved expanded cards.
+  const bindStack = (editMode: boolean) => (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] p-1.5">
+      {/* Keyboard line */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        {editMode && entry.entry.keybind && !capturing && (
+          <Toggle
+            size="sm"
+            checked={props.keybindEnabled}
+            disabled={!props.keybindsGloballyEnabled}
+            onChange={props.onToggleKeybind}
+            label={`Toggle keybind for ${entry.entry.label || sound.name}`}
+          />
+        )}
+        {editMode ? (
+          <button
+            className="btn-ghost flex-1 text-xs min-w-0 !justify-start"
+            onClick={capturing ? props.onCaptureCancel : props.onCaptureStart}
+            title={
+              entry.entry.keybind && !props.keybindsGloballyEnabled
+                ? "Keybinds are globally off"
+                : entry.entry.keybind && !props.keybindEnabled
+                  ? "This keybind is off"
+                  : "Click, then hold one or more keys together and release"
+            }
+          >
+            <Keyboard size={14} className="mr-1 shrink-0" />
+            <span className={`truncate ${keyDisabled ? "line-through text-muted" : ""}`}>
+              {capturing ? "Hold keys…" : entry.entry.keybind || "Set keybind"}
+            </span>
+          </button>
+        ) : (
+          <span
+            className={`inline-flex flex-1 items-center gap-1 min-w-0 rounded-md bg-white/5 px-2 py-1 text-xs ${
+              keyDisabled ? "line-through text-muted/60" : "text-muted"
+            }`}
+            title="Keyboard bind"
+          >
+            <Keyboard size={11} className="shrink-0" />
+            <span className="truncate">{entry.entry.keybind || "—"}</span>
+          </span>
+        )}
+        {editMode && entry.entry.keybind && !capturing && (
+          <button className="btn-ghost text-xs !px-1.5 shrink-0" onClick={props.onClearKey} title="Clear">×</button>
+        )}
+      </div>
+
+      {/* Controller line */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        {editMode && hasController && (
+          <Toggle
+            size="sm"
+            checked={props.controllerEnabled}
+            disabled={!props.controllersGloballyEnabled}
+            onChange={props.onToggleController}
+            label={`Toggle controller bind for ${entry.entry.label || sound.name}`}
+          />
+        )}
+        {editMode ? (
+          <button
+            className="btn-ghost flex-1 text-xs min-w-0 !justify-start"
+            disabled={!props.hasDesktop}
+            onClick={props.onControllerCaptureStart}
+            title={
+              !props.hasDesktop
+                ? "Controller binds need the desktop app + SteamVR"
+                : hasController && !props.controllersGloballyEnabled
+                  ? "Controller binds are globally off"
+                  : hasController && !props.controllerEnabled
+                    ? "This controller bind is off"
+                    : !props.vrConnected
+                      ? "SteamVR not detected — start SteamVR to use controller binds"
+                      : "Choose inputs to bind"
+            }
+          >
+            <Gamepad2 size={14} className="mr-1 shrink-0" />
+            {controllerBind ? (
+              <span className={controllerDisabled ? "line-through opacity-60" : ""}>
+                <VrBindChips value={controllerBind} />
+              </span>
+            ) : (
+              <span className="truncate">{props.hasDesktop ? "Set controller" : "Desktop app required"}</span>
+            )}
+          </button>
+        ) : (
+          <span
+            className={`inline-flex flex-1 flex-wrap items-center gap-1 min-w-0 rounded-md bg-white/5 px-2 py-1 text-xs ${
+              controllerDisabled ? "line-through text-muted/60 opacity-70" : "text-muted"
+            }`}
+            title="Controller bind"
+          >
+            <Gamepad2 size={11} className="shrink-0" />
+            {controllerBind ? <VrBindChips value={controllerBind} /> : <span>—</span>}
+          </span>
+        )}
+        {editMode && hasController && (
+          <button className="btn-ghost text-xs !px-1.5 shrink-0" onClick={props.onClearController} title="Clear">×</button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="card flex flex-col gap-2">
       <div className="flex">
@@ -1844,38 +1976,10 @@ function SoundCard(props: {
           </button>
         )}
       </div>
-      {/* Board view: always-on keybind sub-card (keyboard | controller) so the
-          mapping is visible without entering edit mode. */}
-      {props.view === "board" && (
-        <div className="grid grid-cols-2 gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] p-1.5">
-          <span
-            className={`inline-flex items-center justify-center gap-1 rounded-md bg-white/5 px-2 py-1 text-[10px] ${
-              entry.entry.keybind && (!props.keybindEnabled || !props.keybindsGloballyEnabled)
-                ? "line-through text-muted/60"
-                : "text-muted"
-            }`}
-            title="Keyboard bind"
-          >
-            <Keyboard size={11} className="shrink-0" />
-            <span className="truncate">{entry.entry.keybind || "—"}</span>
-          </span>
-          <span
-            className={`inline-flex flex-wrap items-center justify-center gap-1 rounded-md bg-white/5 px-2 py-1 text-[10px] ${
-              entry.entry.controllerBind && (!props.controllerEnabled || !props.controllersGloballyEnabled)
-                ? "line-through text-muted/60 opacity-70"
-                : "text-muted"
-            }`}
-            title="Controller bind"
-          >
-            <Gamepad2 size={11} className="shrink-0" />
-            {controllerBind ? (
-              <VrBindChips value={controllerBind} />
-            ) : (
-              <span>—</span>
-            )}
-          </span>
-        </div>
-      )}
+      {/* Board view (collapsed): read-only stacked binds so the mapping is visible
+          without entering edit mode. In edit mode the editable stack renders in the
+          expanded block below instead. */}
+      {props.view === "board" && !expanded && bindStack(false)}
 
       {/* Saved view (compact): tags + a combined uploader · visibility meta line.
           Keybinds are edit-only here — the capture controls live in the expanded
@@ -1899,7 +2003,9 @@ function SoundCard(props: {
         </>
       )}
 
-      {/* Volume + the card's two compact actions (order: slider · edit · remove). */}
+      {/* Volume row. Collapsed: slider + edit (pencil) + add/remove-from-board,
+          right-aligned. Expanded: the slider gets its own full-width row — the
+          Done + remove-from-board buttons relocate to the bottom row below. */}
       <div className="flex items-center gap-2 mt-1">
         <div className="flex items-center gap-2 flex-1 min-w-0" title={`Volume ${Math.round(props.volume * 100)}%`}>
           <Volume2 size={14} className="text-muted shrink-0" />
@@ -1915,28 +2021,32 @@ function SoundCard(props: {
           />
           <span className="shrink-0 text-xs text-muted w-8 text-right">{Math.round(props.volume * 100)}</span>
         </div>
-        <button
-          className="btn-ghost text-xs !px-2 shrink-0"
-          onClick={props.onToggleExpand}
-          title={expanded ? "Done editing" : "Edit"}
-          aria-label={expanded ? "Collapse card" : "Edit card"}
-        >
-          {expanded ? "Done" : <Pencil size={14} />}
-        </button>
-        <button
-          className={`btn-ghost text-xs !px-2 shrink-0 ${props.onBoard ? "" : "text-accent"}`}
-          onClick={() => props.onSetOnBoard(!props.onBoard)}
-          title={props.onBoard ? "Remove from board (keeps it in Saved)" : "Add to your board"}
-          aria-label={props.onBoard ? "Remove from board" : "Add to board"}
-        >
-          {props.onBoard ? <X size={14} /> : <Plus size={14} />}
-        </button>
+        {!expanded && (
+          <>
+            <button
+              className="btn-ghost text-xs !px-2 shrink-0"
+              onClick={props.onToggleExpand}
+              title="Edit"
+              aria-label="Edit card"
+            >
+              <Pencil size={14} />
+            </button>
+            <button
+              className={`btn-ghost text-xs !px-2 shrink-0 ${props.onBoard ? "" : "text-accent"}`}
+              onClick={() => props.onSetOnBoard(!props.onBoard)}
+              title={props.onBoard ? "Remove from board (keeps it in Saved)" : "Add to your board"}
+              aria-label={props.onBoard ? "Remove from board" : "Add to board"}
+            >
+              {props.onBoard ? <X size={14} /> : <Plus size={14} />}
+            </button>
+          </>
+        )}
       </div>
 
       {/* --- Full CRUD, revealed by the pencil --- */}
       {expanded && (
         <>
-          <div className="text-xs text-muted truncate" title={sound.originalFilename}>
+          <div className="text-xs text-muted break-words" title={sound.originalFilename}>
             {sound.originalFilename}
           </div>
 
@@ -1971,86 +2081,9 @@ function SoundCard(props: {
             props.tags.length > 0 && <TagChips tags={props.tags} />
           )}
 
-          <div className="flex items-center gap-2 mt-1">
-            {hasKeybind && !capturing && (
-              <Toggle
-                size="sm"
-                checked={props.keybindEnabled}
-                disabled={!props.keybindsGloballyEnabled}
-                onChange={props.onToggleKeybind}
-                label={`Toggle keybind for ${entry.entry.label || sound.name}`}
-              />
-            )}
-            <button
-              className="btn-ghost flex-1 text-xs min-w-0"
-              onClick={capturing ? props.onCaptureCancel : props.onCaptureStart}
-              title={
-                hasKeybind && !props.keybindsGloballyEnabled
-                  ? "Keybinds are globally off"
-                  : hasKeybind && !props.keybindEnabled
-                    ? "This keybind is off"
-                    : "Click, then hold one or more keys together and release"
-              }
-            >
-              <Keyboard size={14} className="mr-1 shrink-0" />
-              <span
-                className={`truncate ${
-                  hasKeybind && (!props.keybindEnabled || !props.keybindsGloballyEnabled)
-                    ? "line-through text-muted"
-                    : ""
-                }`}
-              >
-                {capturing ? "Hold keys…" : entry.entry.keybind || "Set keybind"}
-              </span>
-            </button>
-            {hasKeybind && !capturing && (
-              <button className="btn-ghost text-xs" onClick={props.onClearKey} title="Clear">×</button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 mt-1">
-            {hasController && (
-              <Toggle
-                size="sm"
-                checked={props.controllerEnabled}
-                disabled={!props.controllersGloballyEnabled}
-                onChange={props.onToggleController}
-                label={`Toggle controller bind for ${entry.entry.label || sound.name}`}
-              />
-            )}
-            <button
-              className="btn-ghost flex-1 text-xs min-w-0"
-              disabled={!props.hasDesktop}
-              onClick={props.onControllerCaptureStart}
-              title={
-                !props.hasDesktop
-                  ? "Controller binds need the desktop app + SteamVR"
-                  : hasController && !props.controllersGloballyEnabled
-                  ? "Controller binds are globally off"
-                  : hasController && !props.controllerEnabled
-                  ? "This controller bind is off"
-                  : !props.vrConnected
-                  ? "SteamVR not detected — start SteamVR to use controller binds"
-                  : "Choose Index inputs to bind"
-              }
-            >
-              <Gamepad2 size={14} className="mr-1 shrink-0" />
-              {controllerBind ? (
-                <span
-                  className={
-                    !props.controllerEnabled || !props.controllersGloballyEnabled ? "line-through opacity-60" : ""
-                  }
-                >
-                  <VrBindChips value={controllerBind} />
-                </span>
-              ) : (
-                <span className="truncate">{props.hasDesktop ? "Set controller" : "Desktop app required"}</span>
-              )}
-            </button>
-            {controllerBind && (
-              <button className="btn-ghost text-xs" onClick={props.onClearController} title="Clear">×</button>
-            )}
-          </div>
+          {/* Editable stacked binds (keyboard + controller) — replaces the old
+              wide capture rows; shown in both Board and Saved expanded cards. */}
+          {bindStack(true)}
 
           {props.controllerCapturing && (
             <VrBindPicker
@@ -2085,6 +2118,27 @@ function SoundCard(props: {
               </button>
             </div>
           )}
+
+          {/* Bottom row: Done (collapse, ✓) + add/remove-from-board (icon-only) —
+              relocated here off the slider row in the expanded state. */}
+          <div className="flex items-center justify-between gap-2 mt-1 pt-2 border-t border-white/5">
+            <button
+              className="btn-ghost text-xs !px-2"
+              onClick={props.onToggleExpand}
+              title="Done editing"
+              aria-label="Collapse card"
+            >
+              <Check size={14} />
+            </button>
+            <button
+              className={`btn-ghost text-xs !px-2 ${props.onBoard ? "" : "text-accent"}`}
+              onClick={() => props.onSetOnBoard(!props.onBoard)}
+              title={props.onBoard ? "Remove from board (keeps it in Saved)" : "Add to your board"}
+              aria-label={props.onBoard ? "Remove from board" : "Add to board"}
+            >
+              {props.onBoard ? <X size={14} /> : <Plus size={14} />}
+            </button>
+          </div>
         </>
       )}
 
@@ -2092,7 +2146,7 @@ function SoundCard(props: {
   );
 }
 
-function ControlPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
+function ControlPanel({ audio }: { audio: AudioOutput }) {
   // Collapsed by default — the slim status bar surfaces the live state so you
   // rarely need to open it. Tab is the section shown once expanded.
   const [open, setOpen] = useState(false);
@@ -2334,6 +2388,63 @@ function ControlPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
 // pill green / amber (nearing the limiter) / red (clipping). Shared by the
 // Control Panel header (global output) and each Virtual Mic input row. `active`
 // gates the rAF loop so idle meters cost nothing.
+// Peak-meter color for a linear level (red past 0 dBFS, amber into the limiter
+// threshold at -1 dBFS, else green). Shared by LevelMeter + PeakMeter.
+function meterColor(level: number): string {
+  return level >= 1.0 ? "bg-red-500" : level >= 0.89 ? "bg-amber-400" : "bg-emerald-500";
+}
+
+// Drives a meter bar straight to the DOM each animation frame (width + color via
+// a ref), so a continuously-running meter doesn't force a React re-render 60×/sec
+// — which matters because in Virtual Mic mode several of these run for the whole
+// session. Returns nothing; the caller renders the bar element with `barRef`.
+function useMeterBar(
+  barRef: React.RefObject<HTMLDivElement | null>,
+  getPeak: () => number,
+  active: boolean,
+  onLevel?: (level: number) => void,
+) {
+  const heldRef = useRef(0);
+  const lastColorRef = useRef("");
+  const onLevelRef = useRef(onLevel);
+  onLevelRef.current = onLevel;
+  useEffect(() => {
+    const bar = barRef.current;
+    const paint = (level: number) => {
+      if (bar) {
+        bar.style.width = `${Math.min(100, level * 100)}%`;
+        const color = meterColor(level);
+        if (color !== lastColorRef.current) {
+          lastColorRef.current = color;
+          bar.className = `h-full ${color} transition-[width] duration-75`;
+        }
+      }
+      onLevelRef.current?.(level);
+    };
+    if (!active) {
+      heldRef.current = 0;
+      paint(0);
+      return;
+    }
+    let raf = 0;
+    let last = 0;
+    // 30fps is smooth enough for a level meter and halves the work vs. painting
+    // every frame. (rAF still auto-pauses when the window is hidden/occluded, so
+    // a backgrounded soundboard costs nothing.) Decay is squared to keep the same
+    // wall-clock peak-hold falloff at the lower update rate.
+    const FRAME_MS = 1000 / 30;
+    const tick = (ts: number) => {
+      raf = requestAnimationFrame(tick);
+      if (ts - last < FRAME_MS) return;
+      last = ts;
+      heldRef.current = Math.max(getPeak(), heldRef.current * 0.846); // peak-hold + decay
+      paint(heldRef.current);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [active, getPeak, barRef]);
+}
+
 function LevelMeter({
   getPeak,
   active,
@@ -2343,34 +2454,11 @@ function LevelMeter({
   active: boolean;
   className?: string;
 }) {
-  const [level, setLevel] = useState(0);
-  const heldRef = useRef(0);
-
-  useEffect(() => {
-    if (!active) {
-      heldRef.current = 0;
-      setLevel(0);
-      return;
-    }
-    let raf = 0;
-    let mounted = true;
-    const tick = () => {
-      heldRef.current = Math.max(getPeak(), heldRef.current * 0.92); // peak-hold + decay
-      if (mounted) setLevel(heldRef.current);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      mounted = false;
-      cancelAnimationFrame(raf);
-    };
-  }, [active, getPeak]);
-
-  const pct = Math.min(100, level * 100);
-  const color = level >= 1.0 ? "bg-red-500" : level >= 0.89 ? "bg-amber-400" : "bg-emerald-500";
+  const barRef = useRef<HTMLDivElement | null>(null);
+  useMeterBar(barRef, getPeak, active);
   return (
     <div className={`shrink-0 overflow-hidden rounded-full bg-white/10 ${className}`}>
-      <div className={`h-full ${color} transition-[width] duration-75`} style={{ width: `${pct}%` }} />
+      <div ref={barRef} className="h-full bg-emerald-500 transition-[width] duration-75" style={{ width: "0%" }} />
     </div>
   );
 }
@@ -2427,7 +2515,7 @@ function Toggle({
   );
 }
 
-function VirtualMicPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }) {
+function VirtualMicPanel({ audio }: { audio: AudioOutput }) {
   const on = audio.virtualMicMode;
   const labelsHidden =
     audio.inputDevices.length === 0 || audio.inputDevices.some((d) => !d.label);
@@ -2526,34 +2614,18 @@ function VirtualMicPanel({ audio }: { audio: ReturnType<typeof useAudioOutput> }
 // pre-limiter peak each frame with a short peak-hold decay. Red = past 0 dBFS
 // (the limiter is clamping it); amber = into the limiter threshold (-1 dBFS).
 function PeakMeter({ getPeak, active }: { getPeak: () => number; active: boolean }) {
-  const [level, setLevel] = useState(0);
-  const heldRef = useRef(0);
-
-  useEffect(() => {
-    if (!active) {
-      heldRef.current = 0;
-      setLevel(0);
-      return;
+  const barRef = useRef<HTMLDivElement | null>(null);
+  // The bar is painted straight to the DOM (no per-frame re-render); only the
+  // "Clipping" label is React state, and it flips at most when crossing 0 dBFS.
+  const [clipping, setClipping] = useState(false);
+  const clippingRef = useRef(false);
+  useMeterBar(barRef, getPeak, active, (level) => {
+    const clip = level >= 1.0;
+    if (clip !== clippingRef.current) {
+      clippingRef.current = clip;
+      setClipping(clip);
     }
-    let raf = 0;
-    let mounted = true;
-    const tick = () => {
-      const p = getPeak();
-      heldRef.current = Math.max(p, heldRef.current * 0.92); // peak-hold + decay
-      if (mounted) setLevel(heldRef.current);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      mounted = false;
-      cancelAnimationFrame(raf);
-    };
-  }, [active, getPeak]);
-
-  const pct = Math.min(100, level * 100);
-  const clipping = level >= 1.0;
-  const hot = level >= 0.89; // limiter threshold (-1 dBFS) in linear terms
-  const color = clipping ? "bg-red-500" : hot ? "bg-amber-400" : "bg-emerald-500";
+  });
 
   return (
     <div>
@@ -2562,7 +2634,7 @@ function PeakMeter({ getPeak, active }: { getPeak: () => number; active: boolean
         {clipping && <span className="text-xs text-red-400 font-medium">Clipping — limiter active</span>}
       </div>
       <div className="h-2.5 w-full rounded-full bg-white/10 overflow-hidden">
-        <div className={`h-full ${color} transition-[width] duration-75`} style={{ width: `${pct}%` }} />
+        <div ref={barRef} className="h-full bg-emerald-500 transition-[width] duration-75" style={{ width: "0%" }} />
       </div>
       <p className="text-xs text-muted mt-1">
         The summed signal feeding the virtual mic. The limiter stops it hard-clipping, but if it

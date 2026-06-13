@@ -19,7 +19,7 @@ export function TagChips({ tags, className = "" }: { tags: string[]; className?:
       {tags.map((t) => (
         <span
           key={t}
-          className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-muted"
+          className="inline-flex items-center rounded-full bg-white/10 px-2.5 py-1 text-xs text-muted"
         >
           {t}
         </span>

@@ -143,7 +143,7 @@ export function Select({
           <div
             ref={menuRef}
             role="listbox"
-            className="glass fixed z-[60] max-h-64 overflow-y-auto rounded-lg p-1 shadow-xl"
+            className="popover fixed z-[60] max-h-64 overflow-y-auto rounded-lg p-1 shadow-xl"
             style={{
               top: rect.bottom + 4,
               left: rect.left,

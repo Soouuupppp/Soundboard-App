@@ -33,7 +33,7 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.3.1**).
+(currently **1.3.2**).
 
 ## Stack
 
@@ -46,7 +46,18 @@ Versions across all three `package.json` files are kept in lockstep
 - **electron/** — Electron 33, `uiohook-napi` (low-level keyboard hook),
   `electron-updater` (GitHub-release auto-update), `electron-builder`. The
   **vr-bridge** sidecar is C++ linking the bundled **OpenVR** SDK.
-- **Postgres** — official `postgres:16-alpine`.
+- **Postgres** — official `postgres:16-alpine`. **Schema is applied via
+  `web/src/db/bootstrap.sql`, NOT drizzle-kit migrations.** The web container's
+  start command runs `tsx src/db/migrate.ts && node server.js`; `migrate.ts`
+  executes `bootstrap.sql` on **every boot** — hand-maintained, idempotent DDL
+  (`CREATE TABLE IF NOT EXISTS` + `ALTER TABLE … ADD COLUMN IF NOT EXISTS`
+  backfills) — then seeds the system roles. `bootstrap.sql` is the only DDL
+  tracked in git; the `drizzle/` output folder is untracked and `pnpm db:generate`
+  is **not** part of the deploy path. **When you change the schema, edit BOTH
+  `src/db/schema.ts` (drizzle-orm uses it at runtime for queries) AND
+  `bootstrap.sql`** (add to the `CREATE TABLE` block for fresh DBs + a matching
+  `ADD COLUMN IF NOT EXISTS` backfill for existing ones — see the appSettings
+  yt-override / motd columns as the pattern). Do not rely on drizzle migrations.
 - **YouTube import** needs **`yt-dlp` + `ffmpeg`** on PATH; the web Dockerfile
   installs both. Runs in-process (`lib/yt-convert.ts`).
 - **docker compose** — `web` + `db` services. The container listens on **5050**
@@ -58,8 +69,8 @@ Versions across all three `package.json` files are kept in lockstep
 ```bash
 pnpm dev            # next dev (web)
 pnpm build          # next build (web)
-pnpm db:generate    # drizzle-kit generate (migrations)
-pnpm db:migrate     # apply migrations (tsx src/db/migrate.ts)
+pnpm db:generate    # drizzle-kit generate — NOT the deploy path (see Postgres note); schema lives in bootstrap.sql
+pnpm db:migrate     # run src/db/migrate.ts (applies bootstrap.sql + seeds roles) — this is the real schema-apply step
 pnpm electron       # run the desktop wrapper from source
 pnpm up / pnpm down # docker compose up --build / down
 ```
@@ -434,6 +445,210 @@ header/routing change last so it doesn't churn the panels mid-flight.
    browsing is already embedded via `PublicBrowse`); drop the `My board`/`Public`
    nav links.
    **Progress: ✅ Done**
+
+### Tasks — 1.3.2 (persistent audio engine + local previews)
+
+Version bumped to **1.3.2** across all three `package.json` + docs. Owner
+decisions below are **locked**. Do task 1 first — task 2's admin-page case relies
+on the shared engine task 1 introduces; task 3 is independent.
+
+1. **Persist the audio engine across navigation** *(bug: virtual mic stops when
+   not on the dashboard — admin-only in practice)*. **Root cause:** the audio
+   engine (`useAudioOutput` + the `MicMixer`) is owned *inside* `<Dashboard>`,
+   and `AdminPanel` separately calls `useAudioOutput()` for its own instance
+   (`AdminPanel.tsx`). The unmount effect in `lib/audio-output.ts` calls
+   `mixer.stop()`, so navigating from `/dashboard` to the separate `/admin` route
+   unmounts Dashboard and **kills the virtual mic**. Only admins can reach
+   `/admin`, so only they hit it.
+   **Locked decision — hoist to a global provider:** move the engine into a React
+   **context provider** mounted in `app/layout.tsx` (above the route segment) so a
+   **single shared engine** survives all route changes. `Dashboard` and
+   `AdminPanel` both *consume* the context instead of each instantiating the hook
+   — this also collapses the two independent engine instances into one. Notes: the
+   provider is a **client** component wrapping `layout.tsx`'s children (layout
+   stays a server component); all `AudioContext`/`getUserMedia` creation stays
+   client-only and lazy; teardown happens only on real app unmount (tab close),
+   **not** on route change.
+   **Progress: ✅ Done** *(new `components/AudioProvider.tsx` mounts a single
+   `useAudioOutput()` in `app/layout.tsx`; `Dashboard`/`AdminPanel`/`PublicBrowse`
+   consume it via `useAudio()` — collapses the prior independent instances into
+   one engine that survives route changes.)*
+2. **Local-only previews — don't route previews through the virtual-mic cable**
+   *(feat)*. Today previews call the same cable-routed `audio.play()` as the Board
+   (`PublicBrowse.tsx` public-clip preview, Saved-library card plays in
+   `Dashboard.tsx`, and the admin sound preview at `AdminPanel.tsx` ~L1188), so in
+   Virtual Mic mode they leak into the game mic.
+   **Locked decisions:**
+   - **What counts as a preview** (local-only): **public-browser previews**,
+     **Saved-library (non-board) card previews**, and **admin-page sound
+     previews**. **Board plays stay routed** through output/virtual mic — unchanged.
+   - **Where a preview plays:** the **selected output device** (so you hear it
+     where your other audio goes), but **never into the virtual-mic cable** — even
+     when Virtual Mic mode is on.
+   **Implementation:** add a preview play path in `lib/audio-output.ts` (e.g. a
+   `preview` flag on `play()` or a separate `previewPlay`) that always takes the
+   normal-mode `OutputGraph`/`<audio>` route to the selected output device and
+   **bypasses `mixer.injectClip` (the cable)** regardless of `virtualMicMode`.
+   Point the three preview call sites above at it; leave on-board playback on the
+   existing cable-routed path. (Depends on task 1 for the admin-page case to be
+   audible while Virtual Mic mode is on.)
+   **Progress: ✅ Done** *(added a `preview` flag to `play()` in
+   `lib/audio-output.ts`, wired into the Saved-tab card play (`playEntry(..., view
+   === "saved")`), the inline `BrowsePublicPanel` preview, `PublicBrowse.tsx`, and
+   the admin sound preview. Board plays / keybind / VR triggers stay routed.
+   **Hotfix (owner override of the original "selected output device" decision):**
+   previews now ALWAYS play on the **Monitor device** via a plain `<audio>` +
+   `setSinkId(monitorDeviceId)` — never the cable, never the output device. In
+   Virtual Mic mode the output device IS the cable, so routing previews there both
+   leaked into the game mic and was inaudible; the monitor device is where you
+   actually hear local audio.)*
+3. **Monitor-latency watchdog — fix growing monitor delay over long sessions**
+   *(bug)*. **Symptom:** after the app runs many hours (e.g. left open overnight,
+   across a PC sleep/resume), the local **monitor** sound lags the trigger by
+   2-3s, while the cable meter still fires instantly. **Confirmed by owner:**
+   toggling Virtual Mic off/on (or reloading) clears it. **Root cause:** the cable
+   path is a direct AudioContext output (`cableBus → limiter → ctx.destination`,
+   and the meter taps `cableBus`), but the **monitor** path bridges through a
+   `MediaStreamAudioDestinationNode → <audio>` element (`monitorDest`/`monitorEl`
+   in `audio-mixer.ts`) so it can target a *different* device than the cable. That
+   bridge has a jitter buffer that **accumulates latency** over long uptime on
+   Chromium — so the meter (cable tap) stays real-time while the monitor element
+   buffers behind. Not a logic bug; a platform behavior of the MediaStream→element
+   bridge.
+   **Fix direction:** add a watchdog in `MicMixer` that **rebuilds the monitor
+   stream/element** when it goes stale instead of requiring a manual toggle —
+   recreate `monitorDest` + `monitorEl` (re-applying `monitorBus` wiring + the
+   monitor sink) on `AudioContext` resume after suspension and/or after a long
+   idle gap, so the buffer resets to ~0 transparently. Keep the cable path
+   untouched (it isn't affected). Verify the rebuild doesn't drop the monitor sink
+   selection or click audibly.
+   **Progress: ✅ Done** *(added a `rebuildMonitorTail()` to `MicMixer` that swaps
+   just the `monitorBus → MediaStreamDestination → <audio>` tail — preserving the
+   monitor sink + every source's monitor send — and a `startMonitorWatchdog()`
+   that fires it on an explicit AudioContext suspend→resume (statechange listener)
+   and on a long wall-clock gap (poll detecting sleep/throttle), debounced. Torn
+   down in `stop()`. Cable path untouched.)*
+4. **Darker floating-menu surface — header avatar dropdown looks washed-out**
+   *(UI polish)*. The header avatar dropdown (Admin + Sign out) in
+   `components/UserMenu.tsx` (the `glass rounded-lg` menu at ~L111) sits on the
+   faint `.glass` surface (`globals.css`: a white `0.04 → 0.015` gradient over
+   `backdrop-blur-xl`), so floating over page content near the top of the header
+   it reads translucent/washed-out rather than a solid panel. **Fix:** give the
+   floating menu a **darker, more opaque** surface (e.g. a near-solid dark panel
+   bg behind the blur) so it reads as a distinct popover. **Note:** the shared
+   `Select` menu (`components/Select.tsx` ~L146) uses the **same `.glass` class**,
+   so prefer a shared darker **popover/menu** surface (a new util or a tweak that
+   both consume) over a one-off override, to keep all floating menus consistent —
+   confirm the change still looks right on the `Select` dropdowns too.
+   **Progress: ✅ Done** *(added a shared `.popover` surface in `globals.css` — a
+   near-solid dark panel `rgba(24,26,42,0.97)→rgba(13,15,26,0.97)` over the
+   `#070811` base, keeping the blur + border — and swapped both the `UserMenu`
+   avatar dropdown and the portalled `Select` menu from `.glass` to `.popover`.)*
+5. **"My uploads only" toggle on the Saved tab** *(feat)*. In the **Saved**
+   section (`Dashboard.tsx`, the tag-filter chip row at ~L1109), add a toggle
+   **before the tag chips** (in front of the `Tag` icon) that filters the list to
+   **only the user's own uploaded sounds** — i.e. clips where
+   `e.sound.ownerId === user.id` (the existing `isOwner` check at ~L720),
+   excluding saved *references* to other people's public clips. Combine it with
+   the existing tag filter (**AND**) in the `savedList` memo (~L668) — currently
+   `savedList` only narrows by `savedTagFilter`; add a `savedMineOnly` predicate
+   alongside it. State mirrors the tag filter's behavior (ephemeral
+   `useState`; persisting device-local is optional). Match the chip-row styling so
+   the toggle reads as part of that filter bar.
+   **Progress: ✅ Done** *(added ephemeral `savedMineOnly` state + a "My uploads"
+   pill at the front of the Saved filter bar (before the `Tag` icon); `savedList`
+   now ANDs `e.sound.ownerId === user.id` with the tag filter.)*
+6. **Notice banners — admin MOTD + web-only "get the desktop app" promo**
+   *(feat, two-sided)*. A stack of banners rendered **below the nav** (between
+   `<SiteHeader>` and `<main>` in `app/layout.tsx`), gated on a logged-in session.
+   **Locked decisions:** both notices show to **signed-in users only** (logged-out
+   landing stays clean); the promo is a **persistent banner** (not a hover
+   tooltip).
+
+   **6a. Admin-set MOTD banner** *(dismissible, re-shows on change or next day)*.
+   - **Storage:** extend the `appSettings` singleton (`db/schema.ts`,
+     `lib/app-settings.ts`) with `motdEnabled` (bool), `motdMessage` (text),
+     `motdLinkLabel` (text, nullable), `motdLinkUrl` (text, nullable),
+     `motdSeverity` (`'info' | 'warning' | 'success'`, default `info`), and
+     `motdUpdatedAt` (timestamp, **bumped only when MOTD fields change** — it's the
+     dismissal version token; don't reuse the row-wide `updatedAt`). Generate a
+     migration (`pnpm db:generate`).
+   - **Admin UI:** a **new section in `AdminPanel`** (mirror the YouTube-settings
+     section pattern, ~`AdminPanel.tsx` L162) — enable toggle, message textarea,
+     optional link (label + URL), severity picker (use the shared `Select`). Saves
+     via `/api/admin/settings`; add Zod validation in `lib/validation.ts` (bound
+     message length, require https URL when a link is set).
+   - **Banner:** a client `<MotdBanner>` fed the server-read MOTD; colors by
+     severity; renders the message + optional link; a **dismiss** (X) button.
+   - **Dismiss semantics (locked):** persist device-local
+     (`soundboard:motdDismissed = { version, date }`). Re-show when the content
+     **changed** (`version !== motdUpdatedAt`) **or** it's a **new local calendar
+     day** (`date !== today`). Hidden entirely when `motdEnabled` is false or the
+     message is empty.
+
+   **6b. Web-only desktop-app promo** *(non-dismissible)*. A persistent banner
+   shown **only in the web build** — i.e. when `window.soundboard` is absent (the
+   Electron detection used at `Dashboard.tsx` ~L456; check client-side after mount
+   so SSR doesn't flash it). Text promoting the Windows app + a link to
+   **`https://github.com/Soouuupppp/Soundboard-App/releases/latest`** (opens in a
+   new tab). **No dismiss** — we want users on the app. Never renders inside the
+   Electron wrapper.
+   **Progress: ✅ Done** *(6a: added `motdEnabled/Message/LinkLabel/LinkUrl/
+   Severity/UpdatedAt` to the `appSettings` schema; `updateAppSettings` bumps
+   `motdUpdatedAt` only when a MOTD field changes; `PatchAppSettingsBody` validates
+   the new fields (https-only link, 500-char message); a new "Notice banner" admin
+   tab with `MotdSettings` (toggle + textarea + link + severity `Select`). 6b:
+   `NoticeBanners.tsx` holds `MotdBanner` (severity colors, version+day dismissal
+   via `soundboard:motdDismissed`) and a non-dismissible `DesktopPromoBanner`
+   (shown only when `window.soundboard` is absent). Layout reads settings
+   server-side for signed-in users and renders the stack between header and main.
+   Schema applied via `bootstrap.sql` — the project's actual mechanism (idempotent
+   DDL run by `migrate.ts` at container start), NOT drizzle-kit migrations: added
+   the MOTD columns to the `appSettings` CREATE block + `ADD COLUMN IF NOT EXISTS`
+   backfills, mirroring `schema.ts`. **Hotfix:** the banner now updates without a
+   refresh — `MotdBanner` polls a new signed-in `GET /api/motd` every 60s (seeded
+   from the SSR value); a version change re-shows a dismissed banner. No WS/SSE
+   infra added. **Dismiss scope (owner revision):** the dismissal record lives in
+   **`sessionStorage`** (not localStorage), so a dismissed banner re-shows on a
+   content change (version) **or** a new local day (date) **or** an app restart /
+   new session — fixing "enabled but didn't show after restart.")*
+7. **Expanded sound-card layout cleanup** *(UI)*. The expanded/edit card layout is
+   awkward (see owner screenshot). Rework the **shared `SoundCard` editing block**
+   (`Dashboard.tsx` ~L1824–2092) — it backs **both** the Board and Saved expanded
+   cards, so changes apply to **both views** (locked). Locked changes:
+   - **Volume slider its own row (expanded):** in the **expanded** state the
+     volume slider gets a full-width row of its own. In the **collapsed** state,
+     keep the Edit (pencil) + remove-from-board buttons **right-aligned on the
+     slider row** as today (only the expanded state relocates buttons).
+   - **Relocate Done + remove-from-board (expanded):** move the **Done** (collapse)
+     and **remove-from-board** buttons off the slider row to a **new bottom row
+     beneath the `[Public | Delete]` row** (~L2065). Apply the relocation in each
+     context where those controls exist (owner vs non-owner "Remove from Saved").
+   - **Merge bind editing into the top binds (locked layout):** the top keybind
+     sub-card (currently the 2-col `keyboard | controller` grid at ~L1849, Board
+     view only) becomes a **vertical stack** (one bind per line). In **edit mode**
+     each line shows: enable **toggle** (left) + the bind value (**tap the row to
+     re-capture** — keyboard inline hold-capture, controller opens `VrBindPicker`)
+     + a **small × remove**; an unbound slot shows "Set keybind"/"Set controller".
+     **Remove the separate wide capture rows** (~L1974–2053). Collapsed = the same
+     stack but read-only (no toggle/×). Since the **Saved** expanded card has no
+     top sub-card today, render this same stacked bind block there in edit mode.
+     Preserve the `!hasDesktop` disabled state on the controller affordance.
+   - **Clip name wraps:** the original filename (~L1939, currently `truncate`)
+     wraps to additional rows instead of truncating (`break-words`, drop
+     `truncate`).
+   - **Bigger tags everywhere (locked):** bump `TagChips` (`components/Tags.tsx`)
+     from `text-[10px]` to ~`text-xs` (12px) with a bit more padding — applies
+     globally wherever tags render (editor, saved cards, public browser, admin).
+   **Progress: ✅ Done** *(extracted a `bindStack(editMode)` helper in `SoundCard`
+   — one bind per line (keyboard, controller), edit mode = toggle + tap-to-capture
+   value + × clear, read-only = struck-through value; collapsed Board shows the
+   read-only stack, expanded (both views) shows the editable stack, replacing the
+   old 2-col grid + wide capture rows. Volume slider gets its own full-width row
+   when expanded (pencil/board buttons only render collapsed); Done +
+   add/remove-from-board relocated to a new bottom row beneath `[Public|Delete]` /
+   `[Remove from Saved]`. Filename wraps (`break-words`). `TagChips` bumped to
+   `text-xs` + `px-2.5 py-1`.)*
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions
