@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, Plus, Search, Check, ChevronLeft, ChevronRight, Globe } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
-import { useAudioOutput } from "@/lib/audio-output";
+import { useAudio } from "@/components/AudioProvider";
 import { TagChips } from "@/components/Tags";
 import { useToast } from "@/components/Toast";
 
@@ -32,7 +32,7 @@ export function PublicBrowse() {
       .catch(() => toast.error("Couldn't load public sounds."));
   }, [toast]);
 
-  const audio = useAudioOutput();
+  const audio = useAudio();
 
   // The viewer's own public clips get their own showcase row up top; everything
   // else is the browsable grid below.
@@ -115,7 +115,7 @@ export function PublicBrowse() {
           </h2>
           <Carousel>
             {mine.map((s) => (
-              <MineCard key={s.id} sound={s} onPlay={() => audio.play(s.id)} />
+              <MineCard key={s.id} sound={s} onPlay={() => audio.play(s.id, 1, undefined, true)} />
             ))}
           </Carousel>
         </section>
@@ -165,7 +165,7 @@ export function PublicBrowse() {
               <li key={s.id} className="card group flex items-center gap-3 hover:border-white/20 transition">
                 <button
                   className="btn-primary !rounded-xl !px-3 !py-2.5 shrink-0"
-                  onClick={() => audio.play(s.id)}
+                  onClick={() => audio.play(s.id, 1, undefined, true)}
                   title="Play"
                   aria-label={`Play ${s.name}`}
                 >

@@ -22,13 +22,28 @@ export async function getAppSettings(): Promise<AppSettings> {
   return again;
 }
 
+// MOTD content fields. Touching any of these bumps motdUpdatedAt (the dismissal
+// version token), so dismissed banners re-show when an admin edits the message.
+const MOTD_FIELDS = [
+  "motdEnabled",
+  "motdMessage",
+  "motdLinkLabel",
+  "motdLinkUrl",
+  "motdSeverity",
+] as const;
+
 export async function updateAppSettings(
   patch: Partial<Omit<AppSettings, "id" | "updatedAt">>
 ): Promise<AppSettings> {
   await getAppSettings(); // ensure the row exists
+  const touchesMotd = MOTD_FIELDS.some((f) => f in patch);
   const [row] = await db
     .update(appSettings)
-    .set({ ...patch, updatedAt: new Date() })
+    .set({
+      ...patch,
+      updatedAt: new Date(),
+      ...(touchesMotd ? { motdUpdatedAt: new Date() } : {}),
+    })
     .where(eq(appSettings.id, SINGLETON_ID))
     .returning();
   return row;

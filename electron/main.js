@@ -376,14 +376,26 @@ function createWindow(url) {
     minHeight: 600,
     title: "Soundboard",
     icon: appIconPath(),
+    // Start hidden and reveal on first paint so the remote URL's network load
+    // doesn't flash an empty white window on launch.
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Leave backgroundThrottling at its default (on): when the window is
+      // minimized/occluded behind a game, Chromium suspends the meter rAF loops
+      // and the decorative background animation, dropping CPU to near-idle —
+      // which is exactly what we want, since you can't see them then anyway.
+      // Playback still fires instantly: hotkey/VR triggers arrive as IPC events
+      // and play through Web Audio, neither of which background throttling delays.
     },
   });
   if (saved.maximized) mainWindow.maximize();
+  mainWindow.once("ready-to-show", () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+  });
 
   lockdownWindow(mainWindow);
   mainWindow.loadURL(url);
@@ -455,6 +467,12 @@ function buildMenu() {
 }
 
 app.whenReady().then(async () => {
+  // Windows app identity: ties taskbar grouping, pinning, and notifications to
+  // the Soundboard AppUserModelID rather than the generic Electron one. (Process
+  // names + icon in Task Manager come from the packaged Soundboard.exe itself.)
+  if (process.platform === "win32") app.setAppUserModelId("com.soouuupppp.soundboard");
+  app.setName("Soundboard");
+
   wireUpdaterLogs();
   buildMenu();
 

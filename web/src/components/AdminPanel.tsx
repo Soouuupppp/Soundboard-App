@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
-import { Shield, Users, Trash2, Plus, Search, AlertCircle, Music, Play, Globe, Lock, Upload, Ban, Youtube, Tag as TagIcon } from "lucide-react";
+import { Shield, Users, Trash2, Plus, Search, AlertCircle, Music, Play, Globe, Lock, Upload, Ban, Youtube, Tag as TagIcon, Megaphone } from "lucide-react";
 import { formatBytes, parseSize } from "@/lib/utils";
-import { useAudioOutput } from "@/lib/audio-output";
+import { useAudio } from "@/components/AudioProvider";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { useToast, useMutate } from "@/components/Toast";
 import { Select } from "@/components/Select";
@@ -47,12 +47,18 @@ type Sound = {
   boardCount: number;
   tags: string[];
 };
+type MotdSeverity = "info" | "warning" | "success";
 type Settings = {
   ytEnabled: boolean;
   ytMaxDurationSec: number;
   ytMaxFileSize: number;
   ytConcurrency: number;
   ytAllowedHosts: string;
+  motdEnabled: boolean;
+  motdMessage: string;
+  motdLinkLabel: string | null;
+  motdLinkUrl: string | null;
+  motdSeverity: MotdSeverity;
 };
 
 export function AdminPanel() {
@@ -65,7 +71,7 @@ export function AdminPanel() {
   const [loading, setLoading] = useState(true);
   // Active admin section — a row of pill tabs sharing the panel below (mirrors
   // the /dashboard Control Panel / add-a-sound groups).
-  const [tab, setTab] = useState<"roles" | "users" | "youtube" | "tags" | "content">("roles");
+  const [tab, setTab] = useState<"roles" | "users" | "youtube" | "notices" | "tags" | "content">("roles");
 
   const refresh = async () => {
     try {
@@ -115,6 +121,7 @@ export function AdminPanel() {
         <PillTab icon={<Shield size={16} />} label="Roles" count={loading ? undefined : roles.length} active={tab === "roles"} onClick={() => setTab("roles")} />
         <PillTab icon={<Users size={16} />} label="Users" count={loading ? undefined : users.length} active={tab === "users"} onClick={() => setTab("users")} />
         <PillTab icon={<Youtube size={16} />} label="YouTube import" active={tab === "youtube"} onClick={() => setTab("youtube")} />
+        <PillTab icon={<Megaphone size={16} />} label="Notice banner" active={tab === "notices"} onClick={() => setTab("notices")} />
         <PillTab icon={<TagIcon size={16} />} label="Tags" count={loading ? undefined : tags.length} active={tab === "tags"} onClick={() => setTab("tags")} />
         <PillTab icon={<Music size={16} />} label="Content" count={loading ? undefined : sounds.length} active={tab === "content"} onClick={() => setTab("content")} />
       </div>
@@ -163,6 +170,20 @@ export function AdminPanel() {
             />
             {settings ? (
               <YouTubeSettings settings={settings} onChange={refresh} />
+            ) : (
+              <p className="text-sm text-muted">Loading…</p>
+            )}
+          </>
+        )}
+        {tab === "notices" && (
+          <>
+            <PanelHead
+              icon={<Megaphone size={16} />}
+              title="Notice banner"
+              subtitle="A message-of-the-day banner shown to all signed-in users below the header. Dismissals re-show when you change the message or on a new day."
+            />
+            {settings ? (
+              <MotdSettings settings={settings} onChange={refresh} />
             ) : (
               <p className="text-sm text-muted">Loading…</p>
             )}
@@ -370,6 +391,132 @@ function YouTubeSettings({
         Per-role import overrides now live under the <span className="text-white">Roles</span> tab,
         alongside each role&apos;s quotas.
       </p>
+    </div>
+  );
+}
+
+// Admin MOTD editor. The enable toggle commits immediately; the message / link /
+// severity are committed together via Save so motdUpdatedAt (the dismissal
+// version token) bumps once per edit rather than per keystroke.
+function MotdSettings({
+  settings,
+  onChange,
+}: {
+  settings: Settings;
+  onChange: () => void;
+}) {
+  const [message, setMessage] = useState(settings.motdMessage);
+  const [linkLabel, setLinkLabel] = useState(settings.motdLinkLabel ?? "");
+  const [linkUrl, setLinkUrl] = useState(settings.motdLinkUrl ?? "");
+  const [severity, setSeverity] = useState<MotdSeverity>(settings.motdSeverity);
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function patch(body: Partial<Settings>) {
+    setErr(null);
+    setSaving(true);
+    const res = await fetch("/api/admin/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setErr(j.error ?? "Couldn't save");
+      return false;
+    }
+    onChange();
+    return true;
+  }
+
+  function saveContent() {
+    const url = linkUrl.trim();
+    const label = linkLabel.trim();
+    if (url && !/^https:\/\//i.test(url)) {
+      setErr("Link URL must start with https://");
+      return;
+    }
+    patch({
+      motdMessage: message,
+      motdLinkLabel: label || null,
+      motdLinkUrl: url || null,
+      motdSeverity: severity,
+    });
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="font-medium text-sm">Enable notice banner</div>
+          <p className="text-xs text-muted mt-0.5">
+            When on (and the message isn&apos;t empty), the banner shows to every signed-in user
+            until they dismiss it. It re-appears when you change the message or on a new day.
+          </p>
+        </div>
+        <Toggle
+          checked={settings.motdEnabled}
+          onChange={(next) => patch({ motdEnabled: next })}
+          label="Toggle notice banner"
+        />
+      </div>
+
+      <Field label="Message">
+        <textarea
+          className="input w-full min-h-[80px] resize-y"
+          value={message}
+          maxLength={500}
+          placeholder="e.g. Scheduled maintenance tonight at 11pm UTC."
+          onChange={(e) => setMessage(e.target.value)}
+        />
+      </Field>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Link label (optional)">
+          <input
+            className="input w-full"
+            value={linkLabel}
+            maxLength={80}
+            placeholder="Learn more"
+            onChange={(e) => setLinkLabel(e.target.value)}
+          />
+        </Field>
+        <Field label="Link URL (https, optional)">
+          <input
+            className="input w-full"
+            value={linkUrl}
+            inputMode="url"
+            placeholder="https://example.com"
+            onChange={(e) => setLinkUrl(e.target.value)}
+          />
+        </Field>
+        <Field label="Severity">
+          <Select
+            value={severity}
+            onChange={(v) => setSeverity(v as MotdSeverity)}
+            options={[
+              { value: "info", label: "Info" },
+              { value: "warning", label: "Warning" },
+              { value: "success", label: "Success" },
+            ]}
+            aria-label="MOTD severity"
+          />
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button type="button" className="btn-primary" onClick={saveContent} disabled={saving}>
+          Save message
+        </button>
+        {saving && <span className="text-xs text-muted">Saving…</span>}
+      </div>
+
+      {err && (
+        <p className="text-xs text-red-300 flex items-center gap-1.5">
+          <AlertCircle size={13} /> {err}
+        </p>
+      )}
     </div>
   );
 }
@@ -1067,7 +1214,7 @@ function SoundsTable({ sounds, allTags, onChange }: { sounds: Sound[]; allTags: 
   const [publicOnly, setPublicOnly] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [editingTags, setEditingTags] = useState<string | null>(null);
-  const audio = useAudioOutput();
+  const audio = useAudio();
   const listId = useId();
 
   // Client-side typeahead: every clip name, file name, and uploader becomes a
@@ -1185,7 +1332,7 @@ function SoundsTable({ sounds, allTags, onChange }: { sounds: Sound[]; allTags: 
                     <div className="flex items-center gap-3">
                       <button
                         className="btn-ghost !rounded-lg !px-2.5 !py-2 shrink-0"
-                        onClick={() => audio.play(s.id)}
+                        onClick={() => audio.play(s.id, 1, undefined, true)}
                         title="Preview"
                         aria-label={`Preview ${s.name}`}
                       >

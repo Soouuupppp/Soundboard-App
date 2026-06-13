@@ -61,6 +61,15 @@ body {
     background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
   }
 
+  /* Shared surface for floating menus/popovers (avatar dropdown, the Select
+     menu). The faint `.glass` gradient reads washed-out when it floats over page
+     content; this is a near-solid dark panel (over the #070811 base) so a popover
+     reads as a distinct raised layer while keeping the blur + border. */
+  .popover {
+    @apply backdrop-blur-xl border border-white/10 shadow-glass;
+    background: linear-gradient(180deg, rgba(24,26,42,0.97), rgba(13,15,26,0.97));
+  }
+
   .card {
     @apply glass rounded-2xl p-5;
   }

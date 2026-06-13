@@ -23,13 +23,6 @@ const config: Config = {
         "ambient":
           "radial-gradient(1200px 600px at 10% -10%, rgba(124,140,255,0.18), transparent 60%), radial-gradient(900px 500px at 110% 10%, rgba(216,99,255,0.14), transparent 55%), radial-gradient(700px 500px at 50% 120%, rgba(70,200,255,0.10), transparent 60%)",
       },
-      keyframes: {
-        floatSlow: {
-          "0%,100%": { transform: "translate3d(0,0,0)" },
-          "50%": { transform: "translate3d(0,-12px,0)" },
-        },
-      },
-      animation: { floatSlow: "floatSlow 12s ease-in-out infinite" },
     },
   },
   plugins: [],

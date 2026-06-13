@@ -134,6 +134,14 @@ const allowedHostsCsv = z
     "each host must be a bare hostname like youtube.com"
   );
 
+// MOTD link URL: when present (non-null), must be a bounded https URL.
+const motdLinkUrl = z
+  .string()
+  .max(2048)
+  .url()
+  .refine((u) => u.startsWith("https://"), "link must be https")
+  .nullable();
+
 export const PatchAppSettingsBody = z
   .object({
     ytEnabled: z.boolean().optional(),
@@ -141,6 +149,12 @@ export const PatchAppSettingsBody = z
     ytMaxFileSize: quotaBytes.optional(),
     ytConcurrency: z.number().int().min(1).max(4).optional(),
     ytAllowedHosts: allowedHostsCsv.optional(),
+    // --- Admin MOTD banner ---
+    motdEnabled: z.boolean().optional(),
+    motdMessage: printable(500).optional(),
+    motdLinkLabel: printable(80).nullable().optional(),
+    motdLinkUrl: motdLinkUrl.optional(),
+    motdSeverity: z.enum(["info", "warning", "success"]).optional(),
   })
   .strict();
 

@@ -75,6 +75,21 @@ function clamp01(v: number) {
   return Math.max(0, Math.min(1, v));
 }
 
+function perfNow(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+// Monitor watchdog tuning. The monitor tail (monitorBus → MediaStreamDestination
+// → <audio>) accrues jitter-buffer latency over long uptime; rebuilding it resets
+// the buffer to ~0. We poll on this cadence and treat a tick that arrives far
+// later than scheduled as evidence the audio graph was suspended (PC sleep/resume
+// or heavy background-tab throttling) — both known to fatten the buffer.
+const MONITOR_WATCHDOG_INTERVAL_MS = 5000;
+const MONITOR_STALE_GAP_MS = 12000;
+// Debounce so a suspend→resume that fires both the statechange listener and the
+// watchdog tick doesn't rebuild (and risk a click) twice in a row.
+const MONITOR_REBUILD_DEBOUNCE_MS = 1000;
+
 // Read the max absolute sample currently in an analyser's time-domain buffer,
 // as a linear 0..1+ peak (can exceed 1 when a signal is driving past 0 dBFS).
 function peakOf(analyser: AnalyserNode | null, buf: Float32Array<ArrayBuffer> | null): number {
@@ -119,6 +134,16 @@ export class MicMixer {
   // Serialize source reconciliation so overlapping calls can't double-open one.
   private syncChain: Promise<unknown> = Promise.resolve();
 
+  // Monitor-latency watchdog (see MONITOR_* constants above). The interval
+  // detects long wall-clock gaps (sleep/throttle); the statechange listener
+  // catches an explicit AudioContext suspend→resume. Both rebuild the monitor
+  // tail so its jitter buffer can't drift seconds behind the real-time cable.
+  private monitorWatchdog: ReturnType<typeof setInterval> | null = null;
+  private lastWatchdogTick = 0;
+  private lastMonitorRebuild = 0;
+  private onCtxStateChange: (() => void) | null = null;
+  private lastCtxState: AudioContextState | null = null;
+
   isReady() {
     return this.ctx !== null;
   }
@@ -160,11 +185,10 @@ export class MicMixer {
     cableAnalyser.fftSize = 1024;
     cableBus.connect(cableAnalyser);
 
+    // The monitorBus is stable (every source's monitor send connects here); the
+    // dest+element *tail* it feeds is what the watchdog rebuilds, so it's created
+    // by rebuildMonitorTail() below rather than inline.
     const monitorBus = ctx.createGain();
-    const monitorDest = ctx.createMediaStreamDestination();
-    monitorBus.connect(monitorDest);
-    const monitorEl = new Audio() as AudioWithSink;
-    monitorEl.srcObject = monitorDest.stream;
 
     const soundboardBus = ctx.createGain();
     soundboardBus.gain.value = this.soundboardVolume; // soundboard cable-send
@@ -179,25 +203,95 @@ export class MicMixer {
     this.cableAnalyser = cableAnalyser;
     this.peakBuf = new Float32Array(new ArrayBuffer(cableAnalyser.fftSize * 4));
     this.monitorBus = monitorBus;
-    this.monitorDest = monitorDest;
-    this.monitorEl = monitorEl;
     this.soundboardBus = soundboardBus;
     this.soundboardMonitorSend = soundboardMonitorSend;
     this.cableDeviceId = cableDeviceId;
 
     mlog("start: state =", ctx.state, "| setSinkId available =", typeof ctx.setSinkId === "function");
     await this.applyCableSink(cableDeviceId);
-    await this.applyMonitorSink(this.monitorDeviceId);
+    // Build the monitor tail (dest + <audio>), route it to the monitor device,
+    // and start it. force=true since this is the first build.
+    this.rebuildMonitorTail(true);
     try {
       await ctx.resume();
     } catch {
       /* may stay suspended until a gesture */
     }
-    await monitorEl.play().catch(() => {
-      /* may be blocked until a gesture; armResumeOnGesture retries */
-    });
     mlog("start: ready, state =", ctx.state);
     this.armResumeOnGesture();
+    this.startMonitorWatchdog();
+  }
+
+  // (Re)create the monitor tail: monitorBus → MediaStreamDestination → <audio>.
+  // The monitorBus and every source's monitor-send stay put; only this tail is
+  // swapped, which resets the bridge's jitter buffer to ~0. Builds the new tail
+  // before retiring the old one and re-applies the monitor sink, so the device
+  // selection is preserved and the swap is as gapless as possible. The cable path
+  // (cableBus → limiter → ctx.destination) is never touched.
+  private rebuildMonitorTail(force = false) {
+    const ctx = this.ctx;
+    const monitorBus = this.monitorBus;
+    if (!ctx || !monitorBus) return;
+    const now = perfNow();
+    if (!force && now - this.lastMonitorRebuild < MONITOR_REBUILD_DEBOUNCE_MS) return;
+    this.lastMonitorRebuild = now;
+
+    const oldDest = this.monitorDest;
+    const oldEl = this.monitorEl;
+
+    const dest = ctx.createMediaStreamDestination();
+    const el = new Audio() as AudioWithSink;
+    el.srcObject = dest.stream;
+    monitorBus.connect(dest);
+    this.monitorDest = dest;
+    this.monitorEl = el;
+    // Re-route to the chosen monitor device, then start the fresh element.
+    void this.applyMonitorSink(this.monitorDeviceId).then(() => {
+      el.play().catch(() => {
+        /* may be blocked until a gesture; armResumeOnGesture retries */
+      });
+    });
+
+    // Retire the previous tail (if any) once the new one is wired in.
+    if (oldDest) {
+      try { monitorBus.disconnect(oldDest); } catch { /* ignore */ }
+      try { oldDest.disconnect(); } catch { /* ignore */ }
+    }
+    if (oldEl) {
+      try {
+        oldEl.pause();
+        oldEl.srcObject = null;
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Arm the watchdog: a poll that rebuilds the monitor tail after a long
+  // wall-clock gap (sleep/resume, background throttle), plus a statechange
+  // listener that rebuilds on an explicit suspend→resume.
+  private startMonitorWatchdog() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.lastCtxState = ctx.state;
+    this.onCtxStateChange = () => {
+      const s = ctx.state;
+      if (s === "running" && this.lastCtxState !== "running") {
+        mlog("monitor watchdog: context resumed — rebuilding monitor tail");
+        this.rebuildMonitorTail();
+      }
+      this.lastCtxState = s;
+    };
+    ctx.addEventListener("statechange", this.onCtxStateChange);
+
+    this.lastWatchdogTick = perfNow();
+    this.monitorWatchdog = setInterval(() => {
+      const now = perfNow();
+      const gap = now - this.lastWatchdogTick;
+      this.lastWatchdogTick = now;
+      if (gap > MONITOR_STALE_GAP_MS) {
+        mlog("monitor watchdog:", Math.round(gap), "ms gap — rebuilding monitor tail");
+        this.rebuildMonitorTail();
+      }
+    }, MONITOR_WATCHDOG_INTERVAL_MS);
   }
 
   private async applyCableSink(deviceId: string) {
@@ -406,6 +500,17 @@ export class MicMixer {
   }
 
   async stop() {
+    // Tear down the monitor watchdog first so it can't rebuild mid-teardown.
+    if (this.monitorWatchdog !== null) {
+      clearInterval(this.monitorWatchdog);
+      this.monitorWatchdog = null;
+    }
+    if (this.ctx && this.onCtxStateChange) {
+      this.ctx.removeEventListener("statechange", this.onCtxStateChange);
+    }
+    this.onCtxStateChange = null;
+    this.lastCtxState = null;
+
     for (const node of this.inputs.values()) {
       node.stream.getTracks().forEach((t) => t.stop());
       node.src.disconnect();

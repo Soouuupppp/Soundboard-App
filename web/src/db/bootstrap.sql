@@ -143,9 +143,26 @@ CREATE TABLE IF NOT EXISTS "appSettings" (
   "ytMaxFileSize" BIGINT NOT NULL DEFAULT 20971520,
   "ytConcurrency" INTEGER NOT NULL DEFAULT 1,
   "ytAllowedHosts" TEXT NOT NULL DEFAULT 'youtube.com,youtu.be,www.youtube.com,m.youtube.com,music.youtube.com',
+  -- Admin MOTD banner (shown to signed-in users). "motdUpdatedAt" is the
+  -- dismissal version token, bumped only when the MOTD content changes
+  -- (lib/app-settings.ts), NOT the row-wide "updatedAt".
+  "motdEnabled" BOOLEAN NOT NULL DEFAULT FALSE,
+  "motdMessage" TEXT NOT NULL DEFAULT '',
+  "motdLinkLabel" TEXT,
+  "motdLinkUrl" TEXT,
+  "motdSeverity" TEXT NOT NULL DEFAULT 'info',
+  "motdUpdatedAt" TIMESTAMP,
   "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 INSERT INTO "appSettings" ("id") VALUES ('singleton') ON CONFLICT ("id") DO NOTHING;
+
+-- MOTD columns: backfill for DBs created before they existed.
+ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdEnabled" BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdMessage" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdLinkLabel" TEXT;
+ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdLinkUrl" TEXT;
+ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdSeverity" TEXT NOT NULL DEFAULT 'info';
+ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdUpdatedAt" TIMESTAMP;
 
 -- YouTube→soundbite conversion jobs. Polled by the client until done/error.
 CREATE TABLE IF NOT EXISTS "conversionJob" (

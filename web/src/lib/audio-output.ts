@@ -150,7 +150,11 @@ export type AudioOutput = {
   refreshDevices: () => Promise<void>;
   requestLabelsPermission: () => Promise<void>;
   supportsSinkId: boolean;
-  play: (soundId: string, perEntryVolume?: number, entryId?: string) => void;
+  // `preview` keeps a play local — it never feeds the virtual-mic cable. In
+  // normal mode that's just the selected output device (metered); in Virtual Mic
+  // mode it routes to the monitor device instead of the cable. So Saved / public
+  // / admin previews don't leak into the game mic.
+  play: (soundId: string, perEntryVolume?: number, entryId?: string, preview?: boolean) => void;
   cancelSound: (soundId: string) => void;
   cancelAll: () => void;
   updateEntryVolume: (entryId: string, perEntryVolume: number) => void;
@@ -225,6 +229,9 @@ export function useAudioOutput(): AudioOutput {
   const outGraphRef = useRef<OutputGraph | null>(null);
   const virtualMicModeRef = useRef(virtualMicMode);
   virtualMicModeRef.current = virtualMicMode;
+  // Read the current monitor device inside play() without rebuilding the callback.
+  const monitorDeviceIdRef = useRef(monitorDeviceId);
+  monitorDeviceIdRef.current = monitorDeviceId;
 
   useEffect(() => {
     const s = read();
@@ -496,9 +503,37 @@ export function useAudioOutput(): AudioOutput {
     }
   }, [recomputePlaying]);
 
-  const play = useCallback((soundId: string, perEntryVolume = 1, entryId?: string) => {
+  const play = useCallback((soundId: string, perEntryVolume = 1, entryId?: string, preview = false) => {
     const url = `/api/sounds/${soundId}/file`;
     const vol = clamp(perEntryVolume * masterRef.current);
+
+    // A preview only needs special handling in Virtual Mic mode, where the
+    // "output device" IS the cable: there it plays locally on the MONITOR device
+    // so it neither leaks into the game mic nor is inaudible to you. In normal
+    // mode there's no cable, so a preview is just ordinary output-device playback
+    // — it falls through to the metered normal path below (output device, on the
+    // global meter), which is what you'd expect.
+    if (preview && virtualMicModeRef.current && mixerRef.current?.isReady()) {
+      const el = new Audio(url) as AudioWithSink;
+      el.volume = vol;
+      const entry: Active = { monitorAudio: el, outSource: null, cable: null, soundId, entryId, perEntryVolume };
+      activeRef.current.push(entry);
+      recomputePlaying();
+      const cleanup = () => removeActive(entry);
+      el.addEventListener("ended", cleanup);
+      el.addEventListener("error", cleanup);
+      const mon = monitorDeviceIdRef.current;
+      const start = () => el.play().catch(cleanup);
+      if (supportsSinkId && el.setSinkId && mon && mon !== "default") {
+        el.setSinkId(mon).then(start).catch(start);
+      } else {
+        start();
+      }
+      return;
+    }
+
+    // Virtual-Mic-mode previews returned above; everything below is board/normal
+    // playback (plus normal-mode previews, which behave like ordinary output).
     const useMixer =
       virtualMicModeRef.current && mixerRef.current?.isReady();
 
