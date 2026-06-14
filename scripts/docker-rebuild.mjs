@@ -11,7 +11,9 @@
 // and prune everything older.
 //
 // Flow: move :latest -> :prev, build the new :latest, prune the displaced
-// layer, then bring the stack up.
+// layer, then bring the stack up. A foreground (dev) run additionally tears the
+// stack down and prunes again once you Ctrl+C out, so iterating locally doesn't
+// leave stopped containers and dangling layers behind.
 //
 // Flags (passed through to compose):
 //   --env-file <path>   global compose env file (prod points at /home/soundboard/.env)
@@ -49,4 +51,19 @@ run("docker", ["compose", ...composeGlobal, "build"]);
 run("docker", ["image", "prune", "-f"]);
 
 // 4. Bring the stack up on the fresh image.
-run("docker", ["compose", ...composeGlobal, "up", ...(detach ? ["-d"] : [])]);
+if (detach) {
+  // Prod: detach and leave it running; the build-time prune above is enough.
+  run("docker", ["compose", ...composeGlobal, "up", "-d"]);
+} else {
+  // Dev: run in the foreground until Ctrl+C. Swallow SIGINT so this script
+  // outlives the interrupt that stops compose, then tear the stack down and
+  // reclaim any dangling layers from the build.
+  process.on("SIGINT", () => {});
+  try {
+    run("docker", ["compose", ...composeGlobal, "up"]);
+  } catch {
+    // compose exited non-zero or was interrupted — fall through to cleanup.
+  }
+  run("docker", ["compose", ...composeGlobal, "down"]);
+  run("docker", ["image", "prune", "-f"]);
+}

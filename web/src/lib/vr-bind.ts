@@ -12,7 +12,11 @@
 //   - seq:   multiple steps performed in order (a combo / gesture)
 //
 // Matching semantics (see `advance`):
-//   - down action = state-based: satisfied while the input is currently held.
+//   - down action (no min-hold) = state-based: satisfied while the input is held.
+//   - down action WITH a min-hold = event-based, latched on the button's *up*
+//     edge but only if it was held continuously >= holdMs (early release = no
+//     latch; re-press to retry). Its down edge still counts as progress so the
+//     hold has the full STEP_TIMEOUT_MS window to qualify.
 //   - up   action = event-based: satisfied once its release edge fires during
 //                   the active step.
 //   - steps must advance within STEP_TIMEOUT_MS of the last progress or the bind
@@ -21,12 +25,19 @@
 //   - among binds completing on the SAME edge, the most-specific (most total
 //     actions) wins.
 //
+// Min-hold durations are per-action and ride on the action as `holdMs` at
+// runtime; they are device-local (localStorage) and NOT part of the serialized
+// VrBind (serialize/parse ignore holdMs). The web layer attaches them to a
+// parsed bind via `applyHolds` before feeding the matcher.
+//
 // Stored in boardEntry.controllerBind as JSON (a leading "{"); legacy
 // "+"-joined chord strings (VR:LeftHand:A+VR:RightHand:Trigger) are read as a
 // single simultaneous step of down actions, so old binds keep working.
 
 export type VrEdge = "down" | "up";
-export type VrAction = { input: string; edge: VrEdge };
+// `holdMs` (optional, down-edge only) = a minimum continuous hold before the
+// action latches; it's a runtime-only field (device-local, not serialized).
+export type VrAction = { input: string; edge: VrEdge; holdMs?: number };
 export type VrStep = VrAction[]; // simultaneous group
 export type VrBindMode = "simul" | "seq";
 export type VrBind = { mode: VrBindMode; steps: VrStep[] };
@@ -178,6 +189,33 @@ export function bindWeight(bind: VrBind): number {
   return bind.steps.reduce((n, s) => n + s.length, 0);
 }
 
+// --- per-action min-hold (device-local, runtime-only) -----------------------
+// Stored alongside binds in localStorage as a number[][] (ms, per step → action,
+// 0 = no hold). `holdMs` only applies to down-edge actions. Capped below
+// STEP_TIMEOUT_MS so a max hold can still complete within one step's window.
+export const HOLD_PRESETS_SEC = [0.5, 1, 1.2, 2, 2.5] as const;
+export const MAX_HOLD_MS = 2900; // < STEP_TIMEOUT_MS (3s)
+
+// Extract the per-action hold matrix from a bind (0 where none / not a down).
+export function bindHolds(bind: VrBind): number[][] {
+  return bind.steps.map((step) => step.map((a) => (a.edge === "down" ? (a.holdMs ?? 0) : 0)));
+}
+
+// Attach a stored hold matrix onto a parsed bind. Out-of-range / non-down /
+// non-positive entries are dropped, so a stale matrix degrades to "no hold".
+export function applyHolds(bind: VrBind, holds: number[][] | null | undefined): VrBind {
+  if (!holds) return bind;
+  return {
+    mode: bind.mode,
+    steps: bind.steps.map((step, si) =>
+      step.map((a, ai) => {
+        const ms = holds[si]?.[ai] ?? 0;
+        return ms > 0 && a.edge === "down" ? { input: a.input, edge: a.edge, holdMs: ms } : { input: a.input, edge: a.edge };
+      }),
+    ),
+  };
+}
+
 // Validation caps (shared with lib/validation.ts via isValidVrBindString).
 export const MAX_STEPS = 8;
 export const MAX_ACTIONS_PER_STEP = 4;
@@ -288,11 +326,16 @@ export function isValidControllerBindString(value: string): boolean {
 
 // --- matching engine --------------------------------------------------------
 
-export const STEP_TIMEOUT_MS = 1500;
+// Raised from 1.5s to 3s so a 2/2.5s min-hold completes within one step's reset
+// window (the button's down edge counts as progress, so the hold has up to the
+// timeout to qualify).
+export const STEP_TIMEOUT_MS = 3000;
 
 type MatchState = {
   stepIdx: number;
-  satisfiedUp: Set<string>; // up-actions latched in the current step (key = input)
+  // Event-actions latched in the current step (key = input): plain `up` actions
+  // and min-hold `down` actions (which latch on their qualifying release).
+  satisfiedUp: Set<string>;
   lastProgress: number;
 };
 
@@ -300,28 +343,25 @@ function freshState(): MatchState {
   return { stepIdx: 0, satisfiedUp: new Set(), lastProgress: 0 };
 }
 
-// Is (input, edge) one of the current step's still-pending actions?
-function edgeMatchesPending(step: VrStep, satisfiedUp: Set<string>, input: string, edge: VrEdge): boolean {
-  for (const a of step) {
-    if (a.input !== input || a.edge !== edge) continue;
-    // A down edge always re-confirms (the bridge emits one down per press). An
-    // up edge is pending only until it's been latched for this step.
-    return edge === "down" ? true : !satisfiedUp.has(input);
-  }
-  return false;
+// An "event" action latches on an up edge rather than being satisfied while held:
+// plain `up` actions, and min-hold `down` actions.
+function isEventAction(a: VrAction): boolean {
+  return a.edge === "up" || (a.holdMs ?? 0) > 0;
 }
 
 function stepComplete(step: VrStep, held: Set<string>, satisfiedUp: Set<string>): boolean {
-  return step.every((a) => (a.edge === "down" ? held.has(a.input) : satisfiedUp.has(a.input)));
+  return step.every((a) => (isEventAction(a) ? satisfiedUp.has(a.input) : held.has(a.input)));
 }
 
 // Advance one bind's state for an incoming edge. Returns true iff the bind's
 // final step just completed (i.e. fire the sound). `held` is the engine's global
-// held set, already updated for this edge.
+// held set, already updated for this edge; `heldSince` maps an input to the time
+// of its most recent down edge (for min-hold gating).
 function advance(
   bind: VrBind,
   st: MatchState,
   held: Set<string>,
+  heldSince: Map<string, number>,
   input: string,
   edge: VrEdge,
   now: number
@@ -332,9 +372,37 @@ function advance(
     st.satisfiedUp.clear();
   }
   const step = bind.steps[st.stepIdx];
-  if (!edgeMatchesPending(step, st.satisfiedUp, input, edge)) return false;
 
-  if (edge === "up") st.satisfiedUp.add(input);
+  // Decide whether this edge makes progress on one of the step's actions (an
+  // input appears at most once per step). Latches event-actions into satisfiedUp.
+  let progressed = false;
+  for (const a of step) {
+    if (a.input !== input) continue;
+    if (!isEventAction(a)) {
+      // Plain down: state-based — its down edge re-confirms progress.
+      if (edge === "down") progressed = true;
+    } else if (a.edge === "up") {
+      // Plain up action: latches on the release edge (once per step).
+      if (edge === "up" && !st.satisfiedUp.has(input)) {
+        st.satisfiedUp.add(input);
+        progressed = true;
+      }
+    } else {
+      // Min-hold down: down edge starts/continues the hold (progress); the up
+      // edge latches only if it was held long enough — early release = no latch.
+      if (edge === "down") {
+        progressed = true;
+      } else if (!st.satisfiedUp.has(input)) {
+        const since = heldSince.get(input);
+        if (since !== undefined && now - since >= (a.holdMs ?? 0)) {
+          st.satisfiedUp.add(input);
+          progressed = true;
+        }
+      }
+    }
+    break;
+  }
+  if (!progressed) return false;
   st.lastProgress = now;
 
   if (stepComplete(step, held, st.satisfiedUp)) {
@@ -354,10 +422,12 @@ function advance(
 // of the bind to fire (most-specific among same-edge completions) or null.
 export class VrMatcher {
   private held = new Set<string>();
+  private heldSince = new Map<string, number>(); // input → last down-edge time
   private states = new Map<string, MatchState>();
   private binds: { id: string; bind: VrBind; weight: number }[] = [];
 
   // Reconcile the active bind set (drops state for removed ids, seeds new ones).
+  // Binds may carry per-action `holdMs` (attached via applyHolds) for min-holds.
   setBinds(binds: { id: string; bind: VrBind }[]): void {
     this.binds = binds.map((b) => ({ id: b.id, bind: b.bind, weight: bindWeight(b.bind) }));
     const ids = new Set(this.binds.map((b) => b.id));
@@ -366,14 +436,16 @@ export class VrMatcher {
   }
 
   feed(input: string, edge: VrEdge, now: number): string | null {
-    if (edge === "down") this.held.add(input);
-    else this.held.delete(input);
+    if (edge === "down") {
+      this.held.add(input);
+      this.heldSince.set(input, now); // overwritten each press; never deleted on up
+    } else this.held.delete(input);
 
     let best: { id: string; weight: number } | null = null;
     for (const b of this.binds) {
       const st = this.states.get(b.id);
       if (!st) continue;
-      if (advance(b.bind, st, this.held, input, edge, now)) {
+      if (advance(b.bind, st, this.held, this.heldSince, input, edge, now)) {
         if (!best || b.weight > best.weight) best = { id: b.id, weight: b.weight };
       }
     }
@@ -384,6 +456,7 @@ export class VrMatcher {
   // physical presses made in the editor don't leak into playback matching).
   reset(): void {
     this.held.clear();
+    this.heldSince.clear();
     for (const s of this.states.values()) {
       s.stepIdx = 0;
       s.satisfiedUp.clear();
@@ -403,6 +476,7 @@ export type VrPreviewProgress = {
 export class VrBindPreview {
   private st = freshState();
   private held = new Set<string>();
+  private heldSince = new Map<string, number>();
 
   constructor(private bind: VrBind) {}
 
@@ -412,9 +486,13 @@ export class VrBindPreview {
   }
 
   feed(input: string, edge: VrEdge, now: number): VrPreviewProgress {
-    if (edge === "down") this.held.add(input);
-    else this.held.delete(input);
-    const fired = this.bind.steps.length ? advance(this.bind, this.st, this.held, input, edge, now) : false;
+    if (edge === "down") {
+      this.held.add(input);
+      this.heldSince.set(input, now);
+    } else this.held.delete(input);
+    const fired = this.bind.steps.length
+      ? advance(this.bind, this.st, this.held, this.heldSince, input, edge, now)
+      : false;
     return this.snapshot(fired);
   }
 
@@ -423,7 +501,9 @@ export class VrBindPreview {
       step.map((a) => {
         if (si < this.st.stepIdx) return true; // already-passed steps
         if (si > this.st.stepIdx) return false; // not reached yet
-        return a.edge === "down" ? this.held.has(a.input) : this.st.satisfiedUp.has(a.input);
+        // A min-hold down only turns "satisfied" on its qualifying release, so it
+        // reflects the gate (held-but-not-long-enough still reads unsatisfied).
+        return isEventAction(a) ? this.st.satisfiedUp.has(a.input) : this.held.has(a.input);
       })
     );
     return { stepIdx: this.st.stepIdx, satisfied, justFired };

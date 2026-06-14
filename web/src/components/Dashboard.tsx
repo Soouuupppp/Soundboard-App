@@ -10,7 +10,7 @@ import { useAudio } from "@/components/AudioProvider";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { ClipEditor } from "@/components/ClipEditor";
 import { useToast } from "@/components/Toast";
-import { Select } from "@/components/Select";
+import { Select, type SelectOption } from "@/components/Select";
 import { decodeAudio } from "@/lib/audio-edit";
 import {
   isModToken,
@@ -29,9 +29,13 @@ import {
   serializeVrBind,
   getProfileBind,
   setProfileBind,
+  applyHolds,
+  bindHolds,
   formatVrAction,
   vrInputsByHand,
   VR_PROFILES,
+  HOLD_PRESETS_SEC,
+  MAX_HOLD_MS,
   parseToken,
   MAX_STEPS,
   MAX_ACTIONS_PER_STEP,
@@ -126,12 +130,27 @@ export function Dashboard({
   const [capturingCancelAll, setCapturingCancelAll] = useState(false);
   // Cancel-all's controller bind — same device-local pattern (serialized VrBind).
   const [cancelAllControllerBind, setCancelAllControllerBindState] = useState<string | null>(null);
+  // Per-action VR min-hold durations (ms), device-local. Indexed [step][action]
+  // against the active profile's bind; the serialized VrBind itself is unchanged.
+  // Entries: { [entryId]: number[][] }; cancel-all has its own matrix.
+  const [holdMsByEntry, setHoldMsByEntryState] = useState<Record<string, number[][]>>({});
+  const [cancelAllHoldMs, setCancelAllHoldMsState] = useState<number[][] | null>(null);
   useEffect(() => {
     try {
       const v = localStorage.getItem("soundboard:cancelAllKeybind");
       if (v) setCancelAllKeybindState(v);
       const c = localStorage.getItem("soundboard:cancelAllControllerBind");
       if (c) setCancelAllControllerBindState(c);
+      const h = localStorage.getItem("soundboard:holdMs");
+      if (h) {
+        const o = JSON.parse(h);
+        if (o && typeof o === "object") setHoldMsByEntryState(o as Record<string, number[][]>);
+      }
+      const ch = localStorage.getItem("soundboard:cancelAllHoldMs");
+      if (ch) {
+        const o = JSON.parse(ch);
+        if (Array.isArray(o)) setCancelAllHoldMsState(o as number[][]);
+      }
     } catch {}
   }, []);
   const setCancelAllKeybind = useCallback((combo: string | null) => {
@@ -146,6 +165,28 @@ export function Dashboard({
     try {
       if (bind) localStorage.setItem("soundboard:cancelAllControllerBind", bind);
       else localStorage.removeItem("soundboard:cancelAllControllerBind");
+    } catch {}
+  }, []);
+  // A `holds` matrix with no positive entry is dropped (stored as no-hold).
+  const hasAnyHold = (holds: number[][]) => holds.some((s) => s.some((ms) => ms > 0));
+  const setEntryHoldMs = useCallback((entryId: string, holds: number[][] | null) => {
+    setHoldMsByEntryState((prev) => {
+      const next = { ...prev };
+      if (holds && hasAnyHold(holds)) next[entryId] = holds;
+      else delete next[entryId];
+      try {
+        if (Object.keys(next).length) localStorage.setItem("soundboard:holdMs", JSON.stringify(next));
+        else localStorage.removeItem("soundboard:holdMs");
+      } catch {}
+      return next;
+    });
+  }, []);
+  const setCancelAllHoldMs = useCallback((holds: number[][] | null) => {
+    const keep = holds && hasAnyHold(holds) ? holds : null;
+    setCancelAllHoldMsState(keep);
+    try {
+      if (keep) localStorage.setItem("soundboard:cancelAllHoldMs", JSON.stringify(keep));
+      else localStorage.removeItem("soundboard:cancelAllHoldMs");
     } catch {}
   }, []);
 
@@ -480,16 +521,17 @@ export function Dashboard({
           if (controllerEnabled[e.entry.id] === false) return []; // per-clip switch off
           // Only the current profile's bind is active (binds are per-profile).
           const bind = parseVrBind(getProfileBind(e.entry.controllerBind, controllerProfile));
-          return bind ? [{ id: e.entry.id, bind }] : [];
+          // Attach device-local per-action min-holds onto the parsed bind.
+          return bind ? [{ id: e.entry.id, bind: applyHolds(bind, holdMsByEntry[e.entry.id]) }] : [];
         });
     // Cancel-all is a board-level bind routed through the same matcher via the
     // sentinel id (gated only by the master controller switch, like its keybind).
     if (controllersEnabled) {
       const cab = parseVrBind(getProfileBind(cancelAllControllerBind, controllerProfile));
-      if (cab) binds.push({ id: CANCEL_ALL_BIND, bind: cab });
+      if (cab) binds.push({ id: CANCEL_ALL_BIND, bind: applyHolds(cab, cancelAllHoldMs) });
     }
     vrMatcherRef.current!.setBinds(binds);
-  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, controllerProfile]);
+  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, controllerProfile, holdMsByEntry, cancelAllHoldMs]);
 
   // Feed press/release edges to the matcher; play the most-specific bind that
   // completes. Skipped while the bind editor is open (and the matcher is reset
@@ -756,14 +798,17 @@ export function Dashboard({
       controllerCapturing={capturingVrFor === e.entry.id}
       onControllerCaptureStart={() => setCapturingVrFor(e.entry.id)}
       onControllerCaptureCancel={() => setCapturingVrFor(null)}
-      onControllerCaptured={(token) => {
+      onControllerCaptured={(token, holds) => {
         setCapturingVrFor(null);
         // Merge into this profile's slot, preserving the other profile's bind.
         setControllerBind(e.entry.id, setProfileBind(e.entry.controllerBind, controllerProfile, token));
+        setEntryHoldMs(e.entry.id, holds);
       }}
-      onClearController={() =>
-        setControllerBind(e.entry.id, setProfileBind(e.entry.controllerBind, controllerProfile, null))
-      }
+      onClearController={() => {
+        setControllerBind(e.entry.id, setProfileBind(e.entry.controllerBind, controllerProfile, null));
+        setEntryHoldMs(e.entry.id, null);
+      }}
+      controllerHolds={holdMsByEntry[e.entry.id] ?? null}
       onRemove={() => removeEntry(e.entry.id)}
       onDeleteSound={() => deleteSound(e.sound.id)}
       onTogglePublic={(next) => togglePublic(e.sound.id, next)}
@@ -778,13 +823,7 @@ export function Dashboard({
     <div className="space-y-8">
       {showOnboarding && <OnboardingOverlay onClose={dismissOnboarding} />}
 
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Hey, {user.name.split(" ")[0]} 👋
-          </h1>
-          <p className="text-muted mt-1">Trigger your sounds, organize your board, and tweak playback.</p>
-        </div>
+      <div className="flex justify-end">
         <button
           type="button"
           className="btn-ghost text-sm shrink-0"
@@ -1038,11 +1077,12 @@ export function Dashboard({
                         <button
                           type="button"
                           className="btn-ghost text-xs !px-1.5"
-                          onClick={() =>
+                          onClick={() => {
                             setCancelAllControllerBind(
                               setProfileBind(cancelAllControllerBind, controllerProfile, null),
-                            )
-                          }
+                            );
+                            setCancelAllHoldMs(null);
+                          }}
                           title="Clear cancel-all controller bind"
                         >
                           ×
@@ -1068,14 +1108,16 @@ export function Dashboard({
             {capturingCancelAllVr && (
               <VrBindPicker
                 initial={getProfileBind(cancelAllControllerBind, controllerProfile)}
+                initialHolds={cancelAllHoldMs}
                 vrConnected={vrConnected}
                 profile={controllerProfile}
                 onCancel={() => setCapturingCancelAllVr(false)}
-                onConfirm={(serialized) => {
+                onConfirm={(serialized, holds) => {
                   setCapturingCancelAllVr(false);
                   setCancelAllControllerBind(
                     setProfileBind(cancelAllControllerBind, controllerProfile, serialized),
                   );
+                  setCancelAllHoldMs(holds);
                 }}
               />
             )}
@@ -1753,8 +1795,10 @@ function SoundCard(props: {
   controllerCapturing: boolean;
   onControllerCaptureStart: () => void;
   onControllerCaptureCancel: () => void;
-  onControllerCaptured: (token: string) => void;
+  onControllerCaptured: (token: string, holds: number[][]) => void;
   onClearController: () => void;
+  // Device-local per-action min-holds for the active profile's bind (or null).
+  controllerHolds: number[][] | null;
   onRemove: () => void;
   onDeleteSound: () => void;
   onTogglePublic: (next: boolean) => void;
@@ -2088,6 +2132,7 @@ function SoundCard(props: {
           {props.controllerCapturing && (
             <VrBindPicker
               initial={controllerBind}
+              initialHolds={props.controllerHolds}
               vrConnected={props.vrConnected}
               profile={props.controllerProfile}
               onCancel={props.onControllerCaptureCancel}
@@ -2808,20 +2853,25 @@ function VrPaletteRow({ input, onAdd }: { input: string; onAdd: (a: VrAction) =>
 // lib/vr-bind.ts).
 function VrBindPicker({
   initial,
+  initialHolds = null,
   vrConnected,
   profile = "index",
   onCancel,
   onConfirm,
 }: {
   initial: string | null;
+  // Device-local per-action min-holds aligned to `initial`'s steps (or null).
+  initialHolds?: number[][] | null;
   vrConnected: boolean;
   profile?: VrProfile;
   onCancel: () => void;
-  onConfirm: (serialized: string) => void;
+  onConfirm: (serialized: string, holds: number[][]) => void;
 }) {
   // Seed the builder from any existing bind: earlier steps become committed,
-  // the last step stays editable as the "current" group.
-  const seed = initial ? parseVrBind(initial) : null;
+  // the last step stays editable as the "current" group. Stored min-holds (a
+  // runtime-only field) are re-attached so re-opening the editor preserves them.
+  const seedBase = initial ? parseVrBind(initial) : null;
+  const seed = seedBase ? applyHolds(seedBase, initialHolds) : null;
   const [mode, setMode] = useState<VrBindMode>(seed?.mode ?? "simul");
   const [steps, setSteps] = useState<VrStep[]>(seed ? seed.steps.slice(0, -1) : []);
   const [current, setCurrent] = useState<VrStep>(seed ? seed.steps[seed.steps.length - 1] : []);
@@ -2832,6 +2882,9 @@ function VrBindPicker({
   const canSave = totalActions > 0;
   const bind: VrBind = { mode, steps: allSteps };
   const previewKey = canSave ? serializeVrBind(bind) : "";
+  // serializeVrBind drops holdMs, so track the hold matrix separately to keep the
+  // live preview's gate in sync as holds change.
+  const holdsKey = canSave ? JSON.stringify(bindHolds(bind)) : "";
 
   // --- builder ops ---
   const addToCurrent = (a: VrAction) =>
@@ -2843,6 +2896,17 @@ function VrBindPicker({
   const removeCurrent = (i: number) => setCurrent((c) => c.filter((_, idx) => idx !== i));
   const removeFromStep = (si: number, ai: number) =>
     setSteps((s) => s.map((st, idx) => (idx === si ? st.filter((_, j) => j !== ai) : st)).filter((st) => st.length));
+  // Set/clear a down-action's min-hold (ms). `si` indexes allSteps: committed
+  // steps first, then the editable current group.
+  const withHold = (a: VrAction, ms: number): VrAction =>
+    ms > 0 ? { input: a.input, edge: a.edge, holdMs: ms } : { input: a.input, edge: a.edge };
+  const setHold = (si: number, ai: number, ms: number) => {
+    if (si < steps.length) {
+      setSteps((s) => s.map((st, i) => (i === si ? st.map((a, j) => (j === ai ? withHold(a, ms) : a)) : st)));
+    } else {
+      setCurrent((c) => c.map((a, j) => (j === ai ? withHold(a, ms) : a)));
+    }
+  };
   const commitStep = () => {
     if (!current.length || steps.length >= MAX_STEPS - 1) return;
     setSteps((s) => [...s, current]);
@@ -2875,10 +2939,11 @@ function VrBindPicker({
   const firedTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    const b = previewKey ? parseVrBind(previewKey) : null;
+    const parsed = previewKey ? parseVrBind(previewKey) : null;
+    const b = parsed ? applyHolds(parsed, holdsKey ? (JSON.parse(holdsKey) as number[][]) : null) : null;
     previewRef.current!.setBind(b ?? { mode: "simul", steps: [] });
     setProgress(b ? previewRef.current!.snapshot() : null);
-  }, [previewKey]);
+  }, [previewKey, holdsKey]);
 
   useEffect(() => {
     function onVrInput(ev: Event) {
@@ -3036,6 +3101,36 @@ function VrBindPicker({
           </div>
         </div>
 
+        {/* Per-action min-hold. Only down-edge actions can carry a hold — it
+            latches on release once the button has been held >= the duration. */}
+        {allSteps.some((step) => step.some((a) => a.edge === "down")) && (
+          <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
+            <div className="mb-1.5 text-[10px] uppercase tracking-wide text-muted/70">
+              Minimum hold (optional)
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {allSteps.flatMap((step, si) =>
+                step
+                  .map((a, ai) => ({ a, ai }))
+                  .filter(({ a }) => a.edge === "down")
+                  .map(({ a, ai }) => (
+                    <div key={`${si}-${ai}`} className="flex items-center justify-between gap-3">
+                      <span className="inline-flex items-center gap-1.5 text-xs text-muted min-w-0">
+                        {mode === "seq" && allSteps.length > 1 && (
+                          <span className="text-[10px] text-muted/60">Step {si + 1}</span>
+                        )}
+                        <span className="rounded bg-black/25 px-1.5 py-0.5 text-[11px] whitespace-nowrap">
+                          {formatVrAction(a)}
+                        </span>
+                      </span>
+                      <HoldControl ms={a.holdMs ?? 0} onChange={(ms) => setHold(si, ai, ms)} />
+                    </div>
+                  )),
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Live test / preview */}
         <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
           <div className="mb-1.5 flex items-center justify-between">
@@ -3096,7 +3191,7 @@ function VrBindPicker({
             <button
               type="button"
               className="btn-primary text-sm"
-              onClick={() => onConfirm(serializeVrBind(bind))}
+              onClick={() => onConfirm(serializeVrBind(bind), bindHolds(bind))}
               disabled={!canSave}
             >
               Save bind
@@ -3106,6 +3201,57 @@ function VrBindPicker({
       </div>
     </div>,
     document.body
+  );
+}
+
+// Per-action min-hold picker: presets + "Other…" → a custom seconds input
+// (capped below the step timeout). ms === 0 means no hold.
+function HoldControl({ ms, onChange }: { ms: number; onChange: (ms: number) => void }) {
+  const presetMs = HOLD_PRESETS_SEC.map((s) => Math.round(s * 1000));
+  const matchesPreset = ms > 0 && presetMs.includes(ms);
+  const [otherOpen, setOtherOpen] = useState(ms > 0 && !matchesPreset);
+  const value = otherOpen ? "other" : matchesPreset ? String(ms) : "0";
+  const options: SelectOption[] = [
+    { value: "0", label: "No hold" },
+    ...HOLD_PRESETS_SEC.map((s) => ({ value: String(Math.round(s * 1000)), label: `${s}s` })),
+    { value: "other", label: "Other…" },
+  ];
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <Select
+        value={value}
+        onChange={(v) => {
+          if (v === "other") {
+            setOtherOpen(true);
+          } else {
+            setOtherOpen(false);
+            onChange(Number(v));
+          }
+        }}
+        options={options}
+        className="!py-1 text-xs"
+        aria-label="Minimum hold duration"
+      />
+      {otherOpen && (
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            min={0.1}
+            max={MAX_HOLD_MS / 1000}
+            step={0.1}
+            value={ms > 0 ? ms / 1000 : ""}
+            onChange={(e) => {
+              const sec = Number(e.target.value);
+              if (!Number.isFinite(sec) || sec <= 0) return onChange(0);
+              onChange(Math.min(Math.round(sec * 1000), MAX_HOLD_MS));
+            }}
+            className="input !py-1 w-16 text-xs"
+            aria-label="Custom hold seconds"
+          />
+          <span className="text-[10px] text-muted/60">s</span>
+        </div>
+      )}
+    </div>
   );
 }
 
