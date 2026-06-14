@@ -4,6 +4,18 @@ const config: Config = {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        // `--font-play` is injected by next/font in app/layout.tsx.
+        sans: [
+          "var(--font-play)",
+          "ui-sans-serif",
+          "system-ui",
+          "-apple-system",
+          "Segoe UI",
+          "Roboto",
+          "sans-serif",
+        ],
+      },
       colors: {
         bg: "#070811",
         panel: "#11141e",

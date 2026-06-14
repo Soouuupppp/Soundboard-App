@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { Play } from "next/font/google";
 import Link from "next/link";
 import Image from "next/image";
 import { auth, signIn, signOut } from "@/lib/auth";
@@ -10,6 +11,16 @@ import { AudioProvider } from "@/components/AudioProvider";
 import { NoticeBanners, type MotdSeverity } from "@/components/NoticeBanners";
 import { getAppSettings } from "@/lib/app-settings";
 import logo from "./logo.png";
+
+// App-wide typeface. Play ships only 400 + 700 — `font-medium`/`font-semibold`
+// utilities round/synthesize to the nearest available weight. Exposed as
+// `--font-play` so globals.css + tailwind's `fontFamily.sans` both pick it up.
+const play = Play({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-play",
+  display: "swap",
+});
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://soundboard.example.com";
 const TITLE = "Soundboard";
@@ -65,7 +76,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     : null;
 
   return (
-    <html lang="en">
+    <html lang="en" className={play.variable}>
       <body>
         {/* Decorative ambient glow. Static on purpose: when these moved, every
             frame shifted the pixels behind the backdrop-blur glass panels, forcing

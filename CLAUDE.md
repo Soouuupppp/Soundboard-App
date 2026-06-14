@@ -33,7 +33,7 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.3.2**).
+(currently **1.3.3**).
 
 ## Stack
 
@@ -396,6 +396,32 @@ profile swaps which is shown/active), a controller bind for **cancel-all**, and 
 **minimal hide-on-scroll header** with an avatar dropdown (the standalone
 `/public` page was removed — the dashboard is the single page).
 
+**1.3.2 shipped** (persistent audio engine + local previews): the audio engine
+hoisted into a global `components/AudioProvider.tsx` (mounted in `app/layout.tsx`)
+so a **single** `MicMixer` survives route changes — collapsing the prior separate
+Dashboard/Admin instances and fixing the virtual mic dying on the `/admin` route.
+**Monitor-only local previews** (Saved-library, public-browser, and admin sound
+previews now play on the monitor device via a `preview` flag, never into the
+virtual-mic cable), a **monitor-latency watchdog** (`rebuildMonitorTail` swaps the
+`monitorBus → MediaStreamDestination → <audio>` tail on AudioContext
+suspend→resume + long idle so the bridge buffer can't accumulate seconds of lag),
+a shared darker **`.popover`** surface for floating menus (avatar dropdown +
+`Select`), a **"My uploads"** owner-only filter on the Saved tab, and **notice
+banners** — an admin-set MOTD (new `appSettings` `motd*` columns, severity +
+optional link, version+day dismissal, a `GET /api/motd` poll) plus a
+non-dismissible web-only **desktop-app promo** (hidden inside the Electron
+wrapper).
+
+**1.3.3 shipped** (font + VR min-hold): the app-wide typeface switched to the
+**Play** Google Font (self-hosted via `next/font/google`, `--font-play` in the
+`globals.css`/Tailwind `sans` stack), and a per-action **minimum-hold gate** on VR
+controller binds — a `down` action with a min-hold latches only if its button was
+held continuously **≥ N seconds**, registering on release (early release = no
+latch). Per-action presets (0.5 / 1 / 1.2 / 2 / 2.5s + custom) configured in
+`VrBindPicker`, stored **device-local** (`soundboard:holdMs`, the serialized
+`VrBind` is unchanged), with `STEP_TIMEOUT_MS` raised 1.5s → 3s so a long hold
+completes inside one step's reset window. VR-only; keyboard binds untouched.
+
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
 Version bumped to **1.3.1** across all three `package.json` + docs. Owner
@@ -649,6 +675,74 @@ on the shared engine task 1 introduces; task 3 is independent.
    add/remove-from-board relocated to a new bottom row beneath `[Public|Delete]` /
    `[Remove from Saved]`. Filename wraps (`break-words`). `TagChips` bumped to
    `text-xs` + `px-2.5 py-1`.)*
+
+### Tasks — 1.3.3 (Font change & input delay for keybinds/controller binds)
+
+Version bumped to **1.3.3** across all three `package.json` + docs. Owner
+decisions below are **locked**.
+
+1. **App-wide font → "Play" (Google Font)** — switch the global typeface across
+   the whole app to the **Play** Google Font. **Locked:** load via
+   `next/font/google` (self-hosted, weights **400 + 700** — Play has no other
+   weights, so existing `font-medium`/`font-semibold` utilities synthesize/round)
+   in `app/layout.tsx` with a `--font-play` CSS variable; prepend it to the
+   `globals.css` `font-family` stack **and** set `tailwind.config.ts`
+   `fontFamily.sans` so every surface (dashboard, admin, public browser, header,
+   banners) picks it up. No per-component font overrides exist to clean up.
+   **Progress: ✅ Done** *(loaded `Play` via `next/font/google` in `app/layout.tsx`
+   — subsets `latin`, weights 400+700, `variable: "--font-play"`, `display: swap`;
+   applied the variable class on `<html>`. Prepended `var(--font-play)` to the
+   `globals.css` `html, body` font stack and added `theme.extend.fontFamily.sans`
+   (Play → existing fallbacks) in `tailwind.config.ts` so every Tailwind surface
+   inherits it. No per-component overrides needed.)*
+
+2. **Minimum-hold gate on VR bind actions** *(reframed from "input delay")*.
+   **Locked owner decisions:**
+   - **Not an output delay — a minimum press/hold duration on a button.** A
+     `down` action with a min-hold of **N seconds** latches only if its button was
+     held continuously **≥ N**, and it registers **on release** (the up edge):
+     release before N → no latch (re-press to retry). The bind fires when its
+     final step completes — i.e. on the qualifying release of the last action.
+   - **Per action** granularity — **any button** in a sequence can carry its own
+     min-hold (not just the final press), configured per action in `VrBindPicker`.
+     Presets **0.5 / 1 / 1.2 / 2 / 2.5** + "Other" → custom seconds input.
+   - **VR controller binds ONLY. Keyboard binds are out of scope** this version.
+   - **Device-local storage** (localStorage, e.g. `soundboard:holdMs` →
+     `{ [entryId]: number[][] }` ms per step→action, plus a cancel-all key) — the
+     on-disk serialized `VrBind` is **unchanged**; hold durations ride alongside
+     binds into the matcher at runtime.
+   - **Raise `STEP_TIMEOUT_MS` 1.5s → 3s** globally so a 2/2.5s hold completes
+     within one step's reset window (the button's down edge counts as progress, so
+     the hold has up to the timeout to qualify). Custom input capped below 3s.
+   - **Matcher change** (`lib/vr-bind.ts`): track per-input press time
+     (`heldSince`). A min-hold `down` action satisfies like the existing
+     event-based `up`-latch — but on the button's **up** edge, gated by
+     `(releaseTime - heldSince[input]) >= holdMs` (early release = no latch).
+     `setBinds` entries carry optional per-action hold durations; mirror in
+     `VrBindPreview` so the editor test area reflects the gate. Cancel-all bind
+     gets the same treatment. Min-hold is offered only on **down**-edge actions.
+   **Progress: ✅ Done** *(`lib/vr-bind.ts`: `VrAction` gained an optional runtime
+   `holdMs` (not serialized — serialize/parse ignore it); `STEP_TIMEOUT_MS` 1.5s→3s;
+   `MAX_HOLD_MS=2900` + `HOLD_PRESETS_SEC=[0.5,1,1.2,2,2.5]`. New `bindHolds`/
+   `applyHolds` helpers extract/attach a `number[][]` matrix. The matcher now treats
+   a min-hold down as an event action (`isEventAction`): its down edge counts as
+   progress, and it latches on the **up** edge only if `now - heldSince[input] >=
+   holdMs` (early release = no latch). Added a `heldSince` map to `VrMatcher` +
+   `VrBindPreview` (set on every down, never deleted; cleared on `reset()`); preview
+   `snapshot` reads green only on a qualifying release so it reflects the gate.
+   `Dashboard.tsx`: device-local `soundboard:holdMs` (`{[entryId]:number[][]}`) +
+   `soundboard:cancelAllHoldMs` state, loaded/persisted alongside the bind keys;
+   `applyHolds` attaches them onto each parsed bind in the `setBinds` memo (entries +
+   cancel-all). `VrBindPicker` carries `holdMs` on builder actions, gained an
+   `initialHolds` prop + a "Minimum hold (optional)" section listing each down-edge
+   action with a `HoldControl` (shared `Select` presets + "Other…" custom seconds,
+   capped at 2.9s); `onConfirm` now returns `(serialized, holds)` and the preview
+   re-attaches holds via a `holdsKey`. Clearing a controller bind clears its holds.
+   Keyboard binds untouched. **Caveat (follow-up):** the locked `{[entryId]:
+   number[][]}` shape is per-entry but binds are per-profile — switching Index↔Quest
+   reuses one matrix, so out-of-structure entries degrade to no-hold and saving the
+   other profile overwrites it. Honored the locked shape; flag for the owner if
+   per-profile hold storage is wanted.)*
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions
