@@ -62,8 +62,8 @@ SOUNDBOARD_URL=https://soundboard.example.com pnpm --filter electron dist:win
 
 Outputs to `electron/dist/`:
 
-- `Soundboard-Setup-1.3.3-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
-- `Soundboard-1.3.3-x64-portable.exe` — single-file executable, no install.
+- `Soundboard-Setup-1.4.0-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
+- `Soundboard-1.4.0-x64-portable.exe` — single-file executable, no install.
 
 Send one of these to your friends. They open it, log in with Discord, done.
 Power users can still change the URL later via **File → Change server URL…**

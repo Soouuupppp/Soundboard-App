@@ -1,54 +1,84 @@
 "use client";
 
-// MicMixer — the audio engine behind "Virtual Mic mode".
+// MicMixer — the unified always-on audio engine (1.4.0 routing refactor).
 //
-// It owns a single AudioContext and routes a set of SOURCES to two destinations:
+// It owns a single AudioContext that is active in ALL modes (not just Virtual
+// Mic): every soundboard play and — when Virtual Mic mode is on — the live mic
+// flow through it, so per-clip effects are heard on normal output AND the cable.
+// There is no separate normal-mode graph anymore. Output routing is always via
+// ctx.setSinkId (needs Chromium 110+); callers degrade to a plain <audio> path
+// when AudioContext.setSinkId is absent (no engine, no FX, no meter).
 //
-//   sources ─┬─► cableBus(micOutVol) ─┬─► limiter ─► ctx.destination ─►(setSinkId) virtual cable (game's mic)
-//            │                        └─► analyser  (cable peak meter tap, post-micOutVol, pre-limiter)
-//            ├─► analyser  (per-input peak meter tap, post-volume)
-//            └─► (per-source monitor send 0..1) ─► monitorBus ─► <audio>.setSinkId ─► your ears
+// Signal flow:
 //
-// The limiter sits on the cable path because sources sum at unity: a hot mic +
-// a clip can push the sum past 0 dBFS and hard-clip the virtual mic (which the
-// listener hears as distortion even though the local monitor — a separate path —
-// sounds fine). The analyser taps the pre-limiter sum so the UI meter can warn
-// when you're driving it into clipping.
+//   Soundboard clip(s) ─► [per-id FX chain] ─► soundboardBus(SB vol) ─┐
+//                                                                      ├─► outputBus(global) ─► limiter ─► ctx.destination ─►(setSinkId) OUTPUT device
+//   mic ─► micGate(AI mute) ─► (input vol) ─► [mic FX chain] ─► micBus(mic vol) ─┘   (mic exists only while Virtual Mic mode is on)
+//   AI converted clip ─► (input vol) ─► [mic FX chain] ──────────────┘   (injected after micGate, so the raw-mic mute doesn't kill it)
 //
-// Sources that can feed the virtual mic:
+//   soundboardBus ─► soundboardMonitorGate ──────────────────────────► monitorBus(global) ─► monitor tail ─►(setSinkId) MONITOR device
+//   micBus ─► monitorMicGate(monitor-mic toggle) ────────────────────►
+//   Preview clip ───────────────────────────────────────────────────►   (previews connect to monitorBus ONLY — never the cable/output)
+//
+// soundboardMonitorGate is 0 when the monitor device == the output device (the
+// common default/default case) so a board play isn't heard twice on one device,
+// and 1 when they differ so you still monitor the soundboard on a SEPARATE device.
+// Previews connect to monitorBus directly (after the gate) so they stay audible
+// even when monitor == output.
+//
+// Volume hierarchy (all 0..2, default 1): GLOBAL output is the master gain on
+// both outputBus and monitorBus; SOUNDBOARD output (soundboardBus) and MIC output
+// (micBus) are the two sub-bus levels under it. Per-clip / per-input volumes stay
+// 0..1. The limiter sits on the output path so a hot sum (mic + clips, possibly
+// >100% gains) can't hard-clip the virtual mic; the analyser taps the pre-limiter
+// sum so the UI meter can warn about clipping.
+//
+// Monitoring: the soundboard is monitored locally via soundboardMonitorGate
+// (soundboardBus → gate → monitorBus); the mic reaches the monitor only when the
+// monitor-mic toggle opens monitorMicGate.
+//
+// Sources that can feed the cable in Virtual Mic mode:
 //   • INPUT lines  — any capture device Windows reports, captured with
-//     getUserMedia: physical mics, virtual-cable recording sides (VB-Audio,
-//     VoiceMeeter), and GoXLR mix buses (e.g. Broadcast Stream Mix). Routing
-//     "any audio" into the mic is done by sending that audio to a cable / GoXLR
-//     bus in Windows, which then shows up here as a capture device.
+//     getUserMedia (physical mics, virtual-cable recording sides, GoXLR buses).
+//     Routing "any audio" into the mic is done by sending that audio to a cable /
+//     GoXLR bus in Windows, which then shows up here as a capture device.
 //   • SOUNDBOARD   — clips injected with injectClip().
-//
-// Every source reaches the cable through its own cable-send gain (the per-source
-// "volume"), and the summed cable additionally passes through a master
-// "mic output volume" (cableBus.gain) before the limiter. Each source also has a
-// "monitor send" gain (0..1) that decides how loudly you hear it locally on the
-// chosen monitor device — so e.g. you can monitor the soundboard without hearing
-// your own mic echoed back. (The monitor send taps the post-cable-volume signal,
-// so a source muted on the cable is also silent in the monitor.) The cable target
-// device is the app's "Output device".
+
+import {
+  type EffectConfig,
+  type EffectParams,
+  type Effect,
+  createEffect,
+  chainNeedsBitcrusher,
+  ensureBitcrusherModule,
+} from "./voice-fx";
 
 export type MixerInputState = { deviceId: string; enabled: boolean; volume: number };
 
 // Stable key for the soundboard line in the monitor selection.
 export const SOUNDBOARD_KEY = "__soundboard__";
 
-// A source that's summed into the cable, with an optional monitor send.
-type Source = {
-  // The node feeding the cable (its output is what monitorSend taps).
+// Per-source DSP effect chain (voice changer). `out` is the raw source node
+// (an input's volume gain); `tail` is the chain output that feeds the sub-bus +
+// meter; `effects` is the live series of effect subgraphs (head = effects[0].input,
+// or `tail` itself when empty).
+type SourceChain = {
   out: AudioNode;
-  monitorSend: GainNode;
+  tail: GainNode;
+  effects: Effect[];
 };
 
-type ActiveInput = Source & {
+type ActiveInput = {
   stream: MediaStream;
   src: MediaStreamAudioSourceNode;
+  // Gate the RAW mic only (src → micGate → gain): zeroed when the AI voice
+  // changer owns this device, so the live mic is removed from the cable+monitor
+  // while injected converted clips (which connect after the gate) still pass.
+  micGate: GainNode;
   gain: GainNode;
-  // Post-volume tap so each row can show its own contribution to the cable.
+  // Chain output node — the micBus + meter taps hang off this.
+  tail: GainNode;
+  // Post-chain tap so each row meter shows its processed contribution.
   analyser: AnalyserNode;
   peakBuf: Float32Array<ArrayBuffer>;
 };
@@ -73,6 +103,12 @@ const mwarn = (...args: unknown[]) =>
 
 function clamp01(v: number) {
   return Math.max(0, Math.min(1, v));
+}
+
+// Bus/master gains run 0..2 (0–200%) so the user can boost above unity. The
+// limiter protects the cable; >100% can distort normal output/monitor.
+function clamp02(v: number) {
+  return Math.max(0, Math.min(2, v));
 }
 
 function perfNow(): number {
@@ -105,39 +141,51 @@ function peakOf(analyser: AnalyserNode | null, buf: Float32Array<ArrayBuffer> | 
 
 export class MicMixer {
   private ctx: SinkCapableContext | null = null;
-  // Everything destined for the virtual cable sums here, then through the limiter
-  // to ctx.destination.
-  private cableBus: GainNode | null = null;
-  // Brickwall-ish limiter on the cable so the summed sources can't clip the mic.
-  private cableLimiter: DynamicsCompressorNode | null = null;
-  // Taps the pre-limiter cable sum to drive the UI peak meter.
-  private cableAnalyser: AnalyserNode | null = null;
+  // Global master on the combined sum → limiter → cable/output device.
+  private outputBus: GainNode | null = null;
+  // Brickwall-ish limiter on the output so the summed sources can't clip the mic.
+  private limiter: DynamicsCompressorNode | null = null;
+  // Taps the pre-limiter output sum to drive the UI peak meter.
+  private outputAnalyser: AnalyserNode | null = null;
   private peakBuf: Float32Array<ArrayBuffer> | null = null;
-  // Everything you monitor locally sums here, then out to the monitor device.
+  // Global master on the monitor path → monitor device (separate from output).
   private monitorBus: GainNode | null = null;
   private monitorDest: MediaStreamAudioDestinationNode | null = null;
   private monitorEl: AudioWithSink | null = null;
-  // Soundboard clips sum here; its monitor send decides local playback.
+  // Soundboard sub-bus (SB output level). Clips inject here; fans to output+monitor.
   private soundboardBus: GainNode | null = null;
-  private soundboardMonitorSend: GainNode | null = null;
+  // Gate between soundboardBus and monitorBus: 0 when monitor==output device (avoid
+  // double-play on one device), 1 when they differ (monitor the board separately).
+  private soundboardMonitorGate: GainNode | null = null;
+  // Mic sub-bus (mic output level): every input tail sums here; fans to output +
+  // (monitorMicGate)→monitor.
+  private micBus: GainNode | null = null;
+  // Single gate that adds the mic to the local monitor (monitor-mic toggle).
+  private monitorMicGate: GainNode | null = null;
 
   private inputs = new Map<string, ActiveInput>();
-  private cableDeviceId = "default";
+  // Per-source effect chains (mic FX), keyed by deviceId.
+  private chains = new Map<string, SourceChain>();
+  // Desired effect configs per source key, kept so a device that reopens rebuilds
+  // its chain. Survives reconcileInputs.
+  private sourceEffects = new Map<string, EffectConfig[]>();
+  // Capture devices whose raw mic is muted because the AI voice changer owns them
+  // (PTT-only). Persisted across reopen like sourceEffects.
+  private aiMuted = new Map<string, boolean>();
+  private outputDeviceId = "default";
   private monitorDeviceId = "default";
-  // Per-source monitor-send level (deviceIds + special keys), 0..1; 0 = silent
-  // locally. Default: monitor the soundboard at unity so the mode isn't silent.
-  private monitorLevels = new Map<string, number>([[SOUNDBOARD_KEY, 1]]);
-  // Master gain on the summed cable ("mic output volume") and the soundboard's
-  // own cable-send, both 0..1. Stored so start() can apply them on (re)create.
-  private cableVolume = 1;
+  // Volume hierarchy (0..2). Stored so start() can apply them on (re)create.
+  private globalVolume = 1;
   private soundboardVolume = 1;
+  private micVolume = 1;
+  private monitorMicOn = false;
   // Serialize source reconciliation so overlapping calls can't double-open one.
   private syncChain: Promise<unknown> = Promise.resolve();
 
   // Monitor-latency watchdog (see MONITOR_* constants above). The interval
   // detects long wall-clock gaps (sleep/throttle); the statechange listener
   // catches an explicit AudioContext suspend→resume. Both rebuild the monitor
-  // tail so its jitter buffer can't drift seconds behind the real-time cable.
+  // tail so its jitter buffer can't drift seconds behind the real-time output.
   private monitorWatchdog: ReturnType<typeof setInterval> | null = null;
   private lastWatchdogTick = 0;
   private lastMonitorRebuild = 0;
@@ -148,69 +196,79 @@ export class MicMixer {
     return this.ctx !== null;
   }
 
-  // Current peak amplitude of the pre-limiter cable sum, as a linear 0..1+
-  // value (can exceed 1.0 when the sources are driving the limiter into
-  // clipping). Cheap enough to poll each animation frame for a meter.
+  // Current peak amplitude of the pre-limiter output sum, linear 0..1+ (can exceed
+  // 1.0 when driving the limiter into clipping). Cheap enough to poll per frame.
+  getOutputPeak(): number {
+    return peakOf(this.outputAnalyser, this.peakBuf);
+  }
+  // Back-compat alias (the "cable" meter is the same pre-limiter output sum).
   getCablePeak(): number {
-    return peakOf(this.cableAnalyser, this.peakBuf);
+    return this.getOutputPeak();
   }
 
-  // Current peak amplitude of a single live input (post its volume gain), linear
-  // 0..1+. Returns 0 if that input isn't open. Cheap enough to poll per frame.
+  // Current peak amplitude of a single live input (post chain), linear 0..1+.
+  // Returns 0 if that input isn't open. Cheap enough to poll per frame.
   getInputPeak(deviceId: string): number {
     const n = this.inputs.get(deviceId);
     return n ? peakOf(n.analyser, n.peakBuf) : 0;
   }
 
-  async start(cableDeviceId: string) {
+  async start(outputDeviceId: string) {
     if (this.ctx) return;
-    mlog("start: creating AudioContext, cableDeviceId =", cableDeviceId || "(default)");
+    mlog("start: creating AudioContext, outputDeviceId =", outputDeviceId || "(default)");
     const ctx = new AudioContext() as SinkCapableContext;
-    const cableBus = ctx.createGain();
-    cableBus.gain.value = this.cableVolume; // master "mic output volume", pre-limiter
-    // Limiter between the summed sources and the cable: catches peaks so a hot
-    // sum doesn't hard-clip the virtual mic. Tuned as a fast brickwall limiter
-    // (near-unity below ~-1 dBFS, hard knee, high ratio).
-    const cableLimiter = ctx.createDynamicsCompressor();
-    cableLimiter.threshold.value = -1;
-    cableLimiter.knee.value = 0;
-    cableLimiter.ratio.value = 20;
-    cableLimiter.attack.value = 0.003;
-    cableLimiter.release.value = 0.25;
-    cableBus.connect(cableLimiter);
-    cableLimiter.connect(ctx.destination);
-    // Pre-limiter tap for the meter (so it shows the true incoming peak, not the
-    // already-limited output). Not connected onward — it only analyses.
-    const cableAnalyser = ctx.createAnalyser();
-    cableAnalyser.fftSize = 1024;
-    cableBus.connect(cableAnalyser);
 
-    // The monitorBus is stable (every source's monitor send connects here); the
-    // dest+element *tail* it feeds is what the watchdog rebuilds, so it's created
-    // by rebuildMonitorTail() below rather than inline.
+    // Output path: global master → limiter → destination.
+    const outputBus = ctx.createGain();
+    outputBus.gain.value = this.globalVolume;
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.25;
+    outputBus.connect(limiter);
+    limiter.connect(ctx.destination);
+    // Pre-limiter tap for the meter (true incoming peak, not the limited output).
+    const outputAnalyser = ctx.createAnalyser();
+    outputAnalyser.fftSize = 1024;
+    outputBus.connect(outputAnalyser);
+
+    // Monitor path: global master → (rebuildable) tail → monitor device.
     const monitorBus = ctx.createGain();
+    monitorBus.gain.value = this.globalVolume;
 
+    // Sub-buses.
     const soundboardBus = ctx.createGain();
-    soundboardBus.gain.value = this.soundboardVolume; // soundboard cable-send
-    soundboardBus.connect(cableBus);
-    const soundboardMonitorSend = ctx.createGain();
-    soundboardMonitorSend.gain.value = this.monitorLevels.get(SOUNDBOARD_KEY) ?? 0;
-    soundboardBus.connect(soundboardMonitorSend).connect(monitorBus);
+    soundboardBus.gain.value = this.soundboardVolume;
+    const micBus = ctx.createGain();
+    micBus.gain.value = this.micVolume;
+    const monitorMicGate = ctx.createGain();
+    monitorMicGate.gain.value = this.monitorMicOn ? 1 : 0;
+    const soundboardMonitorGate = ctx.createGain();
+    soundboardMonitorGate.gain.value = this.soundboardMonitorGateValue();
+
+    // Fan-out: soundboard → output + (gate) monitor; mic → output + (gate) monitor.
+    soundboardBus.connect(outputBus);
+    soundboardBus.connect(soundboardMonitorGate).connect(monitorBus);
+    micBus.connect(outputBus);
+    micBus.connect(monitorMicGate).connect(monitorBus);
 
     this.ctx = ctx;
-    this.cableBus = cableBus;
-    this.cableLimiter = cableLimiter;
-    this.cableAnalyser = cableAnalyser;
-    this.peakBuf = new Float32Array(new ArrayBuffer(cableAnalyser.fftSize * 4));
+    this.outputBus = outputBus;
+    this.limiter = limiter;
+    this.outputAnalyser = outputAnalyser;
+    this.peakBuf = new Float32Array(new ArrayBuffer(outputAnalyser.fftSize * 4));
     this.monitorBus = monitorBus;
     this.soundboardBus = soundboardBus;
-    this.soundboardMonitorSend = soundboardMonitorSend;
-    this.cableDeviceId = cableDeviceId;
+    this.soundboardMonitorGate = soundboardMonitorGate;
+    this.micBus = micBus;
+    this.monitorMicGate = monitorMicGate;
+    this.outputDeviceId = outputDeviceId;
 
     mlog("start: state =", ctx.state, "| setSinkId available =", typeof ctx.setSinkId === "function");
-    await this.applyCableSink(cableDeviceId);
-    // Build the monitor tail (dest + <audio>), route it to the monitor device,
-    // and start it. force=true since this is the first build.
+    await this.applyOutputSink(outputDeviceId);
+    // Build the monitor tail (dest + <audio>), route it, and start it.
     this.rebuildMonitorTail(true);
     try {
       await ctx.resume();
@@ -223,11 +281,10 @@ export class MicMixer {
   }
 
   // (Re)create the monitor tail: monitorBus → MediaStreamDestination → <audio>.
-  // The monitorBus and every source's monitor-send stay put; only this tail is
-  // swapped, which resets the bridge's jitter buffer to ~0. Builds the new tail
-  // before retiring the old one and re-applies the monitor sink, so the device
-  // selection is preserved and the swap is as gapless as possible. The cable path
-  // (cableBus → limiter → ctx.destination) is never touched.
+  // The monitorBus stays put; only this tail is swapped, which resets the bridge's
+  // jitter buffer to ~0. Builds the new tail before retiring the old one and
+  // re-applies the monitor sink, so the device selection is preserved and the swap
+  // is as gapless as possible. The output path is never touched.
   private rebuildMonitorTail(force = false) {
     const ctx = this.ctx;
     const monitorBus = this.monitorBus;
@@ -245,14 +302,12 @@ export class MicMixer {
     monitorBus.connect(dest);
     this.monitorDest = dest;
     this.monitorEl = el;
-    // Re-route to the chosen monitor device, then start the fresh element.
     void this.applyMonitorSink(this.monitorDeviceId).then(() => {
       el.play().catch(() => {
         /* may be blocked until a gesture; armResumeOnGesture retries */
       });
     });
 
-    // Retire the previous tail (if any) once the new one is wired in.
     if (oldDest) {
       try { monitorBus.disconnect(oldDest); } catch { /* ignore */ }
       try { oldDest.disconnect(); } catch { /* ignore */ }
@@ -294,7 +349,7 @@ export class MicMixer {
     }, MONITOR_WATCHDOG_INTERVAL_MS);
   }
 
-  private async applyCableSink(deviceId: string) {
+  private async applyOutputSink(deviceId: string) {
     const ctx = this.ctx;
     if (!ctx) return;
     if (typeof ctx.setSinkId !== "function") {
@@ -302,7 +357,7 @@ export class MicMixer {
     }
     const target = deviceId && deviceId !== "default" ? deviceId : "";
     await ctx.setSinkId(target);
-    mlog("applyCableSink: routed cable to", target ? target.slice(0, 8) : "(system default)");
+    mlog("applyOutputSink: routed output to", target ? target.slice(0, 8) : "(system default)");
   }
 
   private async applyMonitorSink(deviceId: string) {
@@ -334,82 +389,208 @@ export class MicMixer {
     window.addEventListener("keydown", resume, { once: true });
   }
 
-  async setCableDevice(deviceId: string) {
-    this.cableDeviceId = deviceId;
-    if (this.ctx) await this.applyCableSink(deviceId);
+  // 0 when the monitor and output devices are the same (board play would be heard
+  // twice on one device), 1 when they differ (monitor the board on its own device).
+  private soundboardMonitorGateValue(): number {
+    return this.monitorDeviceId === this.outputDeviceId ? 0 : 1;
+  }
+  private recomputeSoundboardMonitorGate() {
+    if (this.soundboardMonitorGate) {
+      this.soundboardMonitorGate.gain.value = this.soundboardMonitorGateValue();
+    }
+  }
+
+  async setOutputDevice(deviceId: string) {
+    this.outputDeviceId = deviceId;
+    this.recomputeSoundboardMonitorGate();
+    if (this.ctx) await this.applyOutputSink(deviceId);
   }
 
   async setMonitorDevice(deviceId: string) {
     this.monitorDeviceId = deviceId;
+    this.recomputeSoundboardMonitorGate();
     if (this.ctx) await this.applyMonitorSink(deviceId);
   }
 
-  // Master "mic output volume" on the cable sum (pre-limiter), 0..1.
-  setMicOutputVolume(volume: number) {
-    this.cableVolume = clamp01(volume);
-    if (this.cableBus) this.cableBus.gain.value = this.cableVolume;
+  // Global master (0..2) on both output and monitor.
+  setGlobalVolume(volume: number) {
+    this.globalVolume = clamp02(volume);
+    if (this.outputBus) this.outputBus.gain.value = this.globalVolume;
+    if (this.monitorBus) this.monitorBus.gain.value = this.globalVolume;
   }
 
-  // The soundboard's cable-send level, 0..1.
+  // Soundboard sub-bus level (0..2).
   setSoundboardVolume(volume: number) {
-    this.soundboardVolume = clamp01(volume);
+    this.soundboardVolume = clamp02(volume);
     if (this.soundboardBus) this.soundboardBus.gain.value = this.soundboardVolume;
   }
 
-  // Set one source's monitor-send level (0 = silent locally). Keyed by deviceId
-  // or SOUNDBOARD_KEY; applied live if that source is currently active.
-  setMonitorSend(key: string, level: number) {
-    const v = clamp01(level);
-    this.monitorLevels.set(key, v);
-    if (key === SOUNDBOARD_KEY) {
-      if (this.soundboardMonitorSend) this.soundboardMonitorSend.gain.value = v;
-    } else {
-      const node = this.inputs.get(key);
-      if (node) node.monitorSend.gain.value = v;
-    }
+  // Mic sub-bus level (0..2).
+  setMicVolume(volume: number) {
+    this.micVolume = clamp02(volume);
+    if (this.micBus) this.micBus.gain.value = this.micVolume;
   }
 
-  // Bulk-replace the monitor-send levels (used on (re)sync). Missing keys reset
-  // to 0; every live source's send is reapplied.
-  setMonitorSends(levels: Record<string, number>) {
-    this.monitorLevels = new Map(Object.entries(levels).map(([k, v]) => [k, clamp01(v)]));
-    for (const [id, node] of this.inputs) {
-      node.monitorSend.gain.value = this.monitorLevels.get(id) ?? 0;
-    }
-    if (this.soundboardMonitorSend) {
-      this.soundboardMonitorSend.gain.value = this.monitorLevels.get(SOUNDBOARD_KEY) ?? 0;
-    }
+  // Add/remove the mic from the local monitor (monitor-mic toggle).
+  setMonitorMic(on: boolean) {
+    this.monitorMicOn = on;
+    if (this.monitorMicGate) this.monitorMicGate.gain.value = on ? 1 : 0;
   }
 
-  // Wire a freshly-created source: feed the cable always, and the monitor bus
-  // through a send gain at this key's current monitor level.
-  private connectSource(out: AudioNode, key: string): GainNode {
-    const monitorSend = this.ctx!.createGain();
-    monitorSend.gain.value = this.monitorLevels.get(key) ?? 0;
-    out.connect(this.cableBus!);
-    out.connect(monitorSend).connect(this.monitorBus!);
-    return monitorSend;
+  // Wire a freshly-created input source: build its effect chain (out → [fx…] →
+  // tail), then sum the tail into micBus. Returns the tail so the caller can hang
+  // a meter analyser off it.
+  private connectSource(out: AudioNode, key: string): { tail: GainNode } {
+    const ctx = this.ctx!;
+    const tail = ctx.createGain();
+    const configs = this.sourceEffects.get(key) ?? [];
+    const effects = this.buildChain(out, tail, configs);
+    this.chains.set(key, { out, tail, effects });
+    tail.connect(this.micBus!);
+
+    // If the chain wants a bitcrusher and its worklet isn't loaded yet, the nodes
+    // built above fell back to passthroughs — load the module then rebuild once.
+    if (chainNeedsBitcrusher(configs)) {
+      ensureBitcrusherModule(ctx).then(
+        () => {
+          const c = this.chains.get(key);
+          if (c) this.rebuildChain(c, this.sourceEffects.get(key) ?? []);
+        },
+        () => { /* worklet unavailable — passthrough stays */ },
+      );
+    }
+    return { tail };
+  }
+
+  // Wire out → e0 → e1 → … → tail in series (or out → tail when no effects).
+  private buildChain(out: AudioNode, tail: GainNode, configs: EffectConfig[]): Effect[] {
+    const ctx = this.ctx!;
+    const effects = configs.map((c) => createEffect(ctx, c));
+    let node: AudioNode = out;
+    for (const e of effects) {
+      node.connect(e.input);
+      node = e.output;
+    }
+    node.connect(tail);
+    return effects;
+  }
+
+  // Live-update a single effect's params without rebuilding the chain (smooth
+  // for slider drags). Positional — index matches the configs array.
+  updateEffectParams(key: string, index: number, params: EffectParams) {
+    const e = this.chains.get(key)?.effects[index];
+    if (e) e.update(params);
+  }
+
+  // Replace a source's effect configuration. Persisted in sourceEffects so a
+  // reopened device rebuilds it; rebuilt live (make-before-break) if active.
+  setSourceEffects(key: string, configs: EffectConfig[]) {
+    this.sourceEffects.set(key, configs);
+    const chain = this.chains.get(key);
+    const ctx = this.ctx;
+    if (!chain || !ctx) {
+      mwarn(
+        "setSourceEffects: no live chain for",
+        key === SOUNDBOARD_KEY ? "soundboard" : key.slice(0, 8),
+        `— ${configs.length} effect(s) saved but NOT applied (source not open in the mixer).`,
+      );
+      return;
+    }
+    mlog(
+      "setSourceEffects:",
+      key.slice(0, 8),
+      "→",
+      configs.length,
+      "effect(s):",
+      configs.map((c) => c.kind).join(" → ") || "(none)",
+    );
+    const build = () => {
+      const c = this.chains.get(key);
+      if (c) this.rebuildChain(c, configs);
+    };
+    if (chainNeedsBitcrusher(configs)) ensureBitcrusherModule(ctx).then(build, build);
+    else build();
+  }
+
+  // Whether a source currently has a live effect chain (i.e. it's open in the
+  // mixer). Lets the UI flag "effects won't apply until you enable this source".
+  hasLiveChain(key: string): boolean {
+    return this.chains.has(key);
+  }
+
+  // Rebuild a chain in place, make-before-break (mirrors rebuildMonitorTail): wire
+  // the NEW series into the same tail, then splice the source off the OLD head and
+  // dispose the old effects. The brief overlap avoids a silent gap/click.
+  private rebuildChain(chain: SourceChain, configs: EffectConfig[]) {
+    if (!this.ctx) return;
+    const oldEffects = chain.effects;
+    const oldHead: AudioNode = oldEffects.length ? oldEffects[0].input : chain.tail;
+    const newEffects = this.buildChain(chain.out, chain.tail, configs);
+    const newHead: AudioNode = newEffects.length ? newEffects[0].input : chain.tail;
+    if (oldHead !== newHead) {
+      try { chain.out.disconnect(oldHead); } catch { /* already gone */ }
+    }
+    for (const e of oldEffects) {
+      try { e.dispose(); } catch { /* ignore */ }
+    }
+    chain.effects = newEffects;
+  }
+
+  // Tear down a source's chain (effects + tail) and forget it. Leaves the
+  // persisted sourceEffects config intact so a reopen rebuilds it.
+  private disposeChain(key: string) {
+    const chain = this.chains.get(key);
+    if (!chain) return;
+    for (const e of chain.effects) {
+      try { e.dispose(); } catch { /* ignore */ }
+    }
+    try { chain.tail.disconnect(); } catch { /* ignore */ }
+    this.chains.delete(key);
   }
 
   // Reconcile live mic inputs with the desired state. Calls are queued so two
-  // reconciles can't race into opening the same device twice.
+  // reconciles can't race into opening the same device twice. Pass [] to close
+  // every input (e.g. when Virtual Mic mode turns off) without stopping the engine.
   syncInputs(desired: MixerInputState[]): Promise<void> {
     const run = () => this.reconcileInputs(desired);
     this.syncChain = this.syncChain.then(run, run);
     return this.syncChain as Promise<void>;
   }
 
+  // Open a capture device, preferring an exact deviceId match but falling back to
+  // a relaxed (ideal) constraint when the driver rejects `exact`.
+  private async openDeviceStream(deviceId: string): Promise<MediaStream> {
+    const base = { echoCancellation: false, noiseSuppression: false, autoGainControl: false } as const;
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: deviceId ? { exact: deviceId } : undefined, ...base },
+      });
+    } catch (e) {
+      const name = (e as Error)?.name;
+      if (name !== "OverconstrainedError" && name !== "NotFoundError") throw e;
+      mwarn(
+        "exact deviceId rejected for",
+        deviceId.slice(0, 8),
+        `(${name}) — retrying with a relaxed constraint`,
+      );
+      return navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: deviceId ? { ideal: deviceId } : undefined, ...base },
+      });
+    }
+  }
+
   private async reconcileInputs(desired: MixerInputState[]) {
-    if (!this.ctx || !this.cableBus) return;
+    if (!this.ctx || !this.micBus) return;
     const wanted = new Set(desired.filter((d) => d.enabled).map((d) => d.deviceId));
 
     for (const [id, node] of this.inputs) {
       if (!wanted.has(id)) {
         node.stream.getTracks().forEach((t) => t.stop());
         node.src.disconnect();
+        node.micGate.disconnect();
         node.gain.disconnect();
         node.analyser.disconnect();
-        node.monitorSend.disconnect();
+        this.disposeChain(id);
         this.inputs.delete(id);
       }
     }
@@ -423,29 +604,47 @@ export class MicMixer {
       }
       try {
         mlog("opening input mic", d.deviceId.slice(0, 8), "vol", d.volume);
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            deviceId: d.deviceId ? { exact: d.deviceId } : undefined,
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-        });
-        if (!this.ctx || !this.cableBus) {
+        const stream = await this.openDeviceStream(d.deviceId);
+        if (!this.ctx || !this.micBus) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
+        // The relaxed fallback (or a "Default - …" alias) can resolve to a device
+        // that's ALREADY open under another key — summing the same mic twice would
+        // comb-filter/echo on the cable. If so, drop this duplicate.
+        const actualId = stream.getAudioTracks()[0]?.getSettings().deviceId;
+        if (actualId && actualId !== d.deviceId) {
+          const dupeKey = [...this.inputs].find(([, n]) =>
+            n.stream.getAudioTracks()[0]?.getSettings().deviceId === actualId,
+          )?.[0];
+          if (dupeKey) {
+            mwarn(
+              "input",
+              d.deviceId.slice(0, 8),
+              "resolved to the same device as",
+              dupeKey.slice(0, 8),
+              "— dropping the duplicate to avoid echo",
+            );
+            stream.getTracks().forEach((t) => t.stop());
+            continue;
+          }
+        }
         const src = this.ctx.createMediaStreamSource(stream);
+        // micGate gates the RAW mic only; injected AI clips connect after it.
+        const micGate = this.ctx.createGain();
+        micGate.gain.value = this.aiMuted.get(d.deviceId) ? 0 : 1;
         const gain = this.ctx.createGain();
         gain.gain.value = clamp01(d.volume);
-        src.connect(gain);
-        // Post-volume meter tap (analysis only — not connected onward).
+        src.connect(micGate).connect(gain);
+        // Build the source's effect chain: gain → [fx…] → tail → micBus.
+        const { tail } = this.connectSource(gain, d.deviceId);
+        // Post-CHAIN meter tap off the tail (analysis only) so the row meter
+        // reflects the processed signal.
         const analyser = this.ctx.createAnalyser();
         analyser.fftSize = 1024;
-        gain.connect(analyser);
+        tail.connect(analyser);
         const peakBuf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
-        const monitorSend = this.connectSource(gain, d.deviceId);
-        this.inputs.set(d.deviceId, { stream, src, gain, out: gain, monitorSend, analyser, peakBuf });
+        this.inputs.set(d.deviceId, { stream, src, micGate, gain, tail, analyser, peakBuf });
         mlog("input mic open OK", d.deviceId.slice(0, 8));
       } catch (e) {
         mwarn("could not open input", d.deviceId.slice(0, 8), (e as Error)?.name, (e as Error)?.message);
@@ -458,17 +657,84 @@ export class MicMixer {
     if (n) n.gain.gain.value = clamp01(volume);
   }
 
-  // Inject a soundboard clip. The backing <audio> output is consumed by Web
-  // Audio, so it does NOT also play to the default device — local playback only
-  // happens if the soundboard is in the monitor selection.
-  injectClip(url: string, volume: number, onEnded: () => void): InjectedClip | null {
+  // Mute/unmute a capture device's RAW mic (AI voice changer owns it: only its
+  // injected converted clips should reach the cable). Persisted so a reopen
+  // reapplies it. Injected clips connect after the gate, so they still pass.
+  setSourceAiMuted(deviceId: string, muted: boolean) {
+    this.aiMuted.set(deviceId, muted);
+    const n = this.inputs.get(deviceId);
+    if (n) n.micGate.gain.value = muted ? 0 : 1;
+  }
+
+  // The live MediaStream for a capture device (so PTT can record from the same
+  // capture the mixer already opened). Null if the device isn't active.
+  getSourceStream(deviceId: string): MediaStream | null {
+    return this.inputs.get(deviceId)?.stream ?? null;
+  }
+
+  // Inject a converted AI clip into a capture device's path so it flows through
+  // that source's DSP chain (and the input volume) before the cable/monitor — the
+  // "DSP + AI coexist" requirement. Falls back to the soundboard line if the
+  // device isn't open. Mirrors injectClip's lifecycle.
+  injectClipToSource(deviceId: string, url: string, volume: number, onEnded: () => void): InjectedClip | null {
+    const node = this.inputs.get(deviceId);
+    if (!this.ctx || !node) return this.injectClip(url, volume, onEnded);
+    // node.gain is the chain head; connecting here means the clip passes through
+    // the volume gain → effect chain → tail → micBus (after the raw-mic gate).
+    const dest = node.gain;
+    return this.injectInto(dest, url, volume, onEnded);
+  }
+
+  // Make sure a per-clip chain's worklet deps (only the bitcrusher) are loaded so
+  // the next injectClip builds the real node instead of a passthrough. Call when a
+  // sound's effect config is set/loaded; play() itself stays synchronous.
+  preloadEffects(configs: EffectConfig[]) {
+    if (this.ctx && chainNeedsBitcrusher(configs)) ensureBitcrusherModule(this.ctx).catch(() => {});
+  }
+
+  // Inject a soundboard clip into the soundboard sub-bus, through an optional
+  // PER-CLIP effect chain (1.4.0 per-id Sound Effects). The backing <audio> output
+  // is consumed by Web Audio, so it does NOT also play to the default device —
+  // local playback happens via the always-on soundboard monitor send.
+  injectClip(url: string, volume: number, onEnded: () => void, effects?: EffectConfig[]): InjectedClip | null {
     if (!this.ctx || !this.soundboardBus) return null;
+    return this.injectInto(this.soundboardBus, url, volume, onEnded, effects);
+  }
+
+  // Inject a PREVIEW clip onto the monitor bus ONLY — never the output/cable — so
+  // Saved/public/admin previews are heard locally but don't leak into the game mic.
+  // Still honours the clip's per-id effect chain so a preview sounds like the play.
+  injectPreview(url: string, volume: number, onEnded: () => void, effects?: EffectConfig[]): InjectedClip | null {
+    if (!this.ctx || !this.monitorBus) return null;
+    return this.injectInto(this.monitorBus, url, volume, onEnded, effects);
+  }
+
+  // Shared clip-injection helper: <audio> → MediaElementSource → gain → [fx…] →
+  // dest. The optional effect chain is built fresh per play (read from the per-id
+  // config at trigger time) and disposed on end/stop alongside the source.
+  private injectInto(
+    dest: AudioNode,
+    url: string,
+    volume: number,
+    onEnded: () => void,
+    effects?: EffectConfig[],
+  ): InjectedClip | null {
+    if (!this.ctx) return null;
+    const ctx = this.ctx;
     const el = new Audio(url);
     el.preload = "auto";
-    const src = this.ctx.createMediaElementSource(el);
-    const gain = this.ctx.createGain();
+    const src = ctx.createMediaElementSource(el);
+    const gain = ctx.createGain();
     gain.gain.value = clamp01(volume);
-    src.connect(gain).connect(this.soundboardBus);
+    src.connect(gain);
+    // Build the per-clip chain (gain → fx₀ → … → dest), or wire gain → dest direct.
+    const fx: Effect[] = (effects ?? []).map((c) => createEffect(ctx, c));
+    let node: AudioNode = gain;
+    for (const e of fx) {
+      node.connect(e.input);
+      node = e.output;
+    }
+    node.connect(dest);
 
     let done = false;
     const cleanup = () => {
@@ -476,6 +742,9 @@ export class MicMixer {
       done = true;
       src.disconnect();
       gain.disconnect();
+      for (const e of fx) {
+        try { e.dispose(); } catch { /* ignore */ }
+      }
     };
     const finish = () => {
       cleanup();
@@ -514,33 +783,40 @@ export class MicMixer {
     for (const node of this.inputs.values()) {
       node.stream.getTracks().forEach((t) => t.stop());
       node.src.disconnect();
+      node.micGate.disconnect();
       node.gain.disconnect();
       node.analyser.disconnect();
-      node.monitorSend.disconnect();
     }
     this.inputs.clear();
+    // Dispose every effect chain. ctx.close() also frees the nodes, but disposing
+    // stops oscillators/LFOs cleanly first.
+    for (const key of Array.from(this.chains.keys())) this.disposeChain(key);
     try {
       this.monitorEl?.pause();
       if (this.monitorEl) this.monitorEl.srcObject = null;
     } catch {
       /* ignore */
     }
-    this.soundboardMonitorSend?.disconnect();
     this.soundboardBus?.disconnect();
+    this.soundboardMonitorGate?.disconnect();
+    this.micBus?.disconnect();
+    this.monitorMicGate?.disconnect();
     this.monitorBus?.disconnect();
     this.monitorDest?.disconnect();
-    this.cableAnalyser?.disconnect();
-    this.cableLimiter?.disconnect();
-    this.cableBus?.disconnect();
-    this.soundboardMonitorSend = null;
+    this.outputAnalyser?.disconnect();
+    this.limiter?.disconnect();
+    this.outputBus?.disconnect();
     this.soundboardBus = null;
+    this.soundboardMonitorGate = null;
+    this.micBus = null;
+    this.monitorMicGate = null;
     this.monitorBus = null;
     this.monitorDest = null;
     this.monitorEl = null;
-    this.cableAnalyser = null;
-    this.cableLimiter = null;
+    this.outputAnalyser = null;
+    this.limiter = null;
     this.peakBuf = null;
-    this.cableBus = null;
+    this.outputBus = null;
     if (this.ctx) {
       try {
         await this.ctx.close();

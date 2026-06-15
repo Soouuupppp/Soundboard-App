@@ -6,8 +6,11 @@ import Image from "next/image";
 import { auth, signIn, signOut } from "@/lib/auth";
 import { SiteHeader } from "@/components/SiteHeader";
 import { UserMenu } from "@/components/UserMenu";
+import { HeaderControls } from "@/components/HeaderControls";
 import { ToastProvider } from "@/components/Toast";
 import { AudioProvider } from "@/components/AudioProvider";
+import { VoiceChangerProvider } from "@/components/VoiceChangerProvider";
+import { VrProvider } from "@/components/VrProvider";
 import { NoticeBanners, type MotdSeverity } from "@/components/NoticeBanners";
 import { getAppSettings } from "@/lib/app-settings";
 import logo from "./logo.png";
@@ -60,6 +63,7 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
   const isAdmin = session?.user?.role === "admin";
+  const signedIn = !!session?.user;
 
   // Notice banners (MOTD + desktop promo) show to signed-in users only; skip the
   // settings read entirely when logged out so the landing stays clean + cheap.
@@ -75,6 +79,50 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       }
     : null;
 
+  // The app shell (header + notice banners + main). Built once and wrapped in the
+  // providers below — signed-in users additionally get the AudioProvider so the
+  // header controls can drive the engine.
+  const shell = (
+    <>
+      <SiteHeader>
+        <div className="max-w-[1800px] mx-auto px-4 py-3 flex items-center gap-6">
+          <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
+            <Image src={logo} alt="Soundboard logo" width={32} height={32} priority className="h-8 w-8" />
+            <span>Soundboard</span>
+          </Link>
+          {/* Audio controls (Settings · Voice changer · Sound Effects · meter)
+              sit on the LEFT, the gap-6 giving them margin from the logo. The
+              avatar dropdown (Admin + Sign out) + quota meter stay right-aligned. */}
+          {session?.user && <HeaderControls />}
+          <div className="ml-auto flex items-center gap-3 text-sm">
+            {session?.user ? (
+              <UserMenu
+                name={session.user.name ?? null}
+                image={session.user.image ?? null}
+                isAdmin={isAdmin}
+                signOutAction={async () => {
+                  "use server";
+                  await signOut({ redirectTo: "/" });
+                }}
+              />
+            ) : (
+              <form
+                action={async () => {
+                  "use server";
+                  await signIn("discord", { redirectTo: "/dashboard" });
+                }}
+              >
+                <button className="btn-primary">Login with Discord</button>
+              </form>
+            )}
+          </div>
+        </div>
+      </SiteHeader>
+      {motd && <NoticeBanners motd={motd} />}
+      <main className="max-w-[1800px] mx-auto px-4 py-10">{children}</main>
+    </>
+  );
+
   return (
     <html lang="en" className={play.variable}>
       <body>
@@ -89,48 +137,22 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <div className="absolute bottom-[-200px] left-1/3 h-[420px] w-[420px] rounded-full bg-cyan-400/10 blur-3xl" />
         </div>
 
-        <SiteHeader>
-          <div className="max-w-[1800px] mx-auto px-4 py-3 flex items-center gap-6">
-            <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
-              <Image src={logo} alt="Soundboard logo" width={32} height={32} priority className="h-8 w-8" />
-              <span>Soundboard</span>
-            </Link>
-            <div className="ml-auto flex items-center gap-3 text-sm">
-              {session?.user ? (
-                // Admin + Sign out collapse into the avatar dropdown; the quota
-                // meter sits beside it. (The standalone "My board"/"Public" nav
-                // is gone — the dashboard is the single page.)
-                <UserMenu
-                  name={session.user.name ?? null}
-                  image={session.user.image ?? null}
-                  isAdmin={isAdmin}
-                  signOutAction={async () => {
-                    "use server";
-                    await signOut({ redirectTo: "/" });
-                  }}
-                />
-              ) : (
-                <form
-                  action={async () => {
-                    "use server";
-                    await signIn("discord", { redirectTo: "/dashboard" });
-                  }}
-                >
-                  <button className="btn-primary">Login with Discord</button>
-                </form>
-              )}
-            </div>
-          </div>
-        </SiteHeader>
-        {motd && <NoticeBanners motd={motd} />}
-        <main className="max-w-[1800px] mx-auto px-4 py-10">
-          <ToastProvider>
-            {/* The audio engine only mounts for signed-in users — the only routes
-                that consume it (dashboard/admin) require auth. This keeps the
-                logged-out landing from enumerating devices / running the hook. */}
-            {session?.user ? <AudioProvider>{children}</AudioProvider> : children}
-          </ToastProvider>
-        </main>
+        {/* The header now hosts the audio controls (Settings · Voice changer ·
+            Sound Effects + the output meter), so for signed-in users the whole
+            shell — header AND main — lives inside one AudioProvider (a single
+            engine that survives navigation). The logged-out landing stays outside
+            it so it never enumerates devices / runs the hook. */}
+        {signedIn ? (
+          <AudioProvider>
+            <VoiceChangerProvider>
+              <VrProvider>
+                <ToastProvider>{shell}</ToastProvider>
+              </VrProvider>
+            </VoiceChangerProvider>
+          </AudioProvider>
+        ) : (
+          <ToastProvider>{shell}</ToastProvider>
+        )}
       </body>
     </html>
   );
