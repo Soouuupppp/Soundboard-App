@@ -3,10 +3,29 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type DragEvent as ReactDragEvent } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown, Youtube, Gamepad2, Tag, Pencil, Plus, GripVertical, ListOrdered, LayoutGrid, Bookmark, Search, Check, HelpCircle, Headphones } from "lucide-react";
+import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown, Youtube, Gamepad2, Tag, Pencil, Plus, GripVertical, ListOrdered, LayoutGrid, Bookmark, Search, Check, Sliders, ArrowUp, ArrowDown } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
-import { type AudioOutput } from "@/lib/audio-output";
+import { type AudioOutput, type AiConfig } from "@/lib/audio-output";
+import {
+  EFFECT_DEFS,
+  makeEffect,
+  effectLabel,
+  type EffectConfig,
+  type EffectKind,
+} from "@/lib/voice-fx";
+import {
+  AI_PRESETS,
+  AI_CUSTOM_ID,
+  AI_MODEL_CREDIT,
+  AI_PRIVACY_NOTICE,
+  type AiVoice,
+} from "@/lib/voice-ai";
 import { useAudio } from "@/components/AudioProvider";
+import { useVoiceChanger } from "@/components/VoiceChangerProvider";
+import { useVr } from "@/components/VrProvider";
+import { VrBindPicker } from "@/components/VrBindPicker";
+import { VrBindChips } from "@/components/VrBindChips";
+import { SoundEffectsModal } from "@/components/SoundEffectsModal";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { ClipEditor } from "@/components/ClipEditor";
 import { useToast } from "@/components/Toast";
@@ -24,28 +43,13 @@ import {
 } from "@/lib/chord";
 import {
   VrMatcher,
-  VrBindPreview,
   parseVrBind,
-  serializeVrBind,
   getProfileBind,
   setProfileBind,
   applyHolds,
-  bindHolds,
-  formatVrAction,
-  vrInputsByHand,
   VR_PROFILES,
-  HOLD_PRESETS_SEC,
-  MAX_HOLD_MS,
-  parseToken,
-  MAX_STEPS,
-  MAX_ACTIONS_PER_STEP,
   type VrEdge,
-  type VrAction,
-  type VrStep,
-  type VrBind,
-  type VrBindMode,
   type VrProfile,
-  type VrPreviewProgress,
 } from "@/lib/vr-bind";
 
 type Sound = {
@@ -77,13 +81,13 @@ type Limits = { maxFileSize: number; maxTotalStorage: number };
 // audio.cancelAll() instead of clip playback.
 const CANCEL_ALL_BIND = "__cancelAll__";
 
-// "major.minor" of a semver string — the onboarding guide re-shows on a minor (or
-// major) bump but not on patch releases (1.3.0 → 1.3.1 keeps the key "1.3").
-function minorKey(v: string): string {
-  const m = /^(\d+)\.(\d+)/.exec(v);
-  return m ? `${m[1]}.${m[2]}` : v;
-}
-const ONBOARDING_LS_KEY = "soundboard:onboarding";
+// Sentinel entryId for the AI voice-changer push-to-talk hotkey, routed like
+// cancel-all through the keyboard + VR matchers but driving startPtt/stopPtt.
+const AI_PTT_BIND = "__aiPtt__";
+
+// Sentinel entryId for the AI replay hotkey — re-injects the last converted clip
+// (audio.replayLastConversion), routed through the same matchers (one-shot).
+const AI_REPLAY_BIND = "__aiReplay__";
 
 export function Dashboard({
   limits,
@@ -109,8 +113,9 @@ export function Dashboard({
   const [capturingVrFor, setCapturingVrFor] = useState<string | null>(null);
   // Cancel-all's controller bind editor is open (no entry id — board-level).
   const [capturingCancelAllVr, setCapturingCancelAllVr] = useState(false);
-  const [vrConnected, setVrConnected] = useState(false);
-  const [hasDesktop, setHasDesktop] = useState(false);
+  // Controller profile + SteamVR/desktop presence now live in the shared
+  // VrProvider (so the header Voice-changer popover can drive them too).
+  const { controllerProfile, setControllerProfile, vrConnected, hasDesktop } = useVr();
 
   // --- Board section: Saved (full library) vs Board (the playable subset) ---
   const [boardTab, setBoardTab] = useState<"board" | "saved">("board");
@@ -121,6 +126,8 @@ export function Dashboard({
   const [savedMineOnly, setSavedMineOnly] = useState(false);
   // Which card is expanded into full CRUD (only one at a time keeps it tidy).
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  // Per-clip Sound Effects modal target (sound id + display name), or null.
+  const [fxModalSound, setFxModalSound] = useState<{ id: string; name: string } | null>(null);
   // Drag-reorder state (Board tab only): the entry id being dragged.
   const [dragId, setDragId] = useState<string | null>(null);
 
@@ -190,14 +197,24 @@ export function Dashboard({
     } catch {}
   }, []);
 
-  // --- First-run / new-version onboarding overlay ---
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [boardLoaded, setBoardLoaded] = useState(false);
-  const onboardingDecidedRef = useRef(false);
-  const dismissOnboarding = useCallback(() => {
-    setShowOnboarding(false);
-    try { localStorage.setItem(ONBOARDING_LS_KEY, minorKey(appVersion)); } catch {}
-  }, [appVersion]);
+  // AI push-to-talk bind state is shared via VoiceChangerProvider so the header
+  // Voice-changer popover and this matcher read/write the same device-local binds
+  // (keyboard combo + per-profile serialized controller bind). The keyboard
+  // chord-capture and the VR bind pickers (PTT + replay) render from the
+  // provider/VrProvider; this component only reads the binds + capture flags to
+  // gate + drive its playback matcher.
+  const {
+    aiPttKeybind,
+    setAiPttKeybind,
+    aiPttControllerBind,
+    capturingAiPtt,
+    setCapturingAiPtt,
+    capturingAiPttVr,
+    aiReplayKeybind,
+    aiReplayControllerBind,
+    capturingAiReplay,
+    capturingAiReplayVr,
+  } = useVoiceChanger();
 
   // All tag names in the system — feeds the per-card tag autocomplete.
   const [allTags, setAllTags] = useState<string[]>([]);
@@ -219,8 +236,6 @@ export function Dashboard({
       window.dispatchEvent(new CustomEvent("soundboard:storage-changed"));
     } catch {
       toast.error("Network error loading your board — check your connection.");
-    } finally {
-      setBoardLoaded(true);
     }
   }, [toast]);
 
@@ -228,26 +243,6 @@ export function Dashboard({
     refresh();
     refreshTags();
   }, [refresh, refreshTags]);
-
-  // Decide once (after the board has loaded) whether to auto-open the guide:
-  // first-ever visit with no sounds yet, or a minor/major version bump since the
-  // last time it was dismissed. Patch bumps don't re-trigger.
-  useEffect(() => {
-    if (!boardLoaded || onboardingDecidedRef.current) return;
-    onboardingDecidedRef.current = true;
-    try {
-      const stored = localStorage.getItem(ONBOARDING_LS_KEY);
-      const current = minorKey(appVersion);
-      if (stored === current) return; // already seen this release line
-      if (stored == null) {
-        // Brand-new user: only nag when the board is empty; otherwise quietly mark seen.
-        if (entries.length === 0) setShowOnboarding(true);
-        else localStorage.setItem(ONBOARDING_LS_KEY, current);
-      } else {
-        setShowOnboarding(true); // minor/major bump → force-show
-      }
-    } catch {}
-  }, [boardLoaded, entries, appVersion]);
 
   const saveTags = useCallback(async (soundId: string, next: string[]) => {
     let res: Response;
@@ -279,7 +274,26 @@ export function Dashboard({
   }, []);
   // --- Audio playback (allows overlap: new Audio per trigger) ---
   const audio = useAudio();
-  const { play: audioPlay, updateEntryVolume, cancelAll } = audio;
+  const { play: audioPlay, updateEntryVolume, cancelAll, startPtt, stopPtt, replayLastConversion } = audio;
+  // Capture devices with AI enabled — the PTT hotkey records from all of them.
+  const aiPttDevices = useMemo(
+    () =>
+      Object.entries(audio.voiceFx)
+        .filter(([k, fx]) => k !== audio.soundboardKey && fx.ai?.enabled)
+        .map(([k]) => k),
+    [audio.voiceFx, audio.soundboardKey],
+  );
+  const aiPttDevicesRef = useRef<string[]>(aiPttDevices);
+  aiPttDevicesRef.current = aiPttDevices;
+  const startAiPtt = useCallback(() => {
+    for (const d of aiPttDevicesRef.current) startPtt(d);
+  }, [startPtt]);
+  const stopAiPtt = useCallback(() => {
+    for (const d of aiPttDevicesRef.current) stopPtt(d);
+  }, [stopPtt]);
+  // Tracks an in-flight PTT hold so the right release edge stops it.
+  const aiPttKeyRef = useRef<string | null>(null);
+  const vrPttActiveRef = useRef(false);
   const setVolume = useCallback((entryId: string, v: number) => {
     setVolumes((prev) => {
       const next = { ...prev, [entryId]: v };
@@ -314,9 +328,7 @@ export function Dashboard({
   // device-local pattern. A bind fires only when both are on.
   const [controllersEnabled, setControllersEnabledState] = useState(true);
   const [controllerEnabled, setControllerEnabled] = useState<Record<string, boolean>>({});
-  // Controller hardware profile (Index vs Quest/Touch) — relabels the bind UI;
-  // tokens are unchanged. Device-local, mirrors the enable switches.
-  const [controllerProfile, setControllerProfileState] = useState<VrProfile>("index");
+  // controllerProfile + its persistence/setter live in VrProvider (useVr above).
   useEffect(() => {
     try {
       const g = localStorage.getItem("soundboard:keybindsEnabled");
@@ -327,13 +339,7 @@ export function Dashboard({
       if (cg != null) setControllersEnabledState(cg === "true");
       const vr = localStorage.getItem("soundboard:controllerEnabled");
       if (vr) setControllerEnabled(JSON.parse(vr));
-      const prof = localStorage.getItem("soundboard:controllerProfile");
-      if (prof === "index" || prof === "quest") setControllerProfileState(prof);
     } catch {}
-  }, []);
-  const setControllerProfile = useCallback((p: VrProfile) => {
-    setControllerProfileState(p);
-    try { localStorage.setItem("soundboard:controllerProfile", p); } catch {}
   }, []);
   const setKeybindsEnabled = useCallback((on: boolean) => {
     setKeybindsEnabledState(on);
@@ -392,8 +398,35 @@ export function Dashboard({
         });
       }
     }
+    // AI push-to-talk hotkey, also routed via a sentinel (hold semantics handled
+    // in the key listeners). Gated by the master keybinds switch like the rest.
+    if (aiPttKeybind) {
+      const { mods, keys } = parseKeyCombo(aiPttKeybind);
+      if (keys.length > 0) {
+        binds.push({
+          raw: canonicalKeyCombo(mods, keys),
+          mods,
+          tokens: new Set(keys),
+          entryId: AI_PTT_BIND,
+          soundId: "",
+        });
+      }
+    }
+    // AI replay hotkey — one-shot, routed via its own sentinel.
+    if (aiReplayKeybind) {
+      const { mods, keys } = parseKeyCombo(aiReplayKeybind);
+      if (keys.length > 0) {
+        binds.push({
+          raw: canonicalKeyCombo(mods, keys),
+          mods,
+          tokens: new Set(keys),
+          entryId: AI_REPLAY_BIND,
+          soundId: "",
+        });
+      }
+    }
     return binds;
-  }, [entries, keybindsEnabled, keybindEnabled, cancelAllKeybind]);
+  }, [entries, keybindsEnabled, keybindEnabled, cancelAllKeybind, aiPttKeybind, aiReplayKeybind]);
 
   // Canonical combo string -> entry, for Electron global-hook lookups + registration.
   const keybindByCombo = useMemo(() => {
@@ -413,21 +446,31 @@ export function Dashboard({
       if (!token || isModToken(token)) return; // modifiers tracked via flags only
       if (ev.repeat) return; // ignore auto-repeat
       heldKeysRef.current.add(token);
-      if (capturingFor || capturingCancelAll) return; // capture handles its own keys
+      if (capturingFor || capturingCancelAll || capturingAiPtt || capturingAiReplay) return; // capture handles its own keys
       const mods = modsFromEvent(ev);
       const candidates = keyBinds.filter((b) => sameMods(b.mods, mods));
       const best = pickLargest(heldKeysRef.current, token, candidates);
       if (best) {
         ev.preventDefault();
         if (best.entryId === CANCEL_ALL_BIND) cancelAll();
+        else if (best.entryId === AI_PTT_BIND) {
+          // Hold: start on the completing key, stop when that key releases.
+          if (aiPttKeyRef.current === null) { aiPttKeyRef.current = token; startAiPtt(); }
+        } else if (best.entryId === AI_REPLAY_BIND) replayLastConversion();
         else playEntry(best.entryId, best.soundId);
       }
     }
     function onKeyUp(ev: KeyboardEvent) {
       const token = keyTokenFromEvent(ev);
       if (token && !isModToken(token)) heldKeysRef.current.delete(token);
+      // Release the PTT hold when its completing key lifts.
+      if (token && aiPttKeyRef.current === token) { aiPttKeyRef.current = null; stopAiPtt(); }
     }
-    function clearHeld() { heldKeysRef.current.clear(); }
+    function clearHeld() {
+      heldKeysRef.current.clear();
+      // A blur mid-hold would otherwise strand the PTT capture open.
+      if (aiPttKeyRef.current !== null) { aiPttKeyRef.current = null; stopAiPtt(); }
+    }
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", clearHeld);
@@ -436,7 +479,7 @@ export function Dashboard({
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", clearHeld);
     };
-  }, [keyBinds, capturingFor, capturingCancelAll, playEntry, cancelAll]);
+  }, [keyBinds, capturingFor, capturingCancelAll, capturingAiPtt, capturingAiReplay, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion]);
 
   // Capture a chord for the cancel-all keybind: hold keys together, release to
   // confirm (mirrors the per-clip capture in SoundCard). Escape cancels.
@@ -473,6 +516,9 @@ export function Dashboard({
     };
   }, [capturingCancelAll, setCancelAllKeybind]);
 
+  // (The AI push-to-talk keyboard chord-capture moved to VoiceChangerProvider so
+  // the header popover's "Set keybind" works regardless of which page is mounted.)
+
   // OS-level global shortcut events forwarded by the Electron hook (already
   // chord-matched there); look up the canonical combo and play.
   useEffect(() => {
@@ -483,12 +529,16 @@ export function Dashboard({
       const hit = keybindByCombo.get(canonicalKeyCombo(mods, keys));
       if (hit) {
         if (hit.entryId === CANCEL_ALL_BIND) cancelAll();
+        // The OS global hook only forwards the down edge, so an unfocused PTT
+        // hold can't see its release — it relies on the recorder's max-length cap.
+        else if (hit.entryId === AI_PTT_BIND) startAiPtt();
+        else if (hit.entryId === AI_REPLAY_BIND) replayLastConversion();
         else playEntry(hit.entryId, hit.soundId);
       }
     }
     window.addEventListener("soundboard:globalKey", onGlobal as EventListener);
     return () => window.removeEventListener("soundboard:globalKey", onGlobal as EventListener);
-  }, [keybindByCombo, playEntry, cancelAll]);
+  }, [keybindByCombo, playEntry, cancelAll, startAiPtt, replayLastConversion]);
 
   // Tell the Electron host (if any) which keybinds to register globally.
   useEffect(() => {
@@ -499,10 +549,6 @@ export function Dashboard({
   }, [keybindByCombo]);
 
   // --- Controller (Valve Index) binds: chords, independent of keybinds ---
-  useEffect(() => {
-    setHasDesktop(!!(window as unknown as { soundboard?: unknown }).soundboard);
-  }, []);
-
   // Step/sequence matcher (lib/vr-bind.ts). One stateful engine for the device;
   // we reconcile its bind set when the board changes and feed it controller
   // edges. entryId → soundId lets the matcher's hit drive playback.
@@ -529,9 +575,15 @@ export function Dashboard({
     if (controllersEnabled) {
       const cab = parseVrBind(getProfileBind(cancelAllControllerBind, controllerProfile));
       if (cab) binds.push({ id: CANCEL_ALL_BIND, bind: applyHolds(cab, cancelAllHoldMs) });
+      // AI push-to-talk controller bind (hold semantics handled in onVrInput).
+      const ptt = parseVrBind(getProfileBind(aiPttControllerBind, controllerProfile));
+      if (ptt) binds.push({ id: AI_PTT_BIND, bind: ptt });
+      // AI replay controller bind (one-shot).
+      const rep = parseVrBind(getProfileBind(aiReplayControllerBind, controllerProfile));
+      if (rep) binds.push({ id: AI_REPLAY_BIND, bind: rep });
     }
     vrMatcherRef.current!.setBinds(binds);
-  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, controllerProfile, holdMsByEntry, cancelAllHoldMs]);
+  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, aiPttControllerBind, aiReplayControllerBind, controllerProfile, holdMsByEntry, cancelAllHoldMs]);
 
   // Feed press/release edges to the matcher; play the most-specific bind that
   // completes. Skipped while the bind editor is open (and the matcher is reset
@@ -539,32 +591,32 @@ export function Dashboard({
   useEffect(() => {
     function onVrInput(ev: Event) {
       const detail = (ev as CustomEvent<{ token: string; pressed: boolean }>).detail;
-      if (!detail?.token || capturingVrFor || capturingCancelAllVr) return;
+      if (!detail?.token || capturingVrFor || capturingCancelAllVr || capturingAiPttVr || capturingAiReplayVr) return;
       const edge: VrEdge = detail.pressed ? "down" : "up";
       const hitId = vrMatcherRef.current!.feed(detail.token, edge, performance.now());
       if (hitId === CANCEL_ALL_BIND) cancelAll();
+      else if (hitId === AI_PTT_BIND) { vrPttActiveRef.current = true; startAiPtt(); }
+      else if (hitId === AI_REPLAY_BIND) replayLastConversion();
       else if (hitId) {
         const soundId = vrSoundByEntry.get(hitId);
         if (soundId) playEntry(hitId, soundId);
       }
+      // PTT hold release: once active, the first button release (that didn't just
+      // complete the PTT bind itself) ends the capture.
+      if (edge === "up" && vrPttActiveRef.current && hitId !== AI_PTT_BIND) {
+        vrPttActiveRef.current = false;
+        stopAiPtt();
+      }
     }
     window.addEventListener("soundboard:vrInput", onVrInput as EventListener);
     return () => window.removeEventListener("soundboard:vrInput", onVrInput as EventListener);
-  }, [capturingVrFor, capturingCancelAllVr, vrSoundByEntry, playEntry, cancelAll]);
+  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr, vrSoundByEntry, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion]);
 
   useEffect(() => {
     vrMatcherRef.current!.reset();
-  }, [capturingVrFor, capturingCancelAllVr]);
+  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr]);
 
-  // SteamVR connection status from the native bridge.
-  useEffect(() => {
-    function onVrStatus(ev: Event) {
-      const detail = (ev as CustomEvent<{ steamvr: boolean }>).detail;
-      setVrConnected(!!detail?.steamvr);
-    }
-    window.addEventListener("soundboard:vrStatus", onVrStatus as EventListener);
-    return () => window.removeEventListener("soundboard:vrStatus", onVrStatus as EventListener);
-  }, []);
+  // (SteamVR status + hasDesktop now come from VrProvider via useVr.)
 
   // --- Upload ---
   const fileRef = useRef<HTMLInputElement>(null);
@@ -812,6 +864,7 @@ export function Dashboard({
       onRemove={() => removeEntry(e.entry.id)}
       onDeleteSound={() => deleteSound(e.sound.id)}
       onTogglePublic={(next) => togglePublic(e.sound.id, next)}
+      onOpenFx={() => setFxModalSound({ id: e.sound.id, name: e.entry.label || e.sound.originalFilename })}
       expanded={expandedCard === e.entry.id}
       onToggleExpand={() => setExpandedCard((id) => (id === e.entry.id ? null : e.entry.id))}
       onBoard={e.entry.onBoard}
@@ -821,20 +874,19 @@ export function Dashboard({
 
   return (
     <div className="space-y-8">
-      {showOnboarding && <OnboardingOverlay onClose={dismissOnboarding} />}
+      {fxModalSound && (
+        <SoundEffectsModal
+          audio={audio}
+          soundId={fxModalSound.id}
+          name={fxModalSound.name}
+          onClose={() => setFxModalSound(null)}
+        />
+      )}
 
-      <div className="flex justify-end">
-        <button
-          type="button"
-          className="btn-ghost text-sm shrink-0"
-          onClick={() => setShowOnboarding(true)}
-          title="Show the setup guide"
-        >
-          <HelpCircle size={15} className="mr-1" /> Guide
-        </button>
-      </div>
-
-      <ControlPanel audio={audio} />
+      {/* The audio Control Panel moved into the header (Settings · Voice changer ·
+          Sound Effects popovers in HeaderControls). The AI push-to-talk + AI-replay
+          controller bind editors now render from VrProvider so they open from the
+          header popover on any page. */}
 
       <section className="card">
         <div className="flex gap-2 flex-wrap">
@@ -1249,65 +1301,6 @@ function AddTabButton({
       {icon}
       <span>{label}</span>
     </button>
-  );
-}
-
-// First-run / new-version setup guide. A dismissable modal walking through the
-// six setup steps. Shown automatically on first visit (empty board) or after a
-// minor/major version bump; re-openable via the header "Guide" button.
-function OnboardingOverlay({ onClose }: { onClose: () => void }) {
-  const steps: { icon: ReactNode; title: string; body: string; optional?: boolean }[] = [
-    { icon: <Volume2 size={16} />, title: "Set your output device", body: "Open the Control Panel → Output & volume and pick where sounds play." },
-    { icon: <Mic size={16} />, title: "Set up your virtual mic", body: "Optional. Turn on Virtual Mic mode to route the soundboard into a virtual cable so it comes through as your mic in games/calls.", optional: true },
-    { icon: <Volume2 size={16} />, title: "Choose a monitoring device", body: "Optional. Pick a device to hear selected lines locally without echoing your own mic.", optional: true },
-    { icon: <Upload size={16} />, title: "Add a soundbite", body: "Upload an mp3, import from YouTube, or Browse public clips and save one." },
-    { icon: <LayoutGrid size={16} />, title: "Add it to your board", body: "Open the Saved tab and hit “Add to board” — only board clips play and take keybinds." },
-    { icon: <Keyboard size={16} />, title: "Set keybinds", body: "Optional. Expand a board card (pencil) and capture a keybind so it fires hands-free.", optional: true },
-  ];
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Setup guide"
-      onClick={onClose}
-    >
-      <div
-        className="card max-w-lg w-full max-h-[85vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <div>
-            <h2 className="text-xl font-bold tracking-tight">Welcome — let&apos;s get you set up</h2>
-            <p className="text-sm text-muted mt-1">A quick tour of the soundboard. Optional steps are marked.</p>
-          </div>
-          <button type="button" className="btn-ghost !px-2" onClick={onClose} aria-label="Close guide">
-            <X size={16} />
-          </button>
-        </div>
-        <ol className="space-y-3">
-          {steps.map((s, i) => (
-            <li key={i} className="flex items-start gap-3">
-              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/[0.04] border border-white/10 text-accent">
-                {s.icon}
-              </span>
-              <div className="min-w-0">
-                <div className="text-sm font-medium flex items-center gap-2">
-                  <span className="text-muted">{i + 1}.</span> {s.title}
-                  {s.optional && <span className="chip">optional</span>}
-                </div>
-                <p className="text-xs text-muted mt-0.5">{s.body}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-        <div className="mt-5 flex justify-end">
-          <button type="button" className="btn-primary text-sm" onClick={onClose}>
-            Got it
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1802,6 +1795,8 @@ function SoundCard(props: {
   onRemove: () => void;
   onDeleteSound: () => void;
   onTogglePublic: (next: boolean) => void;
+  // Open the per-clip Sound Effects modal scoped to this clip's sound id.
+  onOpenFx: () => void;
   volume: number;
   onVolumeChange: (v: number) => void;
   keybindsGloballyEnabled: boolean;
@@ -2069,6 +2064,14 @@ function SoundCard(props: {
           <>
             <button
               className="btn-ghost text-xs !px-2 shrink-0"
+              onClick={props.onOpenFx}
+              title="Sound effects"
+              aria-label="Sound effects"
+            >
+              <Sliders size={14} />
+            </button>
+            <button
+              className="btn-ghost text-xs !px-2 shrink-0"
               onClick={props.onToggleExpand}
               title="Edit"
               aria-label="Edit card"
@@ -2191,323 +2194,6 @@ function SoundCard(props: {
   );
 }
 
-function ControlPanel({ audio }: { audio: AudioOutput }) {
-  // Collapsed by default — the slim status bar surfaces the live state so you
-  // rarely need to open it. Tab is the section shown once expanded.
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"output" | "mic">("output");
-  const labelsHidden = audio.devices.some((d) => !d.label);
-
-  const outputLabel =
-    audio.deviceId === "default"
-      ? "System default"
-      : audio.devices.find((d) => d.deviceId === audio.deviceId)?.label || "Output device";
-
-  // The header meter reads the global output (cable in Virtual Mic mode, else
-  // the normal-mode graph). Only animate when there's something to show.
-  const showMeter = audio.supportsOutputMeter || audio.virtualMicMode;
-  const meterActive = audio.virtualMicMode || audio.anyPlaying;
-
-  return (
-    <section className="card !p-0 overflow-hidden">
-      {/* Slim status bar — click anywhere to expand. */}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="w-full flex items-center gap-3 p-4 text-left transition-colors hover:bg-white/[0.02]"
-      >
-        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-accent">
-          <Settings size={16} />
-        </span>
-        {/* Title shrinks (truncating) so the status cluster gets the horizontal
-            room — the device chip + meter are the more useful at-a-glance info. */}
-        <div className="min-w-0 shrink">
-          <h2 className="section-title truncate">Control Panel</h2>
-          <p className="section-sub hidden sm:block truncate">
-            Output{audio.supportsSinkId ? ", volume & Virtual Mic" : " & volume"}
-          </p>
-        </div>
-
-        {/* Live status cluster (output device · Virtual Mic state · output meter).
-            flex-1 claims the leftover width so the chip + meter can stretch. */}
-        <div className="ml-auto flex flex-1 items-center justify-end gap-2 min-w-0">
-          <span className="chip hidden sm:inline-flex min-w-0 max-w-[14rem] md:max-w-[22rem]" title={outputLabel}>
-            <Volume2 size={12} className="shrink-0" />
-            <span className="truncate">{outputLabel}</span>
-          </span>
-          {audio.supportsSinkId && (
-            <span
-              className={`chip gap-1 shrink-0 ${
-                audio.virtualMicMode ? "!border-accent/40 !bg-accent/15 !text-white" : ""
-              }`}
-            >
-              <Mic size={12} className="shrink-0" />
-              <span className="hidden md:inline">Virtual Mic</span>
-              <span>{audio.virtualMicMode ? "On" : "Off"}</span>
-            </span>
-          )}
-          {showMeter && (
-            <LevelMeter
-              getPeak={audio.getOutputPeak}
-              active={meterActive}
-              className="h-1.5 w-16 sm:w-28 md:w-36"
-            />
-          )}
-          <ChevronDown
-            size={16}
-            className={`text-muted shrink-0 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
-          />
-        </div>
-      </button>
-
-      <Collapsible open={open}>
-        <div className="px-4 pb-4">
-          <div className="flex gap-2">
-            <AddTabButton
-              icon={<Volume2 size={18} />}
-              label="Output & volume"
-              active={tab === "output"}
-              onClick={() => setTab("output")}
-            />
-            {audio.supportsSinkId && (
-              <AddTabButton
-                icon={<Mic size={18} />}
-                label="Virtual Mic mode"
-                active={tab === "mic"}
-                onClick={() => setTab("mic")}
-              />
-            )}
-          </div>
-
-          <div className="mt-4 grid gap-3">
-            {tab === "output" && (
-              <>
-                {/* Output device + Monitor device on one row; volume below. */}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Volume2 size={14} className="text-accent shrink-0" />
-                      <span className="text-sm font-medium">Output device</span>
-                    </div>
-                    {audio.supportsSinkId ? (
-                      <>
-                        <Select
-                          className="w-full"
-                          aria-label="Output device"
-                          value={audio.deviceId}
-                          onChange={(v) => audio.setDeviceId(v)}
-                          options={[
-                            { value: "default", label: "System default" },
-                            ...audio.devices.map((d) => ({
-                              value: d.deviceId,
-                              label: d.label || `Output ${d.deviceId.slice(0, 6)}`,
-                            })),
-                          ]}
-                        />
-                        {labelsHidden && (
-                          <button
-                            type="button"
-                            className="btn-ghost text-xs mt-2"
-                            onClick={() => audio.requestLabelsPermission()}
-                          >
-                            Show device names (grants mic permission once)
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-xs text-muted">
-                        This browser doesn&apos;t support per-element output selection. Use OS audio settings.
-                      </p>
-                    )}
-                    <p className="text-xs text-muted mt-2">
-                      {audio.virtualMicMode
-                        ? "In Virtual Mic mode this is the cable the soundboard + mics feed into — pick its recording side as your mic in-game."
-                        : "Where the soundboard plays so you can hear it."}
-                    </p>
-                  </div>
-
-                  {/* Monitor device — local listening for Virtual Mic mode. */}
-                  {audio.supportsSinkId && (
-                    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Headphones size={14} className="text-accent shrink-0" />
-                        <span className="text-sm font-medium">Monitor device</span>
-                      </div>
-                      <Select
-                        className="w-full"
-                        aria-label="Monitor device"
-                        value={audio.monitorDeviceId}
-                        onChange={(v) => audio.setMonitorDeviceId(v)}
-                        options={[
-                          { value: "default", label: "System default" },
-                          ...audio.devices.map((d) => ({
-                            value: d.deviceId,
-                            label: d.label || `Output ${d.deviceId.slice(0, 6)}`,
-                          })),
-                        ]}
-                      />
-                      <p className="text-xs text-muted mt-2">
-                        Where you hear the Virtual Mic monitor locally. Set each source&apos;s monitor
-                        toggle in the Virtual Mic tab.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Master volume — compact row. */}
-                <div className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
-                  <div className="flex items-center gap-3">
-                    <Volume2 size={14} className="text-accent shrink-0" />
-                    <span className="text-sm font-medium shrink-0">Master volume</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={audio.masterVolume}
-                      onChange={(e) => audio.setMasterVolume(Number(e.target.value))}
-                      className="flex-1 accent-accent"
-                      aria-label="Master volume"
-                    />
-                    <span className="text-xs text-muted w-8 text-right tabular-nums">
-                      {Math.round(audio.masterVolume * 100)}
-                    </span>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {tab === "mic" && audio.supportsSinkId && (
-              <>
-                {/* Enable + mic output volume — the primary controls for this tab. */}
-                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Mic size={15} className="text-accent shrink-0" />
-                      <div className="min-w-0">
-                        <span className="text-sm font-medium block">Virtual Mic mode</span>
-                        <span className="text-xs text-muted">Mix mics + soundboard into a cable as your in-game mic.</span>
-                      </div>
-                    </div>
-                    <Toggle
-                      checked={audio.virtualMicMode}
-                      onChange={audio.setVirtualMicMode}
-                      label="Toggle Virtual Mic mode"
-                    />
-                  </div>
-                  <div className="mt-3 flex items-center gap-3">
-                    <span className="text-sm shrink-0">Mic output volume</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={audio.micOutputVolume}
-                      onChange={(e) => audio.setMicOutputVolume(Number(e.target.value))}
-                      className="flex-1 accent-accent"
-                      aria-label="Mic output volume"
-                    />
-                    <span className="text-xs text-muted w-8 text-right tabular-nums">
-                      {Math.round(audio.micOutputVolume * 100)}
-                    </span>
-                  </div>
-                  {/* Live mic output level lives with the volume it reflects. */}
-                  {audio.virtualMicMode && (
-                    <div className="mt-3">
-                      <PeakMeter getPeak={audio.getCablePeak} active={audio.virtualMicMode} />
-                    </div>
-                  )}
-                </div>
-                <VirtualMicPanel audio={audio} />
-              </>
-            )}
-          </div>
-        </div>
-      </Collapsible>
-    </section>
-  );
-}
-
-// Compact level meter: polls getPeak each frame with peak-hold decay and fills a
-// pill green / amber (nearing the limiter) / red (clipping). Shared by the
-// Control Panel header (global output) and each Virtual Mic input row. `active`
-// gates the rAF loop so idle meters cost nothing.
-// Peak-meter color for a linear level (red past 0 dBFS, amber into the limiter
-// threshold at -1 dBFS, else green). Shared by LevelMeter + PeakMeter.
-function meterColor(level: number): string {
-  return level >= 1.0 ? "bg-red-500" : level >= 0.89 ? "bg-amber-400" : "bg-emerald-500";
-}
-
-// Drives a meter bar straight to the DOM each animation frame (width + color via
-// a ref), so a continuously-running meter doesn't force a React re-render 60×/sec
-// — which matters because in Virtual Mic mode several of these run for the whole
-// session. Returns nothing; the caller renders the bar element with `barRef`.
-function useMeterBar(
-  barRef: React.RefObject<HTMLDivElement | null>,
-  getPeak: () => number,
-  active: boolean,
-  onLevel?: (level: number) => void,
-) {
-  const heldRef = useRef(0);
-  const lastColorRef = useRef("");
-  const onLevelRef = useRef(onLevel);
-  onLevelRef.current = onLevel;
-  useEffect(() => {
-    const bar = barRef.current;
-    const paint = (level: number) => {
-      if (bar) {
-        bar.style.width = `${Math.min(100, level * 100)}%`;
-        const color = meterColor(level);
-        if (color !== lastColorRef.current) {
-          lastColorRef.current = color;
-          bar.className = `h-full ${color} transition-[width] duration-75`;
-        }
-      }
-      onLevelRef.current?.(level);
-    };
-    if (!active) {
-      heldRef.current = 0;
-      paint(0);
-      return;
-    }
-    let raf = 0;
-    let last = 0;
-    // 30fps is smooth enough for a level meter and halves the work vs. painting
-    // every frame. (rAF still auto-pauses when the window is hidden/occluded, so
-    // a backgrounded soundboard costs nothing.) Decay is squared to keep the same
-    // wall-clock peak-hold falloff at the lower update rate.
-    const FRAME_MS = 1000 / 30;
-    const tick = (ts: number) => {
-      raf = requestAnimationFrame(tick);
-      if (ts - last < FRAME_MS) return;
-      last = ts;
-      heldRef.current = Math.max(getPeak(), heldRef.current * 0.846); // peak-hold + decay
-      paint(heldRef.current);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [active, getPeak, barRef]);
-}
-
-function LevelMeter({
-  getPeak,
-  active,
-  className = "",
-}: {
-  getPeak: () => number;
-  active: boolean;
-  className?: string;
-}) {
-  const barRef = useRef<HTMLDivElement | null>(null);
-  useMeterBar(barRef, getPeak, active);
-  return (
-    <div className={`shrink-0 overflow-hidden rounded-full bg-white/10 ${className}`}>
-      <div ref={barRef} className="h-full bg-emerald-500 transition-[width] duration-75" style={{ width: "0%" }} />
-    </div>
-  );
-}
-
 // Animated show/hide using a 0fr↔1fr grid row (no fixed height needed).
 function Collapsible({ open, children }: { open: boolean; children: ReactNode }) {
   return (
@@ -2557,701 +2243,6 @@ function Toggle({
         }`}
       />
     </button>
-  );
-}
-
-function VirtualMicPanel({ audio }: { audio: AudioOutput }) {
-  const on = audio.virtualMicMode;
-  const labelsHidden =
-    audio.inputDevices.length === 0 || audio.inputDevices.some((d) => !d.label);
-
-  return (
-    <div>
-      <p className="text-xs text-muted">
-        Mix your capture devices (mics, virtual cables, GoXLR buses) and the soundboard into a
-        virtual audio cable, then pick that cable as your mic in-game. Each source has a cable send
-        (what the game hears) and a monitor send (what you hear locally, on the monitor device set
-        in the Output tab).
-      </p>
-
-      {!audio.supportsContextSink && on && (
-        <p className="text-xs text-red-400 mt-2">
-          This build can&apos;t route Web Audio to a specific device (needs Chromium 110+).
-        </p>
-      )}
-      {audio.mixerError && on && (
-        <p className="text-xs text-red-400 mt-2">Mixer error: {audio.mixerError}</p>
-      )}
-
-      <Collapsible open={on}>
-        <div className="space-y-5 pt-3">
-          {!audio.secureContext && (
-            <p className="text-xs text-red-400">
-              Microphone access needs a secure context (HTTPS or localhost). Your server URL is
-              plain HTTP, so the browser blocks mic capture.
-            </p>
-          )}
-          {labelsHidden && (
-            <div>
-              <button
-                type="button"
-                className="btn-ghost text-xs"
-                onClick={() => audio.requestLabelsPermission()}
-              >
-                Show device names (grants mic permission once)
-              </button>
-              {audio.labelsError && (
-                <p className="text-xs text-red-400 mt-1">Couldn&apos;t access mic: {audio.labelsError}</p>
-              )}
-            </div>
-          )}
-
-          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Mic size={14} className="text-accent shrink-0" />
-              <span className="text-sm font-medium">Sources → virtual mic</span>
-            </div>
-            <p className="text-xs text-muted mb-3">
-              The soundboard plus every capture device Windows reports — mics, virtual cables
-              (VB-Audio, VoiceMeeter) and GoXLR buses (e.g. Broadcast Stream Mix). Enable a source to
-              feed it to the game and set its cable volume; flip Monitor to also hear it locally (at
-              the same level). To route an app&apos;s audio in, send it to a cable / GoXLR bus in
-              Windows and it&apos;ll appear here.
-            </p>
-            {/* Condensed grid — up to 3 sources per row. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-              {/* Soundboard line — always on, so no enable toggle. */}
-              <SourceMixRow
-                name="Soundboard"
-                volume={audio.soundboardVolume}
-                onVolume={(v) => audio.setSoundboardVolume(v)}
-                monitorOn={(audio.monitorSends[audio.soundboardKey] ?? 0) > 0}
-                onMonitor={(b) => audio.setMonitorSend(audio.soundboardKey, b ? 1 : 0)}
-              />
-              {audio.inputDevices.length === 0 ? (
-                <p className="text-xs text-muted">No capture devices detected.</p>
-              ) : (
-                audio.inputDevices.map((d) => (
-                  <SourceMixRow
-                    key={d.deviceId}
-                    name={d.label || `Capture ${d.deviceId.slice(0, 6)}`}
-                    enabled={audio.inputs.find((i) => i.deviceId === d.deviceId)?.enabled ?? false}
-                    onEnable={(b) => audio.setInputEnabled(d.deviceId, b)}
-                    volume={audio.inputs.find((i) => i.deviceId === d.deviceId)?.volume ?? 1}
-                    onVolume={(v) => audio.setInputVolume(d.deviceId, v)}
-                    monitorOn={(audio.monitorSends[d.deviceId] ?? 0) > 0}
-                    onMonitor={(b) => audio.setMonitorSend(d.deviceId, b ? 1 : 0)}
-                    getPeak={audio.getInputPeak}
-                    peakId={d.deviceId}
-                    metersActive={on}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      </Collapsible>
-    </div>
-  );
-}
-
-// Live meter of the cable sum (what the virtual mic sends). Polls the mixer's
-// pre-limiter peak each frame with a short peak-hold decay. Red = past 0 dBFS
-// (the limiter is clamping it); amber = into the limiter threshold (-1 dBFS).
-function PeakMeter({ getPeak, active }: { getPeak: () => number; active: boolean }) {
-  const barRef = useRef<HTMLDivElement | null>(null);
-  // The bar is painted straight to the DOM (no per-frame re-render); only the
-  // "Clipping" label is React state, and it flips at most when crossing 0 dBFS.
-  const [clipping, setClipping] = useState(false);
-  const clippingRef = useRef(false);
-  useMeterBar(barRef, getPeak, active, (level) => {
-    const clip = level >= 1.0;
-    if (clip !== clippingRef.current) {
-      clippingRef.current = clip;
-      setClipping(clip);
-    }
-  });
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <label className="text-sm">Mic output level</label>
-        {clipping && <span className="text-xs text-red-400 font-medium">Clipping — limiter active</span>}
-      </div>
-      <div className="h-2.5 w-full rounded-full bg-white/10 overflow-hidden">
-        <div ref={barRef} className="h-full bg-emerald-500 transition-[width] duration-75" style={{ width: "0%" }} />
-      </div>
-      <p className="text-xs text-muted mt-1">
-        The summed signal feeding the virtual mic. The limiter stops it hard-clipping, but if it
-        sits in the red the audio still sounds squashed to listeners — lower your mic or clip volumes.
-      </p>
-    </div>
-  );
-}
-
-// One mix source (a capture device or the soundboard): an Enable switch (omitted
-// for the always-on soundboard), a cable-volume slider (what the game hears), and
-// a Monitor toggle (hear it locally at the same level — the monitor send taps the
-// post-volume signal, so "on" == matches the cable). Volume + Monitor are
-// disabled until the source is enabled. Shows its own level meter when active.
-function SourceMixRow({
-  name,
-  enabled,
-  onEnable,
-  volume,
-  onVolume,
-  monitorOn,
-  onMonitor,
-  getPeak,
-  peakId,
-  metersActive,
-}: {
-  name: string;
-  // Omit enabled/onEnable for an always-on source (the soundboard).
-  enabled?: boolean;
-  onEnable?: (on: boolean) => void;
-  volume: number;
-  onVolume: (v: number) => void;
-  monitorOn: boolean;
-  onMonitor: (on: boolean) => void;
-  getPeak?: (id: string) => number;
-  peakId?: string;
-  metersActive?: boolean;
-}) {
-  const hasEnable = typeof enabled === "boolean";
-  const active = hasEnable ? enabled! : true;
-  // Stable per-row getter so the meter's rAF loop doesn't restart each render.
-  const peakGetter = useCallback(
-    () => (getPeak && peakId ? getPeak(peakId) : 0),
-    [getPeak, peakId],
-  );
-  return (
-    <div
-      className={`rounded-lg border px-2.5 py-2 transition-colors ${
-        active ? "border-white/10 bg-white/[0.03]" : "border-white/5 bg-transparent"
-      }`}
-    >
-      <div className="flex items-center gap-2 mb-1.5">
-        {hasEnable && (
-          <Toggle size="sm" checked={active} onChange={onEnable!} label={`Enable ${name}`} />
-        )}
-        <span className="text-sm truncate min-w-0" title={name}>{name}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <Mic size={12} className="shrink-0 text-muted" />
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={volume}
-          disabled={!active}
-          onChange={(e) => onVolume(Number(e.target.value))}
-          className="flex-1 accent-accent disabled:opacity-40"
-          aria-label={`Cable volume for ${name}`}
-        />
-        <span className="text-xs text-muted w-7 text-right tabular-nums">
-          {Math.round(volume * 100)}
-        </span>
-      </div>
-      <div className="flex items-center justify-between gap-2 mt-1.5">
-        <span className="flex items-center gap-1 text-xs text-muted">
-          <Headphones size={12} className="shrink-0" /> Monitor
-        </span>
-        <Toggle
-          size="sm"
-          checked={monitorOn}
-          onChange={onMonitor}
-          disabled={!active}
-          label={`Monitor ${name}`}
-        />
-      </div>
-      {getPeak && peakId && active && (
-        <LevelMeter getPeak={peakGetter} active={!!metersActive} className="h-1 w-full mt-2" />
-      )}
-    </div>
-  );
-}
-
-// --- VR controller bind UI ---
-
-// Render a stored bind as wrapping per-action pills, steps separated by "→".
-// Handles sequences + down/up edges; long binds wrap instead of truncating.
-function VrBindChips({ value }: { value: string }) {
-  const bind = parseVrBind(value);
-  if (!bind) return null;
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1 min-w-0">
-      {bind.steps.map((step, si) => (
-        <span key={si} className="inline-flex flex-wrap items-center gap-1">
-          {si > 0 && <span className="px-0.5 text-[10px] text-muted/60">→</span>}
-          <span className="inline-flex flex-wrap items-center gap-0.5">
-            {step.map((a, ai) => (
-              <span
-                key={ai}
-                className="inline-flex items-center rounded bg-black/25 px-1.5 py-0.5 text-[10px] leading-none whitespace-nowrap"
-              >
-                {formatVrAction(a)}
-              </span>
-            ))}
-          </span>
-        </span>
-      ))}
-    </span>
-  );
-}
-
-// A removable action chip inside the bind builder / a committed step.
-function VrActionChip({ a, onRemove }: { a: VrAction; onRemove?: () => void }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/15 px-2 py-1 text-xs whitespace-nowrap">
-      {formatVrAction(a)}
-      {onRemove && (
-        <button type="button" onClick={onRemove} className="text-muted hover:text-white" aria-label="Remove action">
-          <X size={12} />
-        </button>
-      )}
-    </span>
-  );
-}
-
-// One palette entry: a press (↓) / release (↑) pair for a single input. Each is
-// drag-and-droppable into the builder's current-step zone, and click-to-add as a
-// fallback. The edge arrow distinguishes down from up.
-function VrPaletteRow({ input, onAdd }: { input: string; onAdd: (a: VrAction) => void }) {
-  const p = parseToken(input);
-  const dragHandlers = (edge: VrEdge) => ({
-    draggable: true,
-    onDragStart: (e: ReactDragEvent) => {
-      e.dataTransfer.setData("text/plain", JSON.stringify({ input, edge }));
-      e.dataTransfer.effectAllowed = "copy";
-    },
-  });
-  const btn =
-    "rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-xs hover:bg-white/[0.09] active:scale-95 cursor-grab transition";
-  return (
-    <div className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-2 py-1">
-      <span className="truncate text-xs text-muted">{p?.key ?? input}</span>
-      <span className="flex shrink-0 items-center gap-1">
-        <button type="button" className={btn} title="Press (down)" onClick={() => onAdd({ input, edge: "down" })} {...dragHandlers("down")}>
-          ↓
-        </button>
-        <button type="button" className={btn} title="Release (up)" onClick={() => onAdd({ input, edge: "up" })} {...dragHandlers("up")}>
-          ↑
-        </button>
-      </span>
-    </div>
-  );
-}
-
-// Controller-bind editor — a full-screen drag-flow builder. Palette of all 32
-// actions (16 inputs × press/release) at the top; drag (or click) them into the
-// builder's "current step" group. In Sequence mode "Add as next step" commits a
-// group and starts the next, building an ordered combo; Simultaneous mode is a
-// single group held together. A live test area shows progress as you physically
-// perform the bind. Persists the serialized VrBind via onConfirm (see
-// lib/vr-bind.ts).
-function VrBindPicker({
-  initial,
-  initialHolds = null,
-  vrConnected,
-  profile = "index",
-  onCancel,
-  onConfirm,
-}: {
-  initial: string | null;
-  // Device-local per-action min-holds aligned to `initial`'s steps (or null).
-  initialHolds?: number[][] | null;
-  vrConnected: boolean;
-  profile?: VrProfile;
-  onCancel: () => void;
-  onConfirm: (serialized: string, holds: number[][]) => void;
-}) {
-  // Seed the builder from any existing bind: earlier steps become committed,
-  // the last step stays editable as the "current" group. Stored min-holds (a
-  // runtime-only field) are re-attached so re-opening the editor preserves them.
-  const seedBase = initial ? parseVrBind(initial) : null;
-  const seed = seedBase ? applyHolds(seedBase, initialHolds) : null;
-  const [mode, setMode] = useState<VrBindMode>(seed?.mode ?? "simul");
-  const [steps, setSteps] = useState<VrStep[]>(seed ? seed.steps.slice(0, -1) : []);
-  const [current, setCurrent] = useState<VrStep>(seed ? seed.steps[seed.steps.length - 1] : []);
-  const [dragOver, setDragOver] = useState(false);
-
-  const allSteps: VrStep[] = [...steps, ...(current.length ? [current] : [])];
-  const totalActions = allSteps.reduce((n, s) => n + s.length, 0);
-  const canSave = totalActions > 0;
-  const bind: VrBind = { mode, steps: allSteps };
-  const previewKey = canSave ? serializeVrBind(bind) : "";
-  // serializeVrBind drops holdMs, so track the hold matrix separately to keep the
-  // live preview's gate in sync as holds change.
-  const holdsKey = canSave ? JSON.stringify(bindHolds(bind)) : "";
-
-  // --- builder ops ---
-  const addToCurrent = (a: VrAction) =>
-    setCurrent((prev) => {
-      if (prev.some((x) => x.input === a.input && x.edge === a.edge)) return prev;
-      if (prev.length >= MAX_ACTIONS_PER_STEP) return prev;
-      return [...prev, a];
-    });
-  const removeCurrent = (i: number) => setCurrent((c) => c.filter((_, idx) => idx !== i));
-  const removeFromStep = (si: number, ai: number) =>
-    setSteps((s) => s.map((st, idx) => (idx === si ? st.filter((_, j) => j !== ai) : st)).filter((st) => st.length));
-  // Set/clear a down-action's min-hold (ms). `si` indexes allSteps: committed
-  // steps first, then the editable current group.
-  const withHold = (a: VrAction, ms: number): VrAction =>
-    ms > 0 ? { input: a.input, edge: a.edge, holdMs: ms } : { input: a.input, edge: a.edge };
-  const setHold = (si: number, ai: number, ms: number) => {
-    if (si < steps.length) {
-      setSteps((s) => s.map((st, i) => (i === si ? st.map((a, j) => (j === ai ? withHold(a, ms) : a)) : st)));
-    } else {
-      setCurrent((c) => c.map((a, j) => (j === ai ? withHold(a, ms) : a)));
-    }
-  };
-  const commitStep = () => {
-    if (!current.length || steps.length >= MAX_STEPS - 1) return;
-    setSteps((s) => [...s, current]);
-    setCurrent([]);
-  };
-  const clearAll = () => {
-    setSteps([]);
-    setCurrent([]);
-  };
-  const switchMode = (next: VrBindMode) => {
-    if (next === mode) return;
-    if (next === "simul") {
-      // Flatten every action into the single group (dedupe, cap respected).
-      const merged: VrStep = [];
-      for (const a of [...steps.flat(), ...current]) {
-        if (merged.length >= MAX_ACTIONS_PER_STEP) break;
-        if (!merged.some((x) => x.input === a.input && x.edge === a.edge)) merged.push(a);
-      }
-      setSteps([]);
-      setCurrent(merged);
-    }
-    setMode(next);
-  };
-
-  // --- live test/preview ---
-  const previewRef = useRef<VrBindPreview | null>(null);
-  if (!previewRef.current) previewRef.current = new VrBindPreview(bind);
-  const [progress, setProgress] = useState<VrPreviewProgress | null>(null);
-  const [fired, setFired] = useState(false);
-  const firedTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    const parsed = previewKey ? parseVrBind(previewKey) : null;
-    const b = parsed ? applyHolds(parsed, holdsKey ? (JSON.parse(holdsKey) as number[][]) : null) : null;
-    previewRef.current!.setBind(b ?? { mode: "simul", steps: [] });
-    setProgress(b ? previewRef.current!.snapshot() : null);
-  }, [previewKey, holdsKey]);
-
-  useEffect(() => {
-    function onVrInput(ev: Event) {
-      const d = (ev as CustomEvent<{ token: string; pressed: boolean }>).detail;
-      if (!d?.token) return;
-      const p = previewRef.current!.feed(d.token, d.pressed ? "down" : "up", performance.now());
-      setProgress(p);
-      if (p.justFired) {
-        setFired(true);
-        window.clearTimeout(firedTimer.current);
-        firedTimer.current = window.setTimeout(() => {
-          setFired(false);
-          setProgress(previewRef.current!.snapshot());
-        }, 900);
-      }
-    }
-    function onKey(ev: KeyboardEvent) {
-      if (ev.key === "Escape") onCancel();
-    }
-    window.addEventListener("soundboard:vrInput", onVrInput as EventListener);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("soundboard:vrInput", onVrInput as EventListener);
-      window.removeEventListener("keydown", onKey, true);
-      window.clearTimeout(firedTimer.current);
-    };
-  }, [onCancel]);
-
-  const onDropCurrent = (e: ReactDragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    try {
-      const a = JSON.parse(e.dataTransfer.getData("text/plain")) as VrAction;
-      if (a && typeof a.input === "string" && (a.edge === "down" || a.edge === "up")) addToCurrent(a);
-    } catch {
-      /* not one of our drags */
-    }
-  };
-
-  // Render a committed (read-only-ish) step group with per-action removal.
-  const StepGroup = ({ step, onRemoveAction }: { step: VrStep; onRemoveAction: (ai: number) => void }) => (
-    <div className="flex flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] p-1.5">
-      {step.map((a, ai) => (
-        <VrActionChip key={ai} a={a} onRemove={() => onRemoveAction(ai)} />
-      ))}
-    </div>
-  );
-
-  // Portal to <body>: the card ancestor uses backdrop-filter (.glass), which
-  // creates a containing block for position:fixed — without the portal the modal
-  // is trapped inside the card grid instead of covering the viewport.
-  if (typeof document === "undefined") return null;
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Controller bind editor"
-      onClick={onCancel}
-    >
-      <div
-        className="card w-full max-w-3xl max-h-[92vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header + mode toggle */}
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div>
-            <h2 className="text-lg font-bold tracking-tight flex items-center gap-2">
-              <Gamepad2 size={18} /> Controller bind
-            </h2>
-            <p className="text-xs text-muted mt-1">
-              Drag actions into the bar below (or click them).{" "}
-              {!vrConnected && "SteamVR isn’t detected — you can still build the bind now."}
-            </p>
-          </div>
-          <button type="button" className="btn-ghost !px-2" onClick={onCancel} aria-label="Close">
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 mb-4 text-xs">
-          {(["simul", "seq"] as VrBindMode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => switchMode(m)}
-              className={`rounded-md px-3 py-1 transition ${
-                mode === m ? "bg-accent/20 text-white" : "text-muted hover:text-white"
-              }`}
-            >
-              {m === "simul" ? "Simultaneous" : "Sequence"}
-            </button>
-          ))}
-          <span className="self-center px-2 text-[11px] text-muted/70">
-            {mode === "simul" ? "hold together" : "in order, step by step"}
-          </span>
-        </div>
-
-        {/* Palette */}
-        <div className="grid grid-cols-2 gap-3">
-          {vrInputsByHand(profile).map((group) => (
-            <div key={group.hand} className="flex flex-col gap-1">
-              <div className="px-0.5 text-[11px] font-medium text-muted">{group.label}</div>
-              {group.inputs.map((input) => (
-                <VrPaletteRow key={input} input={input} onAdd={addToCurrent} />
-              ))}
-            </div>
-          ))}
-        </div>
-
-        {/* Builder bar */}
-        <div className="mt-4">
-          <div className="mb-1 text-[10px] uppercase tracking-wide text-muted/70">Bind</div>
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/20 p-2">
-            {steps.map((step, si) => (
-              <div key={si} className="flex items-center gap-2">
-                <StepGroup step={step} onRemoveAction={(ai) => removeFromStep(si, ai)} />
-                <span className="text-muted/60">→</span>
-              </div>
-            ))}
-
-            {/* Current-step drop zone */}
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDropCurrent}
-              className={`flex min-h-[2.75rem] min-w-[10rem] flex-1 flex-wrap items-center gap-1 rounded-lg border-2 border-dashed p-1.5 transition ${
-                dragOver ? "border-accent/70 bg-accent/10" : "border-white/15 bg-white/[0.02]"
-              }`}
-            >
-              {current.length === 0 && (
-                <span className="px-1 text-xs text-muted/60">
-                  {steps.length ? "Drop the next step’s actions here" : "Drag or click actions to add them"}
-                </span>
-              )}
-              {current.map((a, i) => (
-                <VrActionChip key={i} a={a} onRemove={() => removeCurrent(i)} />
-              ))}
-            </div>
-
-            {mode === "seq" && (
-              <button
-                type="button"
-                className="btn-ghost text-xs whitespace-nowrap"
-                onClick={commitStep}
-                disabled={!current.length || steps.length >= MAX_STEPS - 1}
-                title="Commit this group and start the next step"
-              >
-                <Plus size={14} className="mr-1" /> Add as next step
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Per-action min-hold. Only down-edge actions can carry a hold — it
-            latches on release once the button has been held >= the duration. */}
-        {allSteps.some((step) => step.some((a) => a.edge === "down")) && (
-          <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
-            <div className="mb-1.5 text-[10px] uppercase tracking-wide text-muted/70">
-              Minimum hold (optional)
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {allSteps.flatMap((step, si) =>
-                step
-                  .map((a, ai) => ({ a, ai }))
-                  .filter(({ a }) => a.edge === "down")
-                  .map(({ a, ai }) => (
-                    <div key={`${si}-${ai}`} className="flex items-center justify-between gap-3">
-                      <span className="inline-flex items-center gap-1.5 text-xs text-muted min-w-0">
-                        {mode === "seq" && allSteps.length > 1 && (
-                          <span className="text-[10px] text-muted/60">Step {si + 1}</span>
-                        )}
-                        <span className="rounded bg-black/25 px-1.5 py-0.5 text-[11px] whitespace-nowrap">
-                          {formatVrAction(a)}
-                        </span>
-                      </span>
-                      <HoldControl ms={a.holdMs ?? 0} onChange={(ms) => setHold(si, ai, ms)} />
-                    </div>
-                  )),
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Live test / preview */}
-        <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-wide text-muted/70">Test it</span>
-            {fired ? (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
-                <Check size={13} /> Matched!
-              </span>
-            ) : (
-              <span className="text-[11px] text-muted/60">
-                {vrConnected ? "perform the bind to verify" : "connect SteamVR to test"}
-              </span>
-            )}
-          </div>
-          {progress && canSave ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {allSteps.map((step, si) => (
-                <div key={si} className="flex items-center gap-2">
-                  <div
-                    className={`flex flex-wrap items-center gap-1 rounded-lg border p-1.5 transition ${
-                      si === progress.stepIdx && !fired
-                        ? "border-accent/70 bg-accent/10"
-                        : "border-white/10 bg-white/[0.02]"
-                    }`}
-                  >
-                    {step.map((a, ai) => {
-                      const ok = progress.satisfied[si]?.[ai];
-                      return (
-                        <span
-                          key={ai}
-                          className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] leading-none whitespace-nowrap transition ${
-                            ok ? "bg-emerald-500/25 text-emerald-200" : "bg-black/25 text-muted"
-                          }`}
-                        >
-                          {formatVrAction(a)}
-                        </span>
-                      );
-                    })}
-                  </div>
-                  {si < allSteps.length - 1 && <span className="text-muted/60">→</span>}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <span className="text-xs text-muted/60">Add at least one action to build a bind.</span>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="mt-4 flex items-center justify-between">
-          <button type="button" className="btn-ghost text-xs" onClick={clearAll} disabled={!canSave}>
-            Clear
-          </button>
-          <div className="flex items-center gap-2">
-            <button type="button" className="btn-ghost text-sm" onClick={onCancel}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn-primary text-sm"
-              onClick={() => onConfirm(serializeVrBind(bind), bindHolds(bind))}
-              disabled={!canSave}
-            >
-              Save bind
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-// Per-action min-hold picker: presets + "Other…" → a custom seconds input
-// (capped below the step timeout). ms === 0 means no hold.
-function HoldControl({ ms, onChange }: { ms: number; onChange: (ms: number) => void }) {
-  const presetMs = HOLD_PRESETS_SEC.map((s) => Math.round(s * 1000));
-  const matchesPreset = ms > 0 && presetMs.includes(ms);
-  const [otherOpen, setOtherOpen] = useState(ms > 0 && !matchesPreset);
-  const value = otherOpen ? "other" : matchesPreset ? String(ms) : "0";
-  const options: SelectOption[] = [
-    { value: "0", label: "No hold" },
-    ...HOLD_PRESETS_SEC.map((s) => ({ value: String(Math.round(s * 1000)), label: `${s}s` })),
-    { value: "other", label: "Other…" },
-  ];
-  return (
-    <div className="flex items-center gap-1.5 shrink-0">
-      <Select
-        value={value}
-        onChange={(v) => {
-          if (v === "other") {
-            setOtherOpen(true);
-          } else {
-            setOtherOpen(false);
-            onChange(Number(v));
-          }
-        }}
-        options={options}
-        className="!py-1 text-xs"
-        aria-label="Minimum hold duration"
-      />
-      {otherOpen && (
-        <div className="flex items-center gap-1">
-          <input
-            type="number"
-            min={0.1}
-            max={MAX_HOLD_MS / 1000}
-            step={0.1}
-            value={ms > 0 ? ms / 1000 : ""}
-            onChange={(e) => {
-              const sec = Number(e.target.value);
-              if (!Number.isFinite(sec) || sec <= 0) return onChange(0);
-              onChange(Math.min(Math.round(sec * 1000), MAX_HOLD_MS));
-            }}
-            className="input !py-1 w-16 text-xs"
-            aria-label="Custom hold seconds"
-          />
-          <span className="text-[10px] text-muted/60">s</span>
-        </div>
-      )}
-    </div>
   );
 }
 

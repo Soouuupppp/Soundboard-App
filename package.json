@@ -1,7 +1,7 @@
 {
   "name": "soundboard-monorepo",
   "private": true,
-  "version": "1.3.3",
+  "version": "1.4.0",
   "description": "Discord-authenticated soundboard with web dashboard, public sharing, a virtual-mic mixer, and an Electron wrapper for OS-level global hotkeys.",
   "author": {
     "name": "Soouuupppp",
@@ -18,10 +18,11 @@
   },
   "license": "UNLICENSED",
   "scripts": {
-    "dev": "pnpm --filter web dev",
-    "build": "pnpm --filter web build",
-    "db:migrate": "pnpm --filter web db:migrate",
-    "electron": "pnpm --filter electron start",
+    "dev": "node scripts/docker-rebuild.mjs --detach",
+    "dev:web": "pnpm --filter soundboard-web dev",
+    "build": "pnpm --filter soundboard-web build",
+    "db:migrate": "pnpm --filter soundboard-web db:migrate",
+    "electron": "pnpm --filter soundboard-electron start",
     "up": "node scripts/docker-rebuild.mjs",
     "deploy": "node scripts/docker-rebuild.mjs --env-file /home/soundboard/.env --detach",
     "rollback": "node scripts/docker-rollback.mjs --env-file /home/soundboard/.env --detach",

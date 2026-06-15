@@ -35,7 +35,14 @@ function buildCsp(nonce: string): string {
     "font-src 'self' data:",
     // blob: lets the client-side clip editor (wavesurfer) fetch the in-memory
     // object URL it decodes the waveform from; the app creates those blobs itself.
-    "connect-src 'self' blob:",
+    // The Hugging Face hosts are the AI voice-changer path (1.4.0): the browser
+    // talks DIRECTLY to the r3gm/rvc_zero Space (via @gradio/client) so each user
+    // spends their own per-IP ZeroGPU quota and we hold no HF token — a deliberate
+    // privacy tradeoff (mic audio leaves the machine), disclosed in the UI. The
+    // Space resolves to r3gm-rvc-zero.hf.space; uploads/SSE/file all hit *.hf.space,
+    // and the model/index files resolve from huggingface.co. wss covers the Gradio
+    // event stream. Converted audio returns as a blob: (already in media-src).
+    "connect-src 'self' blob: https://*.hf.space wss://*.hf.space https://huggingface.co",
     "frame-ancestors 'none'",
     "form-action 'self'",
     "base-uri 'self'",
