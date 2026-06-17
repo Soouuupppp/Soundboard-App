@@ -283,14 +283,18 @@ FROM "user" u
 WHERE NOT EXISTS (SELECT 1 FROM "profile" p WHERE p."userId" = u."id");
 
 -- Migration: copy each ON-BOARD boardEntry's placement (onBoard/position/label/
--- keybind/controllerBind) into the owner's Default profile. Idempotent: only
--- inserts when no placement row exists yet for (defaultProfile, sound).
+-- keybind/controllerBind) into the owner's Default profile. Idempotent via
+-- ON CONFLICT. boardEntry has no UNIQUE(userId, soundId), so a user can hold
+-- duplicate on-board rows for the same sound (legacy data / racey adds); those
+-- would emit duplicate (profileId, soundId) pairs in this single INSERT and trip
+-- the unique constraint. DISTINCT ON collapses them to one row per
+-- (profile, sound) — keeping the lowest position, then earliest — and
+-- ON CONFLICT DO NOTHING keeps re-runs (and any residual dupes) safe.
 INSERT INTO "profilePlacement" ("profileId", "soundId", "onBoard", "position", "label", "keybind", "controllerBind")
-SELECT p."id", be."soundId", be."onBoard", be."position", be."label", be."keybind", be."controllerBind"
+SELECT DISTINCT ON (p."id", be."soundId")
+  p."id", be."soundId", be."onBoard", be."position", be."label", be."keybind", be."controllerBind"
 FROM "boardEntry" be
 JOIN "profile" p ON p."userId" = be."userId" AND p."isDefault" = TRUE
 WHERE be."onBoard" = TRUE
-  AND NOT EXISTS (
-    SELECT 1 FROM "profilePlacement" pp
-    WHERE pp."profileId" = p."id" AND pp."soundId" = be."soundId"
-  );
+ORDER BY p."id", be."soundId", be."position" ASC, be."createdAt" ASC
+ON CONFLICT ("profileId", "soundId") DO NOTHING;
