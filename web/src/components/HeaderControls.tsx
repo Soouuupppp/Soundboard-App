@@ -1,24 +1,29 @@
 "use client";
 
-// Header audio controls (1.4.0 layout refactor): the global output level meter
-// plus three popover buttons — Settings · Voice changer · Sound Effects — that
-// replace the old inline Control Panel card. They live in the header (app/
-// layout.tsx, inside AudioProvider) and consume the global audio engine.
+// Header audio controls. In the 1.4.1 navbar refactor these split across the
+// header's three zones: the global output meter + Voice changer + Sound Effects
+// popovers live CENTER (`CenterControls`), while the Settings cog moved to the
+// RIGHT cluster next to the user + profile dropdowns (`SettingsControl`). Both are
+// CONTROLLED by a single `panel` state owned by <AppHeader>, so the three popovers
+// still enforce one-open-at-a-time even though they no longer sit together.
 //
-// One-open-at-a-time is enforced by the single `panel` state. The popover BODIES
-// are filled by later 1.4.0 tasks: Settings (task 4), Voice changer (task 5),
-// Sound Effects (task 7). Until then they show a short placeholder.
+// (Pre-1.4.1 this was one self-contained <HeaderControls> in the left zone.)
 
-import { useState } from "react";
 import { Settings, Wand2, SlidersHorizontal } from "lucide-react";
 import { useAudio } from "@/components/AudioProvider";
 import { Popover } from "@/components/Popover";
 import { LevelMeter } from "@/components/LevelMeter";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { VoiceChangerPanel } from "@/components/VoiceChangerPanel";
-import { SoundEffectsPickerModal } from "@/components/SoundEffectsModal";
+import { SoundEffectsPickerPanel } from "@/components/SoundEffectsModal";
 
-type Panel = "settings" | "voice" | null;
+export type Panel = "settings" | "voice" | "fx" | null;
+
+type ControlsProps = {
+  panel: Panel;
+  toggle: (p: Exclude<Panel, null>) => void;
+  close: () => void;
+};
 
 function HeaderButton({
   active,
@@ -50,33 +55,22 @@ function HeaderButton({
   );
 }
 
-export function HeaderControls() {
+// CENTER zone: output meter → Voice changer → Sound Effects. The voice + fx
+// popovers need the always-on engine (AudioContext setSinkId); without it only
+// Settings (device + master volume) is meaningful, so they're hidden here.
+export function CenterControls({ panel, toggle, close }: ControlsProps) {
   const audio = useAudio();
-  const [panel, setPanel] = useState<Panel>(null);
-  const toggle = (p: Exclude<Panel, null>) => setPanel((cur) => (cur === p ? null : p));
-  const close = () => setPanel(null);
-  // Sound Effects is a full-screen modal (clip picker), not a popover.
-  const [fxOpen, setFxOpen] = useState(false);
-
-  // The voice changer + sound effects need the always-on engine (AudioContext
-  // setSinkId). Without it, only Settings (device + master volume) is meaningful.
   const engine = audio.supportsSinkId;
 
   return (
     <div className="flex items-center gap-2">
-      <Popover
-        open={panel === "settings"}
-        onClose={close}
-        align="left"
-        panelClassName="w-[21rem] max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto p-3"
-        trigger={
-          <HeaderButton active={panel === "settings"} onClick={() => toggle("settings")} title="Settings">
-            <Settings size={16} />
-          </HeaderButton>
-        }
-      >
-        <SettingsPanel audio={audio} />
-      </Popover>
+      {audio.supportsOutputMeter && (
+        <LevelMeter
+          getPeak={audio.getOutputPeak}
+          active={audio.anyPlaying || audio.virtualMicMode}
+          className="h-1.5 w-16 md:w-28 mr-1"
+        />
+      )}
 
       {engine && (
         <Popover
@@ -95,25 +89,40 @@ export function HeaderControls() {
       )}
 
       {engine && (
-        <HeaderButton
-          active={fxOpen}
-          onClick={() => { setPanel(null); setFxOpen(true); }}
-          title="Sound Effects"
+        <Popover
+          open={panel === "fx"}
+          onClose={close}
+          align="left"
+          panelClassName="w-[26rem] max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto p-3"
+          trigger={
+            <HeaderButton active={panel === "fx"} onClick={() => toggle("fx")} title="Sound Effects">
+              <SlidersHorizontal size={16} />
+            </HeaderButton>
+          }
         >
-          <SlidersHorizontal size={16} />
-        </HeaderButton>
+          <SoundEffectsPickerPanel audio={audio} onClose={close} />
+        </Popover>
       )}
-
-      {/* Global output meter, last — animates only when something is playing / mixing. */}
-      {audio.supportsOutputMeter && (
-        <LevelMeter
-          getPeak={audio.getOutputPeak}
-          active={audio.anyPlaying || audio.virtualMicMode}
-          className="hidden sm:block h-1.5 w-16 md:w-28 ml-1"
-        />
-      )}
-
-      {fxOpen && <SoundEffectsPickerModal audio={audio} onClose={() => setFxOpen(false)} />}
     </div>
+  );
+}
+
+// RIGHT cluster: the Settings cog. Anchored right so the panel doesn't overflow.
+export function SettingsControl({ panel, toggle, close }: ControlsProps) {
+  const audio = useAudio();
+  return (
+    <Popover
+      open={panel === "settings"}
+      onClose={close}
+      align="right"
+      panelClassName="w-[21rem] max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto p-3"
+      trigger={
+        <HeaderButton active={panel === "settings"} onClick={() => toggle("settings")} title="Settings">
+          <Settings size={16} />
+        </HeaderButton>
+      }
+    >
+      <SettingsPanel audio={audio} />
+    </Popover>
   );
 }

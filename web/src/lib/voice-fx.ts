@@ -7,10 +7,14 @@
 //
 //   source.out ─► fx₁.input … fx₁.output ─► fx₂.input … ─► chain tail ─► (cable, monitor)
 //
-// All effects are NATIVE Web Audio (OscillatorNode/DelayNode/ConvolverNode/
-// WaveShaperNode/BiquadFilterNode/GainNode) except the bitcrusher, which is our
-// own AudioWorklet (public/worklets/bitcrusher-processor.js). Pitch/formant shift
-// are intentionally NOT here (deferred — no external DSP library this version).
+// Most effects are NATIVE Web Audio (OscillatorNode/DelayNode/ConvolverNode/
+// WaveShaperNode/BiquadFilterNode/DynamicsCompressorNode/GainNode). The worklet-
+// backed ones are our own AudioWorklets served same-origin from public/worklets/:
+// the bitcrusher, the noise gate, and a DIY pitch shifter (see WORKLET_MODULES).
+// 1.4.1 added chorus/flanger/phaser/vibrato (modulated DelayNode + LFO), compressor
+// (DynamicsCompressorNode), megaphone (band-pass → waveshaper), a noisegate
+// (envelope-follower gate worklet), and pitch (granular delay-line worklet, PITCH
+// ONLY — formant is re-deferred; SoundTouchJS couldn't be vendored here).
 //
 // An effect is described by an EffectConfig { kind, params }. createEffect builds
 // the live subgraph; update(params) reconciles params without rebuilding (so the
@@ -26,7 +30,19 @@ export type EffectKind =
   | "tremolo"
   | "lowpass"
   | "highpass"
-  | "bitcrusher";
+  | "bitcrusher"
+  // 1.4.1: modulation + tone + dynamics. All native nodes (modulated DelayNode,
+  // cascaded all-pass biquads, DynamicsCompressorNode) — no worklet, no DSP lib.
+  | "chorus"
+  | "flanger"
+  | "phaser"
+  | "vibrato"
+  | "compressor"
+  | "megaphone"
+  // 1.4.1 (appended): worklet-backed. noisegate = envelope-follower gate; pitch =
+  // DIY granular delay-line shifter (pitch only — formant re-deferred).
+  | "noisegate"
+  | "pitch";
 
 export type EffectParams = Record<string, number>;
 
@@ -127,6 +143,79 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: "reduction", label: "Crush", min: 1, max: 50, step: 1, default: 8 },
     ],
   },
+  // ── 1.4.1 additions ──
+  {
+    kind: "chorus",
+    label: "Chorus",
+    params: [
+      { key: "rate", label: "Rate", min: 0.1, max: 8, step: 0.05, default: 1.5, unit: "Hz" },
+      { key: "depth", label: "Depth", min: 0, max: 10, step: 0.1, default: 3, unit: "ms" },
+      { key: "mix", label: "Mix", min: 0, max: 1, step: 0.01, default: 0.5 },
+    ],
+  },
+  {
+    kind: "flanger",
+    label: "Flanger",
+    params: [
+      { key: "rate", label: "Rate", min: 0.05, max: 8, step: 0.05, default: 0.5, unit: "Hz" },
+      { key: "depth", label: "Depth", min: 0, max: 5, step: 0.1, default: 2, unit: "ms" },
+      { key: "feedback", label: "Feedback", min: 0, max: 0.9, step: 0.01, default: 0.5 },
+      { key: "mix", label: "Mix", min: 0, max: 1, step: 0.01, default: 0.5 },
+    ],
+  },
+  {
+    kind: "phaser",
+    label: "Phaser",
+    params: [
+      { key: "rate", label: "Rate", min: 0.05, max: 8, step: 0.05, default: 0.5, unit: "Hz" },
+      { key: "depth", label: "Sweep", min: 100, max: 2000, step: 10, default: 800, unit: "Hz" },
+      { key: "mix", label: "Mix", min: 0, max: 1, step: 0.01, default: 0.6 },
+    ],
+  },
+  {
+    kind: "vibrato",
+    label: "Vibrato",
+    params: [
+      { key: "rate", label: "Rate", min: 0.1, max: 12, step: 0.1, default: 5, unit: "Hz" },
+      { key: "depth", label: "Depth", min: 0, max: 8, step: 0.1, default: 3, unit: "ms" },
+    ],
+  },
+  {
+    kind: "compressor",
+    label: "Compressor",
+    params: [
+      { key: "threshold", label: "Threshold", min: -60, max: 0, step: 1, default: -24, unit: "dB" },
+      { key: "ratio", label: "Ratio", min: 1, max: 20, step: 0.5, default: 4 },
+      { key: "attack", label: "Attack", min: 0, max: 0.5, step: 0.001, default: 0.003, unit: "s" },
+      { key: "release", label: "Release", min: 0.01, max: 1, step: 0.01, default: 0.25, unit: "s" },
+    ],
+  },
+  {
+    kind: "megaphone",
+    label: "Megaphone",
+    params: [
+      { key: "freq", label: "Center", min: 500, max: 3500, step: 10, default: 1600, unit: "Hz" },
+      { key: "drive", label: "Drive", min: 1, max: 50, step: 1, default: 15 },
+    ],
+  },
+  // ── 1.4.1 appended: worklet-backed ──
+  {
+    kind: "noisegate",
+    label: "Noise gate",
+    params: [
+      { key: "threshold", label: "Threshold", min: -80, max: 0, step: 1, default: -45, unit: "dB" },
+      { key: "attack", label: "Attack", min: 0, max: 0.1, step: 0.001, default: 0.005, unit: "s" },
+      { key: "hold", label: "Hold", min: 0, max: 0.5, step: 0.01, default: 0.05, unit: "s" },
+      { key: "release", label: "Release", min: 0.01, max: 1, step: 0.01, default: 0.1, unit: "s" },
+      { key: "range", label: "Range", min: -100, max: 0, step: 1, default: -60, unit: "dB" },
+    ],
+  },
+  {
+    // Pitch only (formant re-deferred — see WORKLET_MODULES / pitch-processor.js).
+    kind: "pitch",
+    label: "Pitch shift",
+    params: [{ key: "pitch", label: "Pitch", min: -12, max: 12, step: 1, default: 0, unit: "st" }],
+  },
 ];
 
 const EFFECT_DEF_BY_KIND = new Map(EFFECT_DEFS.map((d) => [d.kind, d]));
@@ -154,30 +243,62 @@ function num(params: EffectParams, key: string, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
-// ── Bitcrusher worklet registration (lazy, once per context) ───────────────
-const BITCRUSHER_URL = "/worklets/bitcrusher-processor.js";
-// Track which contexts have the module so addModule runs at most once each.
-const registered = new WeakSet<BaseAudioContext>();
-let pending: WeakMap<BaseAudioContext, Promise<void>> | null = null;
+// ── Worklet-backed effects: lazy module registration (once per ctx+url) ────────
+// Registry of kind → worklet module URL(s), served same-origin from /worklets/
+// (our CSP is script-src 'self', so same-origin modules need no CSP change). Add a
+// worklet-backed effect by listing its module here + a createEffect case with the
+// optimistic-build/passthrough-fallback pattern; preload generalises automatically.
+const WORKLET_MODULES: Partial<Record<EffectKind, readonly string[]>> = {
+  bitcrusher: ["/worklets/bitcrusher-processor.js"],
+  noisegate: ["/worklets/noisegate-processor.js"],
+  pitch: ["/worklets/pitch-processor.js"],
+};
 
-export function ensureBitcrusherModule(ctx: BaseAudioContext): Promise<void> {
-  if (registered.has(ctx)) return Promise.resolve();
-  if (!pending) pending = new WeakMap();
-  const existing = pending.get(ctx);
+// Per-context tracking so a given module URL is addModule'd at most once each.
+const loaded = new WeakMap<BaseAudioContext, Set<string>>();
+const loading = new WeakMap<BaseAudioContext, Map<string, Promise<void>>>();
+
+function ensureModule(ctx: BaseAudioContext, url: string): Promise<void> {
+  if (loaded.get(ctx)?.has(url)) return Promise.resolve();
+  let inflight = loading.get(ctx);
+  if (!inflight) { inflight = new Map(); loading.set(ctx, inflight); }
+  const existing = inflight.get(url);
   if (existing) return existing;
   const p = ctx.audioWorklet
-    .addModule(BITCRUSHER_URL)
+    .addModule(url)
     .then(() => {
-      registered.add(ctx);
+      let set = loaded.get(ctx);
+      if (!set) { set = new Set(); loaded.set(ctx, set); }
+      set.add(url);
     })
     .catch((e) => {
-      // Leave it unregistered so a later effect can retry; the factory falls
-      // back to a passthrough if the node can't be constructed.
-      console.warn("[voice-fx] bitcrusher worklet failed to load", (e as Error)?.message);
+      // Allow a later retry; the factory falls back to a passthrough meanwhile.
+      inflight!.delete(url);
+      console.warn("[voice-fx] worklet failed to load", url, (e as Error)?.message);
       throw e;
     });
-  pending.set(ctx, p);
+  inflight.set(url, p);
   return p;
+}
+
+// Distinct worklet module URLs a chain needs.
+function workletUrls(configs: EffectConfig[]): string[] {
+  const urls = new Set<string>();
+  for (const c of configs) for (const u of WORKLET_MODULES[c.kind] ?? []) urls.add(u);
+  return [...urls];
+}
+
+// True if any effect in the chain is worklet-backed (so the caller preloads).
+export function chainNeedsWorklet(configs: EffectConfig[]): boolean {
+  return configs.some((c) => !!WORKLET_MODULES[c.kind]);
+}
+
+// Load every worklet module a chain needs (lazy, deduped). Resolves once all are
+// registered; rejects if any fails (the factory still degrades to passthrough).
+export function ensureWorkletModules(ctx: BaseAudioContext, configs: EffectConfig[]): Promise<void> {
+  const urls = workletUrls(configs);
+  if (urls.length === 0) return Promise.resolve();
+  return Promise.all(urls.map((u) => ensureModule(ctx, u))).then(() => {});
 }
 
 // Build a synthetic reverb impulse response: white noise with exponential decay,
@@ -402,8 +523,8 @@ export function createEffect(ctx: AudioContext, cfg: EffectConfig): Effect {
     case "bitcrusher": {
       // The worklet may not be registered yet (addModule is async). Build the
       // node optimistically; if construction throws, fall back to a passthrough
-      // gain so the chain never breaks. ensureBitcrusherModule should be awaited
-      // by the caller before (re)building a chain containing a bitcrusher.
+      // gain so the chain never breaks. ensureWorkletModules should be awaited
+      // by the caller before (re)building a chain with any worklet-backed effect.
       try {
         const node = new AudioWorkletNode(ctx, "bitcrusher-processor");
         const bits = node.parameters.get("bits");
@@ -426,15 +547,269 @@ export function createEffect(ctx: AudioContext, cfg: EffectConfig): Effect {
       }
     }
 
+    case "chorus": {
+      // A single short modulated delay (≈25ms base) mixed with the dry signal.
+      // The LFO is summed onto the delayTime AudioParam so it wobbles the tap.
+      const input = ctx.createGain();
+      const output = ctx.createGain();
+      const delay = ctx.createDelay(0.1);
+      delay.delayTime.value = 0.025;
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = num(p, "rate", 1.5);
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = num(p, "depth", 3) / 1000; // ms → s of swing
+      lfo.connect(lfoGain).connect(delay.delayTime);
+      const wet = ctx.createGain();
+      wet.gain.value = num(p, "mix", 0.5);
+      const dry = ctx.createGain();
+      dry.gain.value = 1 - num(p, "mix", 0.5);
+      input.connect(dry).connect(output);
+      input.connect(delay).connect(wet).connect(output);
+      lfo.start();
+      return {
+        input,
+        output,
+        update: (np) => {
+          lfo.frequency.value = num(np, "rate", 1.5);
+          lfoGain.gain.value = num(np, "depth", 3) / 1000;
+          const mix = num(np, "mix", 0.5);
+          wet.gain.value = mix;
+          dry.gain.value = 1 - mix;
+        },
+        dispose: () => {
+          try { lfo.stop(); } catch { /* already stopped */ }
+          lfo.disconnect();
+          lfoGain.disconnect();
+          delay.disconnect();
+          wet.disconnect();
+          dry.disconnect();
+          input.disconnect();
+          output.disconnect();
+        },
+      };
+    }
+
+    case "flanger": {
+      // Like chorus but a much shorter base delay (≈2ms) with a feedback loop,
+      // giving the swept comb-filter "jet" sound.
+      const input = ctx.createGain();
+      const output = ctx.createGain();
+      const delay = ctx.createDelay(0.05);
+      delay.delayTime.value = 0.002;
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = num(p, "rate", 0.5);
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = num(p, "depth", 2) / 1000;
+      lfo.connect(lfoGain).connect(delay.delayTime);
+      const feedback = ctx.createGain();
+      feedback.gain.value = num(p, "feedback", 0.5);
+      const wet = ctx.createGain();
+      wet.gain.value = num(p, "mix", 0.5);
+      const dry = ctx.createGain();
+      dry.gain.value = 1 - num(p, "mix", 0.5);
+      input.connect(dry).connect(output);
+      input.connect(delay);
+      delay.connect(feedback).connect(delay);
+      delay.connect(wet).connect(output);
+      lfo.start();
+      return {
+        input,
+        output,
+        update: (np) => {
+          lfo.frequency.value = num(np, "rate", 0.5);
+          lfoGain.gain.value = num(np, "depth", 2) / 1000;
+          feedback.gain.value = num(np, "feedback", 0.5);
+          const mix = num(np, "mix", 0.5);
+          wet.gain.value = mix;
+          dry.gain.value = 1 - mix;
+        },
+        dispose: () => {
+          try { lfo.stop(); } catch { /* already stopped */ }
+          lfo.disconnect();
+          lfoGain.disconnect();
+          delay.disconnect();
+          feedback.disconnect();
+          wet.disconnect();
+          dry.disconnect();
+          input.disconnect();
+          output.disconnect();
+        },
+      };
+    }
+
+    case "phaser": {
+      // Four cascaded all-pass biquads whose frequencies are swept by one LFO,
+      // mixed back with the dry signal to create moving notches.
+      const input = ctx.createGain();
+      const output = ctx.createGain();
+      const STAGES = 4;
+      const filters: BiquadFilterNode[] = [];
+      let node: AudioNode = input;
+      for (let i = 0; i < STAGES; i++) {
+        const f = ctx.createBiquadFilter();
+        f.type = "allpass";
+        f.frequency.value = 1000; // sweep centre
+        node.connect(f);
+        node = f;
+        filters.push(f);
+      }
+      const wet = ctx.createGain();
+      wet.gain.value = num(p, "mix", 0.6);
+      const dry = ctx.createGain();
+      dry.gain.value = 1 - num(p, "mix", 0.6);
+      node.connect(wet).connect(output);
+      input.connect(dry).connect(output);
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = num(p, "rate", 0.5);
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = num(p, "depth", 800); // ± Hz around 1000
+      lfo.connect(lfoGain);
+      for (const f of filters) lfoGain.connect(f.frequency);
+      lfo.start();
+      return {
+        input,
+        output,
+        update: (np) => {
+          lfo.frequency.value = num(np, "rate", 0.5);
+          lfoGain.gain.value = num(np, "depth", 800);
+          const mix = num(np, "mix", 0.6);
+          wet.gain.value = mix;
+          dry.gain.value = 1 - mix;
+        },
+        dispose: () => {
+          try { lfo.stop(); } catch { /* already stopped */ }
+          lfo.disconnect();
+          lfoGain.disconnect();
+          for (const f of filters) f.disconnect();
+          wet.disconnect();
+          dry.disconnect();
+          input.disconnect();
+          output.disconnect();
+        },
+      };
+    }
+
+    case "vibrato": {
+      // Fully-wet modulated delay → periodic pitch wobble (no dry path).
+      const input = ctx.createGain();
+      const delay = ctx.createDelay(0.05);
+      delay.delayTime.value = 0.005;
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = num(p, "rate", 5);
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = num(p, "depth", 3) / 1000;
+      lfo.connect(lfoGain).connect(delay.delayTime);
+      input.connect(delay);
+      lfo.start();
+      return {
+        input,
+        output: delay,
+        update: (np) => {
+          lfo.frequency.value = num(np, "rate", 5);
+          lfoGain.gain.value = num(np, "depth", 3) / 1000;
+        },
+        dispose: () => {
+          try { lfo.stop(); } catch { /* already stopped */ }
+          lfo.disconnect();
+          lfoGain.disconnect();
+          delay.disconnect();
+          input.disconnect();
+        },
+      };
+    }
+
+    case "compressor": {
+      // Native dynamics compressor — evens out level (useful before the cable).
+      const comp = ctx.createDynamicsCompressor();
+      comp.knee.value = 24;
+      comp.threshold.value = num(p, "threshold", -24);
+      comp.ratio.value = num(p, "ratio", 4);
+      comp.attack.value = num(p, "attack", 0.003);
+      comp.release.value = num(p, "release", 0.25);
+      return {
+        input: comp,
+        output: comp,
+        update: (np) => {
+          comp.threshold.value = num(np, "threshold", -24);
+          comp.ratio.value = num(np, "ratio", 4);
+          comp.attack.value = num(np, "attack", 0.003);
+          comp.release.value = num(np, "release", 0.25);
+        },
+        dispose: () => comp.disconnect(),
+      };
+    }
+
+    case "megaphone": {
+      // Narrow band-pass into a tanh waveshaper — a gritty bullhorn/PA timbre.
+      const input = ctx.createGain();
+      const band = ctx.createBiquadFilter();
+      band.type = "bandpass";
+      band.frequency.value = num(p, "freq", 1600);
+      band.Q.value = 1.2;
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = makeDistortionCurve(num(p, "drive", 15));
+      shaper.oversample = "2x";
+      input.connect(band).connect(shaper);
+      return {
+        input,
+        output: shaper,
+        update: (np) => {
+          band.frequency.value = num(np, "freq", 1600);
+          shaper.curve = makeDistortionCurve(num(np, "drive", 15));
+        },
+        dispose: () => {
+          input.disconnect();
+          band.disconnect();
+          shaper.disconnect();
+        },
+      };
+    }
+
+    case "noisegate": {
+      // Worklet-backed envelope-follower gate. Built optimistically; if the module
+      // isn't registered yet, construction throws → passthrough until preloaded.
+      try {
+        const node = new AudioWorkletNode(ctx, "noisegate-processor");
+        const apply = (np: EffectParams) => {
+          const set = (name: string, key: string, fb: number) => {
+            const ap = node.parameters.get(name);
+            if (ap) ap.value = num(np, key, fb);
+          };
+          set("threshold", "threshold", -45);
+          set("attack", "attack", 0.005);
+          set("hold", "hold", 0.05);
+          set("release", "release", 0.1);
+          set("range", "range", -60);
+        };
+        apply(p);
+        return { input: node, output: node, update: apply, dispose: () => node.disconnect() };
+      } catch {
+        const pass = ctx.createGain();
+        return { input: pass, output: pass, update: () => {}, dispose: () => pass.disconnect() };
+      }
+    }
+
+    case "pitch": {
+      // Worklet-backed DIY granular pitch shifter (pitch only). Same optimistic
+      // build + passthrough fallback as the other worklet effects.
+      try {
+        const node = new AudioWorkletNode(ctx, "pitch-processor");
+        const apply = (np: EffectParams) => {
+          const ap = node.parameters.get("pitch");
+          if (ap) ap.value = num(np, "pitch", 0);
+        };
+        apply(p);
+        return { input: node, output: node, update: apply, dispose: () => node.disconnect() };
+      } catch {
+        const pass = ctx.createGain();
+        return { input: pass, output: pass, update: () => {}, dispose: () => pass.disconnect() };
+      }
+    }
+
     default: {
       // Exhaustiveness guard + safe passthrough for an unknown kind.
       const pass = ctx.createGain();
       return { input: pass, output: pass, update: () => {}, dispose: () => pass.disconnect() };
     }
   }
-}
-
-// True if a chain contains a bitcrusher (so the caller can preload the worklet).
-export function chainNeedsBitcrusher(effects: EffectConfig[]): boolean {
-  return effects.some((e) => e.kind === "bitcrusher");
 }

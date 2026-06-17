@@ -7,10 +7,13 @@
 // shared device-local preset list (lib/fx-presets.ts).
 
 import { useState } from "react";
-import { Save, Check, X } from "lucide-react";
+import { Save, Check, X, Share2, Upload } from "lucide-react";
 import { type EffectConfig } from "@/lib/voice-fx";
 import { useFxPresets, addPreset, deletePreset, cloneEffects } from "@/lib/fx-presets";
 import { Select } from "@/components/Select";
+import { SharedPresetsModal } from "@/components/SharedPresetsModal";
+import { publishSharedPreset } from "@/lib/shared-presets";
+import { useToast } from "@/components/Toast";
 
 export function FxPresetBar({
   effects,
@@ -19,10 +22,15 @@ export function FxPresetBar({
   effects: EffectConfig[];
   onApply: (effects: EffectConfig[]) => void;
 }) {
+  const toast = useToast();
   const presets = useFxPresets();
   const [selectedId, setSelectedId] = useState("");
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
+  // "publish" reuses the same inline name input as local save; mode tracks which.
+  const [mode, setMode] = useState<"local" | "shared">("local");
+  const [publishing, setPublishing] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
 
   const selected = presets.find((p) => p.id === selectedId) ?? null;
 
@@ -35,10 +43,25 @@ export function FxPresetBar({
     deletePreset(selected.id);
     setSelectedId("");
   };
-  const confirmSave = () => {
-    addPreset(name, effects);
+  const confirmSave = async () => {
+    if (mode === "local") {
+      addPreset(name, effects);
+      setName("");
+      setSaving(false);
+      return;
+    }
+    // Publish to the shared server library.
+    setPublishing(true);
+    const res = await publishSharedPreset(name, effects);
+    setPublishing(false);
+    if (!res.ok) return toast.fromResponse(res, "Couldn't publish preset.");
+    toast.success(`Published "${name.trim() || "Preset"}" to shared presets`);
     setName("");
     setSaving(false);
+  };
+  const beginSave = (m: "local" | "shared") => {
+    setMode(m);
+    setSaving(true);
   };
 
   return (
@@ -65,12 +88,12 @@ export function FxPresetBar({
           <input
             autoFocus
             className="input !py-1.5 text-xs flex-1"
-            placeholder="Preset name"
+            placeholder={mode === "shared" ? "Shared preset name" : "Preset name"}
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") confirmSave(); if (e.key === "Escape") { setSaving(false); setName(""); } }}
           />
-          <button type="button" className="btn-ghost text-xs !px-1.5 text-emerald-300" onClick={confirmSave} title="Save" aria-label="Save preset">
+          <button type="button" className="btn-ghost text-xs !px-1.5 text-emerald-300 disabled:opacity-40" onClick={confirmSave} disabled={publishing} title={mode === "shared" ? "Publish" : "Save"} aria-label="Confirm">
             <Check size={14} />
           </button>
           <button type="button" className="btn-ghost text-xs !px-1.5" onClick={() => { setSaving(false); setName(""); }} title="Cancel" aria-label="Cancel">
@@ -78,15 +101,38 @@ export function FxPresetBar({
           </button>
         </div>
       ) : (
-        <button
-          type="button"
-          className="btn-ghost text-xs self-start disabled:opacity-30"
-          onClick={() => setSaving(true)}
-          disabled={effects.length === 0}
-          title="Save the current chain as a preset"
-        >
-          <Save size={14} className="mr-1" /> Save as preset…
-        </button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            className="btn-ghost text-xs disabled:opacity-30"
+            onClick={() => beginSave("local")}
+            disabled={effects.length === 0}
+            title="Save the current chain as a local preset"
+          >
+            <Save size={14} className="mr-1" /> Save as preset…
+          </button>
+          <button
+            type="button"
+            className="btn-ghost text-xs disabled:opacity-30"
+            onClick={() => beginSave("shared")}
+            disabled={effects.length === 0}
+            title="Publish the current chain to the shared library"
+          >
+            <Upload size={14} className="mr-1" /> Publish to shared…
+          </button>
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            onClick={() => setBrowsing(true)}
+            title="Browse shared presets"
+          >
+            <Share2 size={14} className="mr-1" /> Browse shared
+          </button>
+        </div>
+      )}
+
+      {browsing && (
+        <SharedPresetsModal onApply={onApply} onClose={() => setBrowsing(false)} />
       )}
     </div>
   );

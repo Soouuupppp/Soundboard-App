@@ -58,6 +58,22 @@ services:
       UPLOADS_DIR: ${UPLOADS_DIR}
       DEFAULT_MAX_FILE_SIZE: ${DEFAULT_MAX_FILE_SIZE}
       DEFAULT_MAX_TOTAL_STORAGE: ${DEFAULT_MAX_TOTAL_STORAGE}
+      # ver/1.4.1: default cap on profiles per user (user/role overrides live in the DB).
+      DEFAULT_PROFILE_LIMIT: ${DEFAULT_PROFILE_LIMIT:-5}
+      # --- ver/1.4.1 Paid AI voice (all optional; the free rvc_zero engine needs none) ---
+      # Default monthly AI quota in SECONDS (user/role overrides live in the DB).
+      DEFAULT_AI_QUOTA_SECONDS: ${DEFAULT_AI_QUOTA_SECONDS:-300}
+      # App-owned provider keys. When set, users spend the shared key against their
+      # quota; when unset, only users with their own BYO key can use that provider.
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_API_BASE: ${ELEVENLABS_API_BASE:-}
+      ELEVENLABS_STS_MODEL: ${ELEVENLABS_STS_MODEL:-}
+      ELEVENLABS_TTS_MODEL: ${ELEVENLABS_TTS_MODEL:-}
+      RESPEECHER_API_KEY: ${RESPEECHER_API_KEY:-}
+      # Respeecher's REST surface is account-specific — set these to its file-STS /
+      # TTS endpoints, else Respeecher returns a clear "not configured" error.
+      RESPEECHER_STS_URL: ${RESPEECHER_STS_URL:-}
+      RESPEECHER_TTS_URL: ${RESPEECHER_TTS_URL:-}
       # Path inside the container where yt-convert looks for YouTube cookies;
       # matches the mount target below. Used only if the file is non-empty.
       YTDLP_COOKIES: ${YTDLP_COOKIES:-/secrets/yt-cookies.txt}

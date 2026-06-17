@@ -48,6 +48,11 @@ const QUOTA_MAX = 2 ** 50;
 export const quotaBytes = z.number().int().min(0).max(QUOTA_MAX);
 export const quotaBytesNullable = quotaBytes.nullable();
 
+// ver/1.4.1 Paid AI voice: a monthly AI quota in seconds. 0 = no quota; capped
+// at ~115 days so the int column can't be stuffed.
+const AI_SECONDS_MAX = 10_000_000;
+export const aiQuotaSeconds = z.number().int().min(0).max(AI_SECONDS_MAX);
+
 export const roleName = printable(60).pipe(z.string().min(1));
 
 // Request body shapes ------------------------------------------------------
@@ -72,6 +77,28 @@ export const PatchBoardEntryBody = z
     position: z.number().int().min(0).max(10_000).optional(),
     // Saved vs Board: move this entry on/off the playable board.
     onBoard: z.boolean().optional(),
+    // ver/1.4.1 Profiles: the placement edit targets THIS profile (the active one).
+    // Omitted → the route resolves the user's default profile.
+    profileId: uuid.optional(),
+  })
+  .strict();
+
+// ver/1.4.1 Profiles. Profile names are short printable strings.
+export const profileName = printable(60).pipe(z.string().min(1));
+
+// Serialized per-profile config blobs (voice-changer + per-clip FX maps). Bounded
+// so the column can't be stuffed; the client serializes them, the server stores
+// the JSON text verbatim (parsed defensively on read).
+const profileConfigJson = printable(100_000);
+
+export const PostProfileBody = z.object({ name: profileName }).strict();
+
+export const PatchProfileBody = z
+  .object({
+    name: profileName.optional(),
+    position: z.number().int().min(0).max(10_000).optional(),
+    voiceFx: profileConfigJson.nullable().optional(),
+    soundFx: profileConfigJson.nullable().optional(),
   })
   .strict();
 
@@ -104,6 +131,12 @@ export const PatchRoleBody = z
     ytMaxDurationSecOverride: z.number().int().min(1).max(3600).nullable().optional(),
     ytMaxFileSizeOverride: quotaBytesNullable.optional(),
     ytConcurrencyOverride: z.number().int().min(1).max(4).nullable().optional(),
+    // ver/1.4.1 Profiles: per-role default profile cap (null → env default).
+    profileLimit: z.number().int().min(1).max(100).nullable().optional(),
+    // ver/1.4.1 Paid AI voice: per-role monthly AI quota (seconds; null → env
+    // default) + whether the role may use AI voice at all.
+    aiQuotaSecondsMonthly: aiQuotaSeconds.nullable().optional(),
+    canUseAi: z.boolean().optional(),
   })
   .strict();
 
@@ -116,6 +149,12 @@ export const PatchUserBody = z
     maxFileSizeOverride: quotaBytesNullable.optional(),
     maxTotalStorageOverride: quotaBytesNullable.optional(),
     canUploadOverride: z.boolean().nullable().optional(),
+    // ver/1.4.1 Profiles: per-user profile-cap override (null → inherit role).
+    profileLimitOverride: z.number().int().min(1).max(100).nullable().optional(),
+    // ver/1.4.1 Paid AI voice: per-user quota + permission overrides (null →
+    // inherit role → env). Usage counters are server-managed, not patchable.
+    aiQuotaSecondsOverride: aiQuotaSeconds.nullable().optional(),
+    canUseAiOverride: z.boolean().nullable().optional(),
   })
   .strict();
 
@@ -155,6 +194,55 @@ export const PatchAppSettingsBody = z
     motdLinkLabel: printable(80).nullable().optional(),
     motdLinkUrl: motdLinkUrl.optional(),
     motdSeverity: z.enum(["info", "warning", "success"]).optional(),
+    // ver/1.4.1 Paid AI voice: master toggle + live-session auto-stop cap (5–600s).
+    aiEnabled: z.boolean().optional(),
+    aiLiveSessionCapSec: z.number().int().min(5).max(600).optional(),
+  })
+  .strict();
+
+// Shared DSP-preset publish (ver/1.4.1). Keep EFFECT_KINDS in sync with the
+// EffectKind union in lib/voice-fx.ts (that module is "use client", so we don't
+// import it into server code — we mirror the kind list here). The client re-clones
+// effects with fresh ids on apply, so we don't trust/validate ids; we bound the
+// chain length + param shape so the DB can't be stuffed.
+const EFFECT_KINDS = [
+  "robot", "echo", "reverb", "distortion", "telephone", "tremolo",
+  "lowpass", "highpass", "bitcrusher", "chorus", "flanger", "phaser",
+  "vibrato", "compressor", "megaphone", "noisegate", "pitch",
+] as const;
+
+const effectConfig = z
+  .object({
+    kind: z.enum(EFFECT_KINDS),
+    // Numeric param map; cap key count + require finite values. Ranges are
+    // clamped client-side per EFFECT_DEFS — here we only keep it sane/bounded.
+    params: z.record(z.string().max(40), z.number().finite()).refine(
+      (o) => Object.keys(o).length <= 12,
+      "too many params"
+    ),
+  })
+  .strict();
+
+export const PostSharedPresetBody = z
+  .object({
+    name: soundName.pipe(z.string().min(1).max(80)),
+    effects: z.array(effectConfig).min(1).max(12),
+    // Admin-only; the route ignores it for non-admins (publish as official).
+    isOfficial: z.boolean().optional(),
+  })
+  .strict();
+
+// ver/1.4.1 Paid AI voice proxy bodies. Provider is the paid engine; voiceId is a
+// provider voice id (bounded printable). STS is multipart (validated field-wise in
+// the route); TTS is JSON. Text is capped so a single re-speak can't be huge.
+export const aiProvider = z.enum(["elevenlabs", "respeecher"]);
+export const aiVoiceId = printable(120).pipe(z.string().min(1));
+
+export const PostAiTtsBody = z
+  .object({
+    provider: aiProvider,
+    voiceId: aiVoiceId,
+    text: printable(1000).pipe(z.string().min(1)),
   })
   .strict();
 

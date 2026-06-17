@@ -1,17 +1,17 @@
 "use client";
 
-// Sound Effects modal (1.4.0) — a per-clip DSP effect chain keyed by sound id,
-// backed by the device-local `soundboard:soundfx` map (audio.soundFx /
-// setSoundEffects). Unlike the voice-changer chain, a per-clip chain is NOT a
-// live mixer source — it's rebuilt from the saved config on every play — so ALL
-// edits (add/remove/reorder/param) just persist via setSoundEffects and the next
-// play (board/keybind/VR/preview) picks them up.
+// Sound Effects panels (1.4.0; popover-ified 1.4.1) — a per-clip DSP effect chain
+// keyed by sound id, backed by the device-local `soundboard:soundfx` map
+// (audio.soundFx / setSoundEffects). Unlike the voice-changer chain, a per-clip
+// chain is NOT a live mixer source — it's rebuilt from the saved config on every
+// play — so ALL edits (add/remove/reorder/param) just persist via setSoundEffects
+// and the next play (board/keybind/VR/preview) picks them up.
 //
-// Two entry points (both render this modal): a per-card button on each SoundCard
-// (fixed soundId) and a global header picker (choose a board/saved sound first).
+// Two entry points, both rendered inside an anchored `Popover` (1.4.1 — they used
+// to be full-screen modals): a per-card panel on each SoundCard (fixed soundId)
+// and a global header picker panel (choose a board/saved sound first).
 
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { X, Sparkles, ArrowUp, ArrowDown, Plus, Play, Search } from "lucide-react";
 import type { AudioOutput } from "@/lib/audio-output";
 import { type EffectKind, type EffectConfig, EFFECT_DEFS, makeEffect, effectLabel } from "@/lib/voice-fx";
@@ -94,33 +94,10 @@ export function SoundFxEditor({ audio, soundId }: { audio: AudioOutput; soundId:
   );
 }
 
-// Shared full-screen portal shell (overlay + Esc / click-outside close).
-function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
-
-  if (typeof document === "undefined") return null;
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      onClick={onClose}
-    >
-      <div className="card w-full max-w-lg max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        {children}
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-// Per-card entry point: the effect editor for a single, already-known sound.
-export function SoundEffectsModal({
+// Per-card entry point: the effect editor for a single, already-known sound,
+// rendered as the body of an anchored Popover (the `.popover` surface + close are
+// supplied by the Popover wrapper at the call site).
+export function SoundEffectsPanel({
   audio,
   soundId,
   name,
@@ -132,10 +109,10 @@ export function SoundEffectsModal({
   onClose: () => void;
 }) {
   return (
-    <ModalShell title="Sound effects" onClose={onClose}>
+    <>
       <FxEditorHeader name={name} audio={audio} soundId={soundId} onClose={onClose} />
       <SoundFxEditor audio={audio} soundId={soundId} />
-    </ModalShell>
+    </>
   );
 }
 
@@ -166,8 +143,9 @@ function FxEditorHeader({ name, audio, soundId, onClose }: { name: string; audio
 
 type PickEntry = { soundId: string; name: string; onBoard: boolean };
 
-// Global header entry point: pick a board/saved sound, then edit its chain.
-export function SoundEffectsPickerModal({ audio, onClose }: { audio: AudioOutput; onClose: () => void }) {
+// Global header entry point (popover body): pick a board/saved sound, then edit
+// its chain. `onClose` closes the surrounding Popover.
+export function SoundEffectsPickerPanel({ audio, onClose }: { audio: AudioOutput; onClose: () => void }) {
   const [entries, setEntries] = useState<PickEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [chosen, setChosen] = useState<PickEntry | null>(null);
@@ -205,20 +183,20 @@ export function SoundEffectsPickerModal({ audio, onClose }: { audio: AudioOutput
 
   if (chosen) {
     return (
-      <ModalShell title="Sound effects" onClose={onClose}>
+      <>
         <button type="button" className="btn-ghost text-xs mb-2" onClick={() => setChosen(null)}>
           ← All sounds
         </button>
         <FxEditorHeader name={chosen.name} audio={audio} soundId={chosen.soundId} onClose={onClose} />
         <SoundFxEditor audio={audio} soundId={chosen.soundId} />
-      </ModalShell>
+      </>
     );
   }
 
   const filtered = (entries ?? []).filter((e) => e.name.toLowerCase().includes(q.toLowerCase()));
 
   return (
-    <ModalShell title="Sound effects" onClose={onClose}>
+    <>
       <div className="flex items-start justify-between gap-3 mb-3">
         <h2 className="text-lg font-bold tracking-tight">Sound effects</h2>
         <button type="button" className="btn-ghost !px-2" onClick={onClose} aria-label="Close">
@@ -257,6 +235,6 @@ export function SoundEffectsPickerModal({ audio, onClose }: { audio: AudioOutput
           );
         })}
       </div>
-    </ModalShell>
+    </>
   );
 }

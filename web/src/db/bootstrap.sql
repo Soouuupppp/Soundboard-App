@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS "role" (
   "ytMaxDurationSecOverride" INTEGER,
   "ytMaxFileSizeOverride" BIGINT,
   "ytConcurrencyOverride" INTEGER,
+  "profileLimit" INTEGER,
+  "aiQuotaSecondsMonthly" INTEGER,
+  "canUseAi" BOOLEAN NOT NULL DEFAULT TRUE,
   "isSystem" BOOLEAN NOT NULL DEFAULT FALSE,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -22,6 +25,13 @@ ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "ytEnabledOverride" BOOLEAN;
 ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "ytMaxDurationSecOverride" INTEGER;
 ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "ytMaxFileSizeOverride" BIGINT;
 ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "ytConcurrencyOverride" INTEGER;
+-- ver/1.4.1 Profiles: per-role default profile cap (NULL = env DEFAULT_PROFILE_LIMIT).
+ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "profileLimit" INTEGER;
+-- ver/1.4.1 Paid AI voice: per-role default monthly AI quota (seconds; NULL = env
+-- DEFAULT_AI_QUOTA_SECONDS) + whether the role may use AI voice. Existing roles
+-- default to TRUE (the global aiEnabled master toggle still gates everything).
+ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "aiQuotaSecondsMonthly" INTEGER;
+ALTER TABLE "role" ADD COLUMN IF NOT EXISTS "canUseAi" BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS "user" (
   "id" TEXT PRIMARY KEY,
@@ -34,10 +44,24 @@ CREATE TABLE IF NOT EXISTS "user" (
   "maxFileSizeOverride" BIGINT,
   "maxTotalStorageOverride" BIGINT,
   "canUploadOverride" BOOLEAN,
+  "profileLimitOverride" INTEGER,
+  "aiQuotaSecondsOverride" INTEGER,
+  "canUseAiOverride" BOOLEAN,
+  "aiSecondsUsed" INTEGER NOT NULL DEFAULT 0,
+  "aiUsagePeriod" TEXT,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 -- Added after initial release; backfill existing deployments (NULL = inherit role).
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "canUploadOverride" BOOLEAN;
+-- ver/1.4.1 Profiles: per-user profile-cap override (NULL = inherit role → env).
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "profileLimitOverride" INTEGER;
+-- ver/1.4.1 Paid AI voice: per-user quota override + permission override (NULL =
+-- inherit role → env) and the monthly usage counter (seconds, reset lazily when
+-- "aiUsagePeriod" no longer matches the current YYYY-MM). See lib/ai-quota.ts.
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "aiQuotaSecondsOverride" INTEGER;
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "canUseAiOverride" BOOLEAN;
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "aiSecondsUsed" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "aiUsagePeriod" TEXT;
 
 CREATE TABLE IF NOT EXISTS "account" (
   "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
@@ -152,6 +176,8 @@ CREATE TABLE IF NOT EXISTS "appSettings" (
   "motdLinkUrl" TEXT,
   "motdSeverity" TEXT NOT NULL DEFAULT 'info',
   "motdUpdatedAt" TIMESTAMP,
+  "aiEnabled" BOOLEAN NOT NULL DEFAULT FALSE,
+  "aiLiveSessionCapSec" INTEGER NOT NULL DEFAULT 60,
   "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 INSERT INTO "appSettings" ("id") VALUES ('singleton') ON CONFLICT ("id") DO NOTHING;
@@ -163,6 +189,9 @@ ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdLinkLabel" TEXT;
 ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdLinkUrl" TEXT;
 ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdSeverity" TEXT NOT NULL DEFAULT 'info';
 ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "motdUpdatedAt" TIMESTAMP;
+-- ver/1.4.1 Paid AI voice: master toggle + live-session auto-stop cap (seconds).
+ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "aiEnabled" BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE "appSettings" ADD COLUMN IF NOT EXISTS "aiLiveSessionCapSec" INTEGER NOT NULL DEFAULT 60;
 
 -- YouTube→soundbite conversion jobs. Polled by the client until done/error.
 CREATE TABLE IF NOT EXISTS "conversionJob" (
@@ -183,3 +212,70 @@ CREATE INDEX IF NOT EXISTS "conversionJob_user_idx" ON "conversionJob" ("userId"
 -- queue is gone), so fail them on boot. Safe & idempotent.
 UPDATE "conversionJob" SET "status" = 'error', "error" = 'interrupted by server restart', "updatedAt" = NOW()
   WHERE "status" IN ('pending', 'running');
+
+-- ver/1.4.1: sharable DSP effect-chain presets. `effects` is serialized
+-- EffectConfig[] JSON (lib/voice-fx). User presets are public immediately;
+-- `isOfficial` flags the admin-curated/featured set. Brand-new table → no backfill.
+CREATE TABLE IF NOT EXISTS "sharedPreset" (
+  "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "ownerId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+  "name" TEXT NOT NULL,
+  "effects" TEXT NOT NULL,
+  "isOfficial" BOOLEAN NOT NULL DEFAULT FALSE,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS "sharedPreset_owner_idx" ON "sharedPreset" ("ownerId");
+
+-- ver/1.4.1 Profiles: per-user named profiles. Each bundles a per-profile board
+-- layout (profilePlacement), the voice-changer mic chain + AI config (voiceFx),
+-- and applied per-clip Sound Effects (soundFx). Saved library (boardEntry) + FX
+-- presets stay global. Brand-new tables → no column backfill needed.
+CREATE TABLE IF NOT EXISTS "profile" (
+  "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+  "name" TEXT NOT NULL,
+  "position" INTEGER NOT NULL DEFAULT 0,
+  "isDefault" BOOLEAN NOT NULL DEFAULT FALSE,
+  "voiceFx" TEXT,
+  "soundFx" TEXT,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS "profile_user_idx" ON "profile" ("userId");
+
+-- A sound's board placement within ONE profile. A row exists only for sounds
+-- touched per-profile; absence = saved-only in that profile. Unique per
+-- (profileId, soundId). soundId FK cascades so deleting the global Saved row's
+-- sound removes placements everywhere.
+CREATE TABLE IF NOT EXISTS "profilePlacement" (
+  "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "profileId" UUID NOT NULL REFERENCES "profile"("id") ON DELETE CASCADE,
+  "soundId" UUID NOT NULL REFERENCES "sound"("id") ON DELETE CASCADE,
+  "onBoard" BOOLEAN NOT NULL DEFAULT TRUE,
+  "position" INTEGER NOT NULL DEFAULT 0,
+  "label" TEXT,
+  "keybind" TEXT,
+  "controllerBind" TEXT,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
+  CONSTRAINT "profilePlacement_profile_sound_uniq" UNIQUE ("profileId", "soundId")
+);
+CREATE INDEX IF NOT EXISTS "profilePlacement_profile_idx" ON "profilePlacement" ("profileId");
+
+-- Migration: seed a "Default" profile for every user that has none (idempotent —
+-- skips users who already have a profile). position 0, isDefault TRUE.
+INSERT INTO "profile" ("userId", "name", "position", "isDefault")
+SELECT u."id", 'Default', 0, TRUE
+FROM "user" u
+WHERE NOT EXISTS (SELECT 1 FROM "profile" p WHERE p."userId" = u."id");
+
+-- Migration: copy each ON-BOARD boardEntry's placement (onBoard/position/label/
+-- keybind/controllerBind) into the owner's Default profile. Idempotent: only
+-- inserts when no placement row exists yet for (defaultProfile, sound).
+INSERT INTO "profilePlacement" ("profileId", "soundId", "onBoard", "position", "label", "keybind", "controllerBind")
+SELECT p."id", be."soundId", be."onBoard", be."position", be."label", be."keybind", be."controllerBind"
+FROM "boardEntry" be
+JOIN "profile" p ON p."userId" = be."userId" AND p."isDefault" = TRUE
+WHERE be."onBoard" = TRUE
+  AND NOT EXISTS (
+    SELECT 1 FROM "profilePlacement" pp
+    WHERE pp."profileId" = p."id" AND pp."soundId" = be."soundId"
+  );

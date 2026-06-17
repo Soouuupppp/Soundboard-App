@@ -6,6 +6,7 @@ import {
   bigint,
   boolean,
   primaryKey,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
 import type { AdapterAccountType } from "next-auth/adapters";
@@ -28,6 +29,18 @@ export const users = pgTable("user", {
   maxTotalStorageOverride: bigint("maxTotalStorageOverride", { mode: "number" }),
   // Per-user upload permission override (null → fall back to role's canUpload).
   canUploadOverride: boolean("canUploadOverride"),
+  // ver/1.4.1 Profiles: per-user override of the max number of profiles (null →
+  // fall back to role.profileLimit → env DEFAULT_PROFILE_LIMIT). See lib/profiles.ts.
+  profileLimitOverride: integer("profileLimitOverride"),
+  // ver/1.4.1 Paid AI voice: per-user overrides (null → role default → env) +
+  // monthly usage tracking. Quota unit = seconds of AI audio, unified across
+  // providers, reset each calendar month. `aiSecondsUsed` is the running total
+  // for the period named by `aiUsagePeriod` ("YYYY-MM", UTC); a new month resets
+  // it lazily on the next consume. See lib/ai-quota.ts. BYO-key calls don't meter.
+  aiQuotaSecondsOverride: integer("aiQuotaSecondsOverride"),
+  canUseAiOverride: boolean("canUseAiOverride"),
+  aiSecondsUsed: integer("aiSecondsUsed").notNull().default(0),
+  aiUsagePeriod: text("aiUsagePeriod"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -83,6 +96,15 @@ export const roles = pgTable("role", {
   ytMaxDurationSecOverride: integer("ytMaxDurationSecOverride"),
   ytMaxFileSizeOverride: bigint("ytMaxFileSizeOverride", { mode: "number" }),
   ytConcurrencyOverride: integer("ytConcurrencyOverride"),
+  // ver/1.4.1 Profiles: per-role default cap on the number of profiles a member
+  // may create (null → fall back to env DEFAULT_PROFILE_LIMIT). See lib/profiles.ts.
+  profileLimit: integer("profileLimit"),
+  // ver/1.4.1 Paid AI voice: per-role default monthly AI quota (seconds; null →
+  // env DEFAULT_AI_QUOTA_SECONDS) + whether the role may use AI voice at all.
+  // The global appSettings.aiEnabled master toggle still gates everything. See
+  // lib/ai-quota.ts.
+  aiQuotaSecondsMonthly: integer("aiQuotaSecondsMonthly"),
+  canUseAi: boolean("canUseAi").notNull().default(true),
   isSystem: boolean("isSystem").notNull().default(false), // protects system roles from deletion
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -121,6 +143,11 @@ export const appSettings = pgTable("appSettings", {
   motdLinkUrl: text("motdLinkUrl"),
   motdSeverity: text("motdSeverity").notNull().default("info"), // info | warning | success
   motdUpdatedAt: timestamp("motdUpdatedAt"),
+  // ver/1.4.1 Paid AI voice: master on/off for all AI voice features + the hard
+  // auto-stop cap (seconds) on a continuous live session (Respeecher). See
+  // lib/ai-quota.ts. App provider keys live in env, never here.
+  aiEnabled: boolean("aiEnabled").notNull().default(false),
+  aiLiveSessionCapSec: integer("aiLiveSessionCapSec").notNull().default(60),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
@@ -161,6 +188,22 @@ export const soundTags = pgTable(
   (st) => ({ pk: primaryKey({ columns: [st.soundId, st.tagId] }) })
 );
 
+// ver/1.4.1: a sharable DSP effect-chain preset. Owned by a user; `effects` is a
+// serialized EffectConfig[] (lib/voice-fx). User-published presets are public
+// immediately (no approval); admins can delete any and flag any as `isOfficial`
+// (the curated/featured set). DSP chains only — no AI voice configs are shared.
+export const sharedPresets = pgTable("sharedPreset", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("ownerId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // Serialized EffectConfig[] JSON. Re-validated on publish; the client re-clones
+  // with fresh effect ids on apply, so stored ids are not trusted.
+  effects: text("effects").notNull(),
+  // Admin/featured flag — official presets sort first and show a badge.
+  isOfficial: boolean("isOfficial").notNull().default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 // An entry on a user's personal board. Always references a sound (own or public).
 export const boardEntries = pgTable("boardEntry", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -178,6 +221,54 @@ export const boardEntries = pgTable("boardEntry", {
   // get keybinds/positions. New entries default to saved-only — the user
   // explicitly adds them to the board. (bootstrap.sql backfills pre-existing
   // entries to true so current boards aren't wiped.)
+  //
+  // ver/1.4.1 Profiles: the board-placement columns below (label/keybind/
+  // controllerBind/position/onBoard) are NOW ORPHANED — board placement moved
+  // per-profile into `profilePlacement`. boardEntry is purely the GLOBAL Saved-
+  // library membership row (userId, soundId). The columns are kept (not dropped)
+  // per the additive idempotent-bootstrap convention; new code reads/writes the
+  // placement instead. The 1.4.1 migration copies the old on-board values into the
+  // Default profile's placements.
   onBoard: boolean("onBoard").notNull().default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
+
+// ver/1.4.1 Profiles: a named profile bundling a per-profile board layout
+// (profilePlacement rows), the voice-changer mic chain + AI config (voiceFx), and
+// applied per-clip sound effects (soundFx). The Saved library (boardEntry) + FX
+// preset libraries stay GLOBAL. One "Default" profile (isDefault) is seeded per
+// user; `position` orders them in the switcher.
+export const profiles = pgTable("profile", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  position: integer("position").notNull().default(0),
+  isDefault: boolean("isDefault").notNull().default(false),
+  // Serialized voice-changer config (audio-output.ts VoiceFxMap: the primary-mic
+  // source's { effects, ai }). JSON text; null/"" = empty.
+  voiceFx: text("voiceFx"),
+  // Serialized per-clip Sound Effects map ({ [soundId]: EffectConfig[] }). JSON text.
+  soundFx: text("soundFx"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ver/1.4.1 Profiles: a sound's board placement WITHIN one profile. A row exists
+// only for sounds touched per-profile (promoted to board / bound / reordered);
+// absence = saved-only in that profile (onBoard false, no binds). Unique per
+// (profileId, soundId). FK on soundId (not boardEntry.id) so deleting the global
+// Saved row removes placements app-side across every profile.
+export const profilePlacements = pgTable(
+  "profilePlacement",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    profileId: uuid("profileId").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    soundId: uuid("soundId").notNull().references(() => sounds.id, { onDelete: "cascade" }),
+    onBoard: boolean("onBoard").notNull().default(true),
+    position: integer("position").notNull().default(0),
+    label: text("label"),
+    keybind: text("keybind"),
+    controllerBind: text("controllerBind"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (p) => ({ uniq: unique("profilePlacement_profile_sound_uniq").on(p.profileId, p.soundId) }),
+);
