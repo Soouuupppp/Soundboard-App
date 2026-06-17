@@ -27,6 +27,7 @@ import { useVr } from "@/components/VrProvider";
 import { VrBindPicker } from "@/components/VrBindPicker";
 import { VrBindChips } from "@/components/VrBindChips";
 import { SoundEffectsPanel } from "@/components/SoundEffectsModal";
+import { AiMainSection } from "@/components/AiVoicePanel";
 import { Popover } from "@/components/Popover";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { ClipEditor } from "@/components/ClipEditor";
@@ -1002,6 +1003,10 @@ export function Dashboard({
           </div>
         </Collapsible>
       </section>
+
+      {/* Main-page AI controls — only while AI is enabled for the primary mic
+          (configuration stays in the AI header popover). */}
+      <AiMainSection audio={audio} />
 
       <section>
         <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
@@ -2077,7 +2082,7 @@ function SoundCard(props: {
               open={fxOpen}
               onClose={() => setFxOpen(false)}
               align="right"
-              panelClassName="w-[22rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto p-3"
+              panelClassName="w-[30rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto p-3"
               trigger={
                 <button
                   className={`btn-ghost text-xs !px-2 shrink-0 ${fxOpen ? "text-accent" : ""}`}

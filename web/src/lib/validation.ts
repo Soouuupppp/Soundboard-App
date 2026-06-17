@@ -232,6 +232,36 @@ export const PostSharedPresetBody = z
   })
   .strict();
 
+// Shared AI voice publish (ver/1.4.1) — the voice parallel of PostSharedPresetBody.
+// `engine` is the AI engine; `config` is the opaque voice identity. We bound every
+// field so the DB can't be stuffed; URLs (rvc custom model/index) must be https.
+const sharedVoiceEngine = z.enum(["rvc_zero", "elevenlabs", "respeecher"]);
+const httpsUrl = z.string().url().max(2048).startsWith("https://", "must be https");
+const sharedVoiceConfig = z
+  .object({
+    voiceId: printable(120).pipe(z.string().min(1)),
+    customVoiceId: printable(200).optional(),
+    custom: z
+      .object({
+        modelUrl: httpsUrl,
+        indexUrl: httpsUrl,
+        pitch: z.number().finite().min(-24).max(24),
+      })
+      .strict()
+      .nullish(),
+  })
+  .strict();
+
+export const PostSharedVoiceBody = z
+  .object({
+    name: soundName.pipe(z.string().min(1).max(80)),
+    engine: sharedVoiceEngine,
+    config: sharedVoiceConfig,
+    // Admin-only; the route ignores it for non-admins.
+    isOfficial: z.boolean().optional(),
+  })
+  .strict();
+
 // ver/1.4.1 Paid AI voice proxy bodies. Provider is the paid engine; voiceId is a
 // provider voice id (bounded printable). STS is multipart (validated field-wise in
 // the route); TTS is JSON. Text is capped so a single re-speak can't be huge.

@@ -11,8 +11,10 @@
 // >100% volumes can distort normal output/monitor (the cable limiter still
 // protects the virtual mic) — flagged inline.
 
-import { Volume2, Headphones, Mic } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Volume2, Headphones, Mic, KeyRound } from "lucide-react";
 import type { AudioOutput } from "@/lib/audio-output";
+import { readAiKeys, writeAiKeys, PROVIDER_LABEL, type AiKeys, type PaidProvider } from "@/lib/voice-ai-paid";
 import { Select } from "@/components/Select";
 import { Toggle } from "@/components/Toggle";
 import { PeakMeter } from "@/components/LevelMeter";
@@ -124,10 +126,60 @@ export function SettingsPanel({ audio }: { audio: AudioOutput }) {
         </div>
       )}
 
+      {/* AI provider API keys (device-local secret). Optional — paste your own key
+          to bypass the free quota. Used by the paid AI engines in the AI popover. */}
+      <AiKeysSection />
+
       {/* Live output meter. */}
       {audio.supportsOutputMeter && (
         <PeakMeter getPeak={audio.getOutputPeak} active={audio.anyPlaying || audio.virtualMicMode} />
       )}
+    </div>
+  );
+}
+
+// BYO provider API keys. Stored device-local (soundboard:aiKeys via voice-ai-paid),
+// never uploaded except as the per-request x-ai-key header. State updates
+// immediately; the localStorage write is debounced (~300ms) with the latest value
+// flushed on unmount so an interrupted edit isn't lost.
+function AiKeysSection() {
+  const [keys, setKeys] = useState<AiKeys>(() => readAiKeys());
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<AiKeys | null>(null);
+
+  const setKey = (provider: PaidProvider, val: string) => {
+    const next = { ...keys, [provider]: val };
+    setKeys(next);
+    pending.current = next;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => { writeAiKeys(next); pending.current = null; }, 300);
+  };
+  useEffect(() => () => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      if (pending.current) writeAiKeys(pending.current);
+    }
+  }, []);
+
+  const providers: PaidProvider[] = ["elevenlabs", "respeecher"];
+
+  return (
+    <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+      <span className="flex items-center gap-1.5 text-sm"><KeyRound size={13} className="text-accent" /> AI provider keys</span>
+      {providers.map((p) => (
+        <label key={p} className="block">
+          <span className="text-xs text-muted mb-1 block">{PROVIDER_LABEL[p]} API key</span>
+          <input
+            className="input !py-1.5 text-xs w-full"
+            type="password"
+            autoComplete="off"
+            placeholder="Optional — paste to bypass the free quota"
+            value={keys[p] ?? ""}
+            onChange={(e) => setKey(p, e.target.value)}
+          />
+        </label>
+      ))}
+      <p className="text-[11px] text-muted">Stored only on this device, never uploaded except to call the provider.</p>
     </div>
   );
 }

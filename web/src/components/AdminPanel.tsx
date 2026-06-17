@@ -16,6 +16,12 @@ import {
   deleteSharedPreset,
   setSharedPresetOfficial,
 } from "@/lib/shared-presets";
+import {
+  type SharedVoice,
+  fetchSharedVoices,
+  deleteSharedVoice,
+  setSharedVoiceOfficial,
+} from "@/lib/shared-voices";
 
 type Role = {
   id: string;
@@ -101,6 +107,7 @@ export function AdminPanel() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [tags, setTags] = useState<TagRow[]>([]);
   const [presets, setPresets] = useState<SharedPreset[]>([]);
+  const [voices, setVoices] = useState<SharedVoice[]>([]);
   // ver/1.4.1 Paid AI voice: env-default monthly quota (seconds), from the users
   // endpoint — used as the placeholder for blank (inherit) AI quota fields.
   const [defaultAiQuota, setDefaultAiQuota] = useState(300);
@@ -111,7 +118,7 @@ export function AdminPanel() {
 
   const refresh = async () => {
     try {
-      const [r, u, s, cfg, t, p] = await Promise.all([
+      const [r, u, s, cfg, t, p, v] = await Promise.all([
         fetch("/api/admin/roles").then((x) => x.json()),
         fetch("/api/admin/users").then((x) => x.json()),
         fetch("/api/admin/sounds").then((x) => x.json()),
@@ -120,6 +127,8 @@ export function AdminPanel() {
         // The shared-preset list is the same one users see (official + user, with
         // owner names, no UUID); admins moderate it from here.
         fetchSharedPresets().catch(() => [] as SharedPreset[]),
+        // Likewise the shared AI-voice library — moderated from the Presets tab.
+        fetchSharedVoices().catch(() => [] as SharedVoice[]),
       ]);
       setRoles(r.roles ?? []);
       setUsers(u.users ?? []);
@@ -128,6 +137,7 @@ export function AdminPanel() {
       setSettings(cfg.settings ?? null);
       setTags(t.tags ?? []);
       setPresets(p);
+      setVoices(v);
     } catch {
       toast.error("Couldn't load admin data — refresh to retry.");
     } finally {
@@ -275,10 +285,10 @@ export function AdminPanel() {
           <>
             <PanelHead
               icon={<Sliders size={16} />}
-              title="Shared presets"
-              subtitle="Author official/featured effect-chain presets, and moderate the shared library. Official presets sort first and show a badge for all users."
+              title="Shared presets & voices"
+              subtitle="Author official/featured effect-chain presets, and moderate the shared preset + AI-voice libraries. Official entries sort first and show a badge for all users."
             />
-            <PresetsAdmin presets={presets} onChange={refresh} />
+            <PresetsAdmin presets={presets} voices={voices} onChange={refresh} />
           </>
         )}
       </section>
@@ -1790,11 +1800,24 @@ function SoundsTable({ sounds, allTags, onChange }: { sounds: Sound[]; allTags: 
 // Admin "Presets" tab: author official presets from scratch (a controlled chain
 // builder → publish as official) + moderate the whole shared library (toggle the
 // official flag, delete any). Reuses the public preset list (GET /api/presets).
-function PresetsAdmin({ presets, onChange }: { presets: SharedPreset[]; onChange: () => void }) {
+function PresetsAdmin({ presets, voices, onChange }: { presets: SharedPreset[]; voices: SharedVoice[]; onChange: () => void }) {
   const toast = useToast();
   const [draft, setDraft] = useState<EffectConfig[]>([]);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const ENGINE_LABEL: Record<string, string> = { rvc_zero: "RVC⚡ZERO", elevenlabs: "ElevenLabs", respeecher: "Respeecher" };
+  const toggleVoiceOfficial = async (v: SharedVoice) => {
+    const res = await setSharedVoiceOfficial(v.id, !v.isOfficial);
+    if (!res.ok) return toast.fromResponse(res, "Couldn't update voice.");
+    onChange();
+  };
+  const removeVoice = async (v: SharedVoice) => {
+    const res = await deleteSharedVoice(v.id);
+    if (!res.ok) return toast.fromResponse(res, "Couldn't delete voice.");
+    toast.success("Voice removed");
+    onChange();
+  };
 
   const publishOfficial = async () => {
     if (draft.length === 0) return;
@@ -1892,6 +1915,57 @@ function PresetsAdmin({ presets, onChange }: { presets: SharedPreset[]; onChange
                       onClick={() => remove(p)}
                       title="Delete preset"
                       aria-label="Delete preset"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Moderate shared AI voices (ver/1.4.1). Admins author official voices by
+          publishing as official from the AI popover; here they toggle/delete. */}
+      <div>
+        <div className="font-medium text-sm mb-2">All shared voices</div>
+        {voices.length === 0 ? (
+          <p className="text-sm text-muted">No shared voices yet.</p>
+        ) : (
+          <ul className="grid gap-1.5 max-w-2xl">
+            {voices.map((v) => (
+              <li key={v.id} className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      {v.isOfficial && (
+                        <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 bg-amber-400/10 border border-amber-400/20">
+                          <Star size={10} /> Official
+                        </span>
+                      )}
+                      <span className="font-medium text-sm truncate">{v.name}</span>
+                    </div>
+                    <p className="text-xs text-muted truncate">
+                      {ENGINE_LABEL[v.engine] ?? v.engine}
+                      {v.ownerName && <> · by {v.ownerName}</>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      className={`btn-ghost text-xs ${v.isOfficial ? "text-amber-300" : ""}`}
+                      onClick={() => toggleVoiceOfficial(v)}
+                      title={v.isOfficial ? "Remove official flag" : "Mark as official"}
+                    >
+                      <Star size={14} className="mr-1" /> {v.isOfficial ? "Unofficial" : "Make official"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost text-xs !px-1.5 text-red-300/80 hover:text-red-300"
+                      onClick={() => removeVoice(v)}
+                      title="Delete voice"
+                      aria-label="Delete voice"
                     >
                       <Trash2 size={14} />
                     </button>

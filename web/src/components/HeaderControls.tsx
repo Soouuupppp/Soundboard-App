@@ -9,15 +9,16 @@
 //
 // (Pre-1.4.1 this was one self-contained <HeaderControls> in the left zone.)
 
-import { Settings, Wand2, SlidersHorizontal } from "lucide-react";
+import { Settings, Wand2, Sparkles, SlidersHorizontal } from "lucide-react";
 import { useAudio } from "@/components/AudioProvider";
 import { Popover } from "@/components/Popover";
 import { LevelMeter } from "@/components/LevelMeter";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { VoiceChangerPanel } from "@/components/VoiceChangerPanel";
+import { AiVoicePanel } from "@/components/AiVoicePanel";
 import { SoundEffectsPickerPanel } from "@/components/SoundEffectsModal";
 
-export type Panel = "settings" | "voice" | "fx" | null;
+export type Panel = "settings" | "voice" | "ai" | "fx" | null;
 
 type ControlsProps = {
   panel: Panel;
@@ -90,10 +91,26 @@ export function CenterControls({ panel, toggle, close }: ControlsProps) {
 
       {engine && (
         <Popover
+          open={panel === "ai"}
+          onClose={close}
+          align="left"
+          panelClassName="w-[23rem] max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto p-3"
+          trigger={
+            <HeaderButton active={panel === "ai"} onClick={() => toggle("ai")} title="AI voice">
+              <Sparkles size={16} />
+            </HeaderButton>
+          }
+        >
+          <AiVoicePanel audio={audio} />
+        </Popover>
+      )}
+
+      {engine && (
+        <Popover
           open={panel === "fx"}
           onClose={close}
           align="left"
-          panelClassName="w-[26rem] max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto p-3"
+          panelClassName="w-[34rem] max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto p-3"
           trigger={
             <HeaderButton active={panel === "fx"} onClick={() => toggle("fx")} title="Sound Effects">
               <SlidersHorizontal size={16} />

@@ -204,6 +204,24 @@ export const sharedPresets = pgTable("sharedPreset", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+// ver/1.4.1: a sharable AI voice config (the parallel of sharedPreset for voices).
+// `engine` is the AI engine ("rvc_zero" | "elevenlabs" | "respeecher"); `config`
+// is a serialized JSON payload of the voice identity (rvc_zero: model/index URL +
+// pitch; paid: provider voice id). User-published voices are public immediately;
+// admins flag `isOfficial` and can delete any. The UI keeps a "use only voices you
+// have the rights to" reminder by the publish/apply affordances.
+export const sharedVoices = pgTable("sharedVoice", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("ownerId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  engine: text("engine").notNull(),
+  // Serialized voice config JSON ({ voiceId, custom?, customVoiceId? }). Re-validated
+  // on publish; the client treats it as opaque config to feed into setAi.
+  config: text("config").notNull(),
+  isOfficial: boolean("isOfficial").notNull().default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 // An entry on a user's personal board. Always references a sound (own or public).
 export const boardEntries = pgTable("boardEntry", {
   id: uuid("id").primaryKey().defaultRandom(),

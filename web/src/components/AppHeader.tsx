@@ -4,7 +4,7 @@
 // is truly centered regardless of the side clusters' widths:
 //   left   — logo + "Soundboard"
 //   center — output meter → Voice changer → Sound Effects   (hidden on small screens)
-//   right  — Settings cog → user dropdown → profile dropdown,
+//   right  — Settings cog → profile dropdown → user dropdown (name),
 //            with the upload-storage quota as a thin bar spanning beneath them.
 // The Settings cog sits in the right cluster but shares the one-open-at-a-time
 // `panel` state owned here with the center Voice/FX popovers.
@@ -50,8 +50,8 @@ export function AppHeader({
       <div className="flex flex-col items-stretch gap-1">
         <div className="flex items-center justify-end gap-2 text-sm">
           <SettingsControl panel={panel} toggle={toggle} close={close} />
-          <UserMenu name={name} image={image} isAdmin={isAdmin} signOutAction={signOutAction} />
           <ProfileSwitcher />
+          <UserMenu name={name} image={image} isAdmin={isAdmin} signOutAction={signOutAction} />
         </div>
         <QuotaBar className="hidden sm:block w-full" />
       </div>

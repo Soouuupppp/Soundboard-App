@@ -226,6 +226,21 @@ CREATE TABLE IF NOT EXISTS "sharedPreset" (
 );
 CREATE INDEX IF NOT EXISTS "sharedPreset_owner_idx" ON "sharedPreset" ("ownerId");
 
+-- ver/1.4.1: sharable AI voice configs (the parallel of sharedPreset for voices).
+-- `engine` is the AI engine; `config` is serialized voice-identity JSON. User
+-- voices are public immediately; `isOfficial` flags the curated set. New table → no
+-- backfill.
+CREATE TABLE IF NOT EXISTS "sharedVoice" (
+  "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "ownerId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+  "name" TEXT NOT NULL,
+  "engine" TEXT NOT NULL,
+  "config" TEXT NOT NULL,
+  "isOfficial" BOOLEAN NOT NULL DEFAULT FALSE,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS "sharedVoice_owner_idx" ON "sharedVoice" ("ownerId");
+
 -- ver/1.4.1 Profiles: per-user named profiles. Each bundles a per-profile board
 -- layout (profilePlacement), the voice-changer mic chain + AI config (voiceFx),
 -- and applied per-clip Sound Effects (soundFx). Saved library (boardEntry) + FX

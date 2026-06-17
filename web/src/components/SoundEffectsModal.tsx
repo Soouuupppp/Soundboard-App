@@ -58,10 +58,10 @@ export function SoundFxEditor({ audio, soundId }: { audio: AudioOutput; soundId:
                 </button>
               </span>
             </div>
-            <div className="grid gap-1.5">
+            <div className="grid gap-1.5 sm:grid-cols-2">
               {(def?.params ?? []).map((p) => (
-                <div key={p.key} className="flex items-center gap-2">
-                  <span className="text-xs text-muted w-20 shrink-0 truncate" title={p.label}>{p.label}</span>
+                <div key={p.key} className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs text-muted w-16 shrink-0 truncate" title={p.label}>{p.label}</span>
                   <input
                     type="range"
                     min={p.min}

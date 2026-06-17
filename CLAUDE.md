@@ -483,6 +483,39 @@ providers** (`VrProvider`, `VoiceChangerProvider`) so binds work from any page. 
 device-local (no schema change); a CSP `connect-src` widening to the HF Spaces
 hosts is the one security tradeoff, documented in `docs/voice-changer-research.md`.
 
+**1.4.1 shipped** (voice-changer effects, sharable presets/voices, paid AI, and
+profiles): the DSP palette grew with six more native effects (chorus, flanger,
+phaser, vibrato, compressor, megaphone) plus a **noise gate** (envelope-follower
+AudioWorklet with hysteresis) and a **pitch shifter** (self-authored granular
+worklet; formant re-deferred) — all auto-surfaced through `EFFECT_DEFS`
+(`lib/voice-fx.ts`). FX effect-chains and AI voice configs became **publishable
+and browsable** via new server libraries (`sharedPreset` + `sharedVoice` tables,
+`/api/presets` + `/api/voices` + admin moderation routes; `lib/shared-presets.ts`,
+`lib/shared-voices.ts`, `FxPresetBar`/`VoicePresetBar` + browse modals), alongside
+the device-local private libraries. **Paid AI voice** was wired through a
+same-origin proxy (`/api/ai/sts` + `/api/ai/tts`, `lib/ai-providers.ts`) for
+**ElevenLabs + Respeecher** — speech-to-speech conversion and in-browser
+**STT→TTS "re-speak"** (`lib/voice-stt.ts`) — with the free `rvc_zero` PTT path
+kept as the default; an **AI usage quota** (seconds/month, user override → role →
+env, `lib/ai-quota.ts`, `user`/`role`/`appSettings` columns + `/api/ai/usage`)
+mirrors the upload quota, plus a **BYO API key** path (device-local, never
+persisted server-side, bypasses the quota). Respeecher continuous-live streaming
+was researched and **re-deferred** (the standalone Next server has no WS upgrade
+hook). **Profiles** landed as a server-side per-profile bundle — the **board
+layout** (new `profile` + `profilePlacement` tables, the `boardEntry` placement
+columns left orphaned as global Saved membership), the **mic voice-changer chain**,
+and **per-clip sound effects** all sync across devices and the desktop app
+(`ProfileProvider`, `/api/profiles` CRUD + clone, profile-scoped board/config; the
+`audio.soundFx`/`voiceFx` accessors repointed to the active profile with the same
+signatures). The header was restructured into a **three-zone navbar**
+(`AppHeader`: logo · centered meter+Voice+Sound-Effects+AI popovers · Settings cog +
+profile switcher + user menu with the quota bar beneath) with a **profile switcher**
+(switch/rename/clone/delete/reorder, cap-aware via role default + per-user
+override), the Sound-Effects editors moved to **anchored popovers**, and AI voice
+split into its **own popover + a main-page section** when enabled. Schema changes
+applied via `bootstrap.sql` (idempotent DDL) per the repo's mechanism — the first
+batch to add DB tables to the otherwise device-local voice-changer feature.
+
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
 Version bumped to **1.3.1** across all three `package.json` + docs. Owner
@@ -2370,6 +2403,97 @@ full cross-device sync for profiles.
    helpers; failures route through `useToast`/`fromResponse`. `app/layout.tsx` renders
    `<AppHeader>` for signed-in users (logged-out keeps the simple logo + Discord login
    header). tsc clean.)*
+
+### Tasks — 1.4.1 (UI adjustments — appended)
+
+Six UI/feature adjustments (recovered from the "Adjustments checklist" session;
+the routine that was meant to build them never committed/landed). Owner decisions
+**locked** 2026-06-17. Same version (1.4.1) — appended.
+
+1. **Header order: Settings cog + profile button left of the name + quota bar**
+   *(UI)*. In `components/AppHeader.tsx` the right cluster is currently `Settings →
+   UserMenu(name) → ProfileSwitcher`. Reorder so both the Settings cog and the
+   profile switcher sit **left of** the user name: `Settings → ProfileSwitcher →
+   UserMenu(name)`. Quota bar still spans beneath.
+   **Progress: ✅ Done** *(reordered the `AppHeader` right cluster to `Settings →
+   ProfileSwitcher → UserMenu`; updated the header comment.)*
+
+2. **AI Voice as its own header button/popover (split from Voice changer)**
+   *(feat)*. Today the AI section is nested inside the Voice-changer popover
+   (`VoiceChangerPanel` → `AiSection`). Give AI its **own header button** (4th
+   popover, `Panel` += `"ai"`, one-open-at-a-time) with its **own enable toggle**;
+   the Voice-changer popover keeps only the DSP effect chain. Move `AiSection` into
+   a shared `components/AiVoicePanel.tsx` so it's reusable (popover + main page).
+   **Progress: ✅ Done** *(new `components/AiVoicePanel.tsx` holds the moved
+   `AiSection` + `AiUsageMeter` + an `AiVoicePanel({audio})` popover wrapper (with
+   the no-mic input-picker fallback) + `AiMainSection`. `HeaderControls` gained a 4th
+   popover button (Sparkles icon, `Panel` += `"ai"`, one-open-at-a-time). The AI
+   enable Toggle stays in the section. `VoiceChangerPanel` slimmed to the DSP effect
+   chain only — removed `AiSection`/`AiUsageMeter` + the now-unused imports.)*
+
+3. **Main-page AI section when AI is enabled** *(feat)*. When AI voice is enabled
+   for the active mic (`audio.voiceFx[audio.inputDeviceId]?.ai?.enabled`), render a
+   main-page section in `Dashboard.tsx` **between the upload card and the board
+   section** showing the interactive AI buttons (hold-to-talk + replay + live
+   transcript/status). Reuse from `AiVoicePanel`. Hidden when AI is off.
+   **Progress: ✅ Done** *(`AiMainSection({audio})` (exported from `AiVoicePanel`)
+   renders a `card` with hold-to-talk + replay buttons + busy/error/transcript
+   status; returns null unless `audio.voiceFx[inputDeviceId]?.ai?.enabled`. Mounted
+   in `Dashboard` between the upload card and the board section.)*
+
+4. **API key field moves into the Settings popover** *(UI)*. Move the BYO provider
+   API-key inputs out of `AiSection` and into `SettingsPanel` (a new "AI provider
+   keys" block — ElevenLabs + Respeecher password inputs, device-local
+   `soundboard:aiKeys` via `readAiKeys`/`writeAiKeys`, debounced write). AI section
+   keeps a short pointer to Settings.
+   **Progress: ✅ Done** *(new `AiKeysSection` in `SettingsPanel` — ElevenLabs +
+   Respeecher password inputs backed by `readAiKeys`/`writeAiKeys` (300ms debounced
+   write + unmount flush). The BYO-key block was removed from `AiSection`, which now
+   shows a "paste your key in Settings to bypass the quota" pointer.)*
+
+5. **Savable + sharable AI voice configs — full public server library** *(feat —
+   overturns the prior "AI configs NOT shared" lock; owner chose the full library
+   2026-06-17)*. Mirror the shared-effect-preset stack for AI voice configs (custom
+   voice id / model+index url + engine):
+   - **Schema** (`schema.ts` + `bootstrap.sql`): new `sharedVoice` table (id,
+     ownerId→user cascade, name, engine text, config text JSON, isOfficial,
+     createdAt) — brand-new table, no backfill.
+   - **Validation:** `PostSharedVoiceBody` (name ≤80, engine enum, bounded config:
+     voiceId/customVoiceId strings, optional rvc custom {modelUrl,indexUrl,pitch}).
+   - **API:** `GET/POST /api/voices`, `DELETE /api/voices/[id]`, `PATCH
+     /api/admin/voices/[id]` (official toggle) — clones of the `/api/presets` set
+     (per-user cap, official honored for admins, rate-limited, owner-or-admin
+     delete).
+   - **Client:** `lib/voice-presets.ts` (device-local `soundboard:voicePresets`
+     save/apply + `useVoicePresets`, mirrors `fx-presets.ts`) + `lib/shared-voices.ts`
+     (fetch/publish/delete/setOfficial). A `components/VoicePresetBar.tsx` (mirror
+     `FxPresetBar`) + `components/SharedVoicesModal.tsx` (mirror
+     `SharedPresetsModal`), wired into the AI section. Keep the "use only voices you
+     have the rights to" reminder.
+   - **Admin:** a "Shared voices" moderation list in the existing Admin **Presets**
+     tab (toggle official + delete any).
+   **Progress: ✅ Done** *(new `sharedVoice` table (id/ownerId→user cascade/name/
+   engine/config JSON/isOfficial/createdAt) in `schema.ts` + `bootstrap.sql` (CREATE
+   IF NOT EXISTS + owner index, new table no backfill). `PostSharedVoiceBody` in
+   `validation.ts` (name ≤80, engine enum, bounded config — voiceId/customVoiceId
+   strings + optional https rvc {modelUrl,indexUrl,pitch}). Routes `GET/POST
+   /api/voices`, `DELETE /api/voices/[id]`, `PATCH /api/admin/voices/[id]` — clones
+   of the `/api/presets` set (per-user cap 50, `isOfficial` honored for admins,
+   `voice-mut` rate-limit, owner-or-admin delete; GET omits ownerId, returns `mine`).
+   Client: `lib/voice-presets.ts` (device-local `soundboard:voicePresets` +
+   `useVoicePresets`, mirrors `fx-presets`) + `lib/shared-voices.ts`. New
+   `components/VoicePresetBar.tsx` (Save/Publish/Browse, mirror `FxPresetBar`) +
+   `components/SharedVoicesModal.tsx` (mirror `SharedPresetsModal`), wired into
+   `AiSection` after the voice picker with the entitlement reminder. Admin: a "Shared
+   voices" moderation list (toggle official + delete) added to the Presets tab.)*
+
+6. **Sound Effects popover bigger / params wrap** *(UI)*. The Sound-Effects
+   popovers are cramped (fixed `w-[26rem]` header / `w-[22rem]` per-card, single
+   column params). Widen them and let the effect param rows **wrap to two columns**
+   on the wider width so they don't overflow a tiny column.
+   **Progress: ✅ Done** *(widened the header Sound-Effects popover `w-[26rem]`→
+   `w-[34rem]` and the per-card popover `w-[22rem]`→`w-[30rem]`; the `SoundFxEditor`
+   param rows now wrap to two columns (`sm:grid-cols-2`, label `w-20`→`w-16`).)*
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions
