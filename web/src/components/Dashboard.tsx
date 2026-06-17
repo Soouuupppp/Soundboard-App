@@ -21,11 +21,14 @@ import {
   type AiVoice,
 } from "@/lib/voice-ai";
 import { useAudio } from "@/components/AudioProvider";
+import { useProfiles } from "@/components/ProfileProvider";
 import { useVoiceChanger } from "@/components/VoiceChangerProvider";
 import { useVr } from "@/components/VrProvider";
 import { VrBindPicker } from "@/components/VrBindPicker";
 import { VrBindChips } from "@/components/VrBindChips";
-import { SoundEffectsModal } from "@/components/SoundEffectsModal";
+import { SoundEffectsPanel } from "@/components/SoundEffectsModal";
+import { AiMainSection } from "@/components/AiVoicePanel";
+import { Popover } from "@/components/Popover";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { ClipEditor } from "@/components/ClipEditor";
 import { useToast } from "@/components/Toast";
@@ -103,6 +106,12 @@ export function Dashboard({
   appVersion: string;
 }) {
   const toast = useToast();
+  // Active profile (ver/1.4.1): board placements are per-profile, so every board
+  // GET/PATCH carries the active profile id. A ref lets the plain mutation helpers
+  // read the current id without being rebound on each switch.
+  const { activeProfileId } = useProfiles();
+  const activeProfileIdRef = useRef<string | null>(activeProfileId);
+  activeProfileIdRef.current = activeProfileId;
   const [entries, setEntries] = useState<Entry[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -126,8 +135,6 @@ export function Dashboard({
   const [savedMineOnly, setSavedMineOnly] = useState(false);
   // Which card is expanded into full CRUD (only one at a time keeps it tidy).
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
-  // Per-clip Sound Effects modal target (sound id + display name), or null.
-  const [fxModalSound, setFxModalSound] = useState<{ id: string; name: string } | null>(null);
   // Drag-reorder state (Board tab only): the entry id being dragged.
   const [dragId, setDragId] = useState<string | null>(null);
 
@@ -225,7 +232,8 @@ export function Dashboard({
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/board");
+      const pid = activeProfileIdRef.current;
+      const res = await fetch(`/api/board${pid ? `?profileId=${encodeURIComponent(pid)}` : ""}`);
       if (!res.ok) {
         await toast.fromResponse(res, "Couldn't load your board");
         return;
@@ -243,6 +251,13 @@ export function Dashboard({
     refresh();
     refreshTags();
   }, [refresh, refreshTags]);
+
+  // Re-fetch the board when the active profile changes — placements are
+  // per-profile, so a switch swaps the whole board layout / binds.
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfileId]);
 
   const saveTags = useCallback(async (soundId: string, next: string[]) => {
     let res: Response;
@@ -723,12 +738,17 @@ export function Dashboard({
     body: JSON.stringify(body),
   });
 
+  // Board PATCHes target a per-profile placement, so they carry the active profile
+  // id (the server upserts the placement for that profile + the entry's sound).
+  const boardPatch = (body: Record<string, unknown>): RequestInit =>
+    jsonPatch({ ...body, profileId: activeProfileIdRef.current ?? undefined });
+
   async function setKeybind(entryId: string, combo: string | null) {
-    if (await mutate(`/api/board/${entryId}`, jsonPatch({ keybind: combo }), "Couldn't update keybind")) refresh();
+    if (await mutate(`/api/board/${entryId}`, boardPatch({ keybind: combo }), "Couldn't update keybind")) refresh();
   }
 
   async function setControllerBind(entryId: string, token: string | null) {
-    if (await mutate(`/api/board/${entryId}`, jsonPatch({ controllerBind: token }), "Couldn't update controller bind")) refresh();
+    if (await mutate(`/api/board/${entryId}`, boardPatch({ controllerBind: token }), "Couldn't update controller bind")) refresh();
   }
 
   async function removeEntry(entryId: string) {
@@ -750,7 +770,7 @@ export function Dashboard({
   // Add/remove an entry from the playable board (it stays in Saved either way).
   async function setOnBoard(entryId: string, on: boolean) {
     const failMsg = on ? "Couldn't add to board" : "Couldn't remove from board";
-    if (await mutate(`/api/board/${entryId}`, jsonPatch({ onBoard: on }), failMsg)) refresh();
+    if (await mutate(`/api/board/${entryId}`, boardPatch({ onBoard: on }), failMsg)) refresh();
   }
 
   // --- Saved / Board derived lists ---
@@ -786,12 +806,13 @@ export function Dashboard({
         pos.has(e.entry.id) ? { ...e, entry: { ...e.entry, position: pos.get(e.entry.id)! } } : e
       );
     });
+    const pid = activeProfileIdRef.current ?? undefined;
     const results = await Promise.all(
       ordered.map((e, i) =>
         fetch(`/api/board/${e.entry.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ position: i }),
+          body: JSON.stringify({ position: i, profileId: pid }),
         }).catch(() => null)
       )
     );
@@ -864,7 +885,6 @@ export function Dashboard({
       onRemove={() => removeEntry(e.entry.id)}
       onDeleteSound={() => deleteSound(e.sound.id)}
       onTogglePublic={(next) => togglePublic(e.sound.id, next)}
-      onOpenFx={() => setFxModalSound({ id: e.sound.id, name: e.entry.label || e.sound.originalFilename })}
       expanded={expandedCard === e.entry.id}
       onToggleExpand={() => setExpandedCard((id) => (id === e.entry.id ? null : e.entry.id))}
       onBoard={e.entry.onBoard}
@@ -874,15 +894,6 @@ export function Dashboard({
 
   return (
     <div className="space-y-8">
-      {fxModalSound && (
-        <SoundEffectsModal
-          audio={audio}
-          soundId={fxModalSound.id}
-          name={fxModalSound.name}
-          onClose={() => setFxModalSound(null)}
-        />
-      )}
-
       {/* The audio Control Panel moved into the header (Settings · Voice changer ·
           Sound Effects popovers in HeaderControls). The AI push-to-talk + AI-replay
           controller bind editors now render from VrProvider so they open from the
@@ -992,6 +1003,10 @@ export function Dashboard({
           </div>
         </Collapsible>
       </section>
+
+      {/* Main-page AI controls — only while AI is enabled for the primary mic
+          (configuration stays in the AI header popover). */}
+      <AiMainSection audio={audio} />
 
       <section>
         <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
@@ -1795,8 +1810,6 @@ function SoundCard(props: {
   onRemove: () => void;
   onDeleteSound: () => void;
   onTogglePublic: (next: boolean) => void;
-  // Open the per-clip Sound Effects modal scoped to this clip's sound id.
-  onOpenFx: () => void;
   volume: number;
   onVolumeChange: (v: number) => void;
   keybindsGloballyEnabled: boolean;
@@ -1819,11 +1832,14 @@ function SoundCard(props: {
 }) {
   const { entry, capturing } = props;
   const { sound, ownerName } = entry;
+  const audio = useAudio();
   // Controller binds are per-profile: only the current profile's slot is shown
   // and edited here, so switching profiles "clears" the visible bind.
   const controllerBind = getProfileBind(entry.entry.controllerBind, props.controllerProfile);
   const hasController = !!controllerBind;
   const [editingTags, setEditingTags] = useState(false);
+  // Per-clip Sound Effects popover, anchored to this card's Sliders button.
+  const [fxOpen, setFxOpen] = useState(false);
 
   // Capture a keyboard chord: hold the keys together, release to confirm.
   useEffect(() => {
@@ -2062,14 +2078,31 @@ function SoundCard(props: {
         </div>
         {!expanded && (
           <>
-            <button
-              className="btn-ghost text-xs !px-2 shrink-0"
-              onClick={props.onOpenFx}
-              title="Sound effects"
-              aria-label="Sound effects"
+            <Popover
+              open={fxOpen}
+              onClose={() => setFxOpen(false)}
+              align="right"
+              panelClassName="w-[30rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto p-3"
+              trigger={
+                <button
+                  className={`btn-ghost text-xs !px-2 shrink-0 ${fxOpen ? "text-accent" : ""}`}
+                  onClick={() => setFxOpen((o) => !o)}
+                  title="Sound effects"
+                  aria-label="Sound effects"
+                  aria-haspopup="dialog"
+                  aria-expanded={fxOpen}
+                >
+                  <Sliders size={14} />
+                </button>
+              }
             >
-              <Sliders size={14} />
-            </button>
+              <SoundEffectsPanel
+                audio={audio}
+                soundId={sound.id}
+                name={entry.entry.label || sound.originalFilename}
+                onClose={() => setFxOpen(false)}
+              />
+            </Popover>
             <button
               className="btn-ghost text-xs !px-2 shrink-0"
               onClick={props.onToggleExpand}

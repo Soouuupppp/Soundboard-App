@@ -5,10 +5,10 @@ import Link from "next/link";
 import Image from "next/image";
 import { auth, signIn, signOut } from "@/lib/auth";
 import { SiteHeader } from "@/components/SiteHeader";
-import { UserMenu } from "@/components/UserMenu";
-import { HeaderControls } from "@/components/HeaderControls";
+import { AppHeader } from "@/components/AppHeader";
 import { ToastProvider } from "@/components/Toast";
 import { AudioProvider } from "@/components/AudioProvider";
+import { ProfileProvider } from "@/components/ProfileProvider";
 import { VoiceChangerProvider } from "@/components/VoiceChangerProvider";
 import { VrProvider } from "@/components/VrProvider";
 import { NoticeBanners, type MotdSeverity } from "@/components/NoticeBanners";
@@ -85,27 +85,26 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const shell = (
     <>
       <SiteHeader>
-        <div className="max-w-[1800px] mx-auto px-4 py-3 flex items-center gap-6">
-          <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
-            <Image src={logo} alt="Soundboard logo" width={32} height={32} priority className="h-8 w-8" />
-            <span>Soundboard</span>
-          </Link>
-          {/* Audio controls (Settings · Voice changer · Sound Effects · meter)
-              sit on the LEFT, the gap-6 giving them margin from the logo. The
-              avatar dropdown (Admin + Sign out) + quota meter stay right-aligned. */}
-          {session?.user && <HeaderControls />}
-          <div className="ml-auto flex items-center gap-3 text-sm">
-            {session?.user ? (
-              <UserMenu
-                name={session.user.name ?? null}
-                image={session.user.image ?? null}
-                isAdmin={isAdmin}
-                signOutAction={async () => {
-                  "use server";
-                  await signOut({ redirectTo: "/" });
-                }}
-              />
-            ) : (
+        {session?.user ? (
+          // Signed-in: the full 3-zone navbar (logo · audio controls · right
+          // cluster with the Settings cog, user + profile dropdowns and quota bar).
+          <AppHeader
+            name={session.user.name ?? null}
+            image={session.user.image ?? null}
+            isAdmin={isAdmin}
+            signOutAction={async () => {
+              "use server";
+              await signOut({ redirectTo: "/" });
+            }}
+          />
+        ) : (
+          // Logged-out: just logo + the Discord login button.
+          <div className="max-w-[1800px] mx-auto px-4 py-3 flex items-center gap-6">
+            <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
+              <Image src={logo} alt="Soundboard logo" width={32} height={32} priority className="h-8 w-8" />
+              <span>Soundboard</span>
+            </Link>
+            <div className="ml-auto flex items-center gap-3 text-sm">
               <form
                 action={async () => {
                   "use server";
@@ -114,9 +113,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               >
                 <button className="btn-primary">Login with Discord</button>
               </form>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </SiteHeader>
       {motd && <NoticeBanners motd={motd} />}
       <main className="max-w-[1800px] mx-auto px-4 py-10">{children}</main>
@@ -143,13 +142,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             engine that survives navigation). The logged-out landing stays outside
             it so it never enumerates devices / runs the hook. */}
         {signedIn ? (
-          <AudioProvider>
-            <VoiceChangerProvider>
-              <VrProvider>
-                <ToastProvider>{shell}</ToastProvider>
-              </VrProvider>
-            </VoiceChangerProvider>
-          </AudioProvider>
+          <ProfileProvider>
+            <AudioProvider>
+              <VoiceChangerProvider>
+                <VrProvider>
+                  <ToastProvider>{shell}</ToastProvider>
+                </VrProvider>
+              </VoiceChangerProvider>
+            </AudioProvider>
+          </ProfileProvider>
         ) : (
           <ToastProvider>{shell}</ToastProvider>
         )}

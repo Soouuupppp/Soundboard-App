@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MicMixer, type MixerInputState, SOUNDBOARD_KEY } from "./audio-mixer";
 import { type EffectConfig, type EffectParams } from "./voice-fx";
 import { type AiVoice, convertVoice, resolveVoice } from "./voice-ai";
+import { convertStsViaProxy, ttsViaProxy, resolvePaidVoiceId, type PaidProvider } from "./voice-ai-paid";
+import { startStt, sttSupported, type SttHandle } from "./voice-stt";
 
 const LS_KEY = "soundboard:output";
 // Voice changer (1.4.0) — device-local per-source DSP chains + AI config. Kept in
@@ -102,9 +104,38 @@ function writeFxDebounced(key: string, value: string) {
 }
 
 // --- Voice changer state (per source key) ---
-export type AiConfig = { enabled: boolean; voiceId: string; custom?: AiVoice | null };
+// ver/1.4.1 Paid AI: `engine` selects rvc_zero (free, default — undefined reads as
+// rvc_zero for back-compat) vs a paid provider. For rvc_zero, `voiceId`/`custom`
+// drive the model/index/pitch. For paid, `voiceId` is a provider voice id (or the
+// "custom" sentinel → `customVoiceId`), `mode` is sts vs respeak (STT→TTS), and
+// `live` enables Respeecher continuous-live STS. The BYO key is NOT here — it's a
+// device-local secret (lib/voice-ai-paid `soundboard:aiKeys`).
+export type AiEngine = "rvc_zero" | "elevenlabs" | "respeecher";
+export type AiMode = "sts" | "respeak";
+export type AiConfig = {
+  enabled: boolean;
+  engine?: AiEngine;
+  voiceId: string;
+  custom?: AiVoice | null;
+  customVoiceId?: string;
+  mode?: AiMode;
+  live?: boolean;
+};
 export type SourceFx = { effects: EffectConfig[]; ai?: AiConfig };
 export type VoiceFxMap = Record<string, SourceFx>;
+
+// ver/1.4.1 Profiles: when a ProfileBacking is supplied, the voiceFx / soundFx
+// accessors are backed by the ACTIVE profile's server-side config instead of
+// localStorage (the accessor signatures are unchanged). The engine re-seeds the
+// mixer from `config` only on a profile switch or a server reload (loadGen bump),
+// never on a per-edit persist. ProfileProvider owns the debounced server PATCH.
+export type ProfileBacking = {
+  activeProfileId: string | null;
+  loadGen: number;
+  config: { voiceFx: VoiceFxMap; soundFx: SoundFxMap };
+  persistVoiceFx: (v: VoiceFxMap) => void;
+  persistSoundFx: (v: SoundFxMap) => void;
+};
 
 function readVoiceFx(): VoiceFxMap {
   if (typeof window === "undefined") return {};
@@ -236,9 +267,16 @@ export type AudioOutput = {
   pttRecording: Set<string>;
   aiBusy: boolean;
   aiError: string | null;
+  // ver/1.4.1 re-speak: live interim transcript while a re-speak PTT is held ("" otherwise).
+  aiTranscript: string;
 };
 
-export function useAudioOutput(): AudioOutput {
+export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
+  // Profile backing (ver/1.4.1): read inside stable callbacks via a ref so the
+  // accessors don't churn when the active profile / its config changes.
+  const backingRef = useRef<ProfileBacking | undefined>(backing);
+  backingRef.current = backing;
+
   const [deviceId, setDeviceIdState] = useState<string>("default");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
@@ -270,14 +308,37 @@ export function useAudioOutput(): AudioOutput {
   const [pttRecording, setPttRecording] = useState<Set<string>>(new Set());
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  // ver/1.4.1 re-speak: live interim transcript shown while a re-speak PTT is held.
+  const [aiTranscript, setAiTranscript] = useState("");
+
+  // Persist voiceFx / soundFx through the profile backing when present (server,
+  // per active profile), else fall back to device-local localStorage. Read the
+  // backing via the ref so these stay stable across profile/config changes.
+  const persistVoiceFx = useCallback((v: VoiceFxMap) => {
+    const b = backingRef.current;
+    if (b) b.persistVoiceFx(v);
+    else writeVoiceFx(v);
+  }, []);
+  const persistVoiceFxDebounced = useCallback((v: VoiceFxMap) => {
+    const b = backingRef.current;
+    if (b) b.persistVoiceFx(v); // the backing's server PATCH is already debounced
+    else writeVoiceFxDebounced(v);
+  }, []);
+  const persistSoundFx = useCallback((v: SoundFxMap) => {
+    const b = backingRef.current;
+    if (b) b.persistSoundFx(v);
+    else writeSoundFx(v);
+  }, []);
 
   const activeRef = useRef<Active[]>([]);
 
   const mixerRef = useRef<MicMixer | null>(null);
   // Active push-to-talk recorders, keyed by capture deviceId.
   const pttRef = useRef<
-    Map<string, { recorder: MediaRecorder; chunks: Blob[]; ownStream: MediaStream | null; timer: number | null }>
+    Map<string, { recorder: MediaRecorder; chunks: Blob[]; ownStream: MediaStream | null; timer: number | null; startedAt: number }>
   >(new Map());
+  // ver/1.4.1 re-speak: active SpeechRecognition handles, keyed by source device.
+  const sttRef = useRef<Map<string, SttHandle>>(new Map());
   const virtualMicModeRef = useRef(virtualMicMode);
   virtualMicModeRef.current = virtualMicMode;
   // Read the current monitor device inside play() without rebuilding the callback.
@@ -319,9 +380,40 @@ export function useAudioOutput(): AudioOutput {
     } else if (Array.isArray(s.monitored)) {
       setMonitorMicState(s.monitored.some((k) => k !== SOUNDBOARD_KEY));
     }
-    setVoiceFxState(readVoiceFx());
-    setSoundFxState(readSoundFx());
+    // With a profile backing the fx maps come from the active profile's server
+    // config (seeded by the effect below), not localStorage.
+    if (!backingRef.current) {
+      setVoiceFxState(readVoiceFx());
+      setSoundFxState(readSoundFx());
+    }
   }, []);
+
+  // ver/1.4.1 Profiles: (re)seed the fx state + mixer from the active profile's
+  // config on a profile switch or a server reload (loadGen). Deliberately NOT
+  // keyed on the config object identity, so a per-edit persist doesn't rebuild the
+  // mixer chains (which would click) — only an actual switch/reload does.
+  useEffect(() => {
+    const b = backingRef.current;
+    if (!b) return;
+    const vf = b.config.voiceFx ?? {};
+    const sf = b.config.soundFx ?? {};
+    setVoiceFxState(vf);
+    setSoundFxState(sf);
+    const m = mixerRef.current;
+    if (m?.isReady()) {
+      // Apply this profile's chains to the live mic source(s); clear any source
+      // that this profile doesn't configure so the previous profile doesn't leak.
+      const keys = new Set<string>([...inputsRef.current.map((i) => i.deviceId), ...Object.keys(vf)]);
+      for (const key of keys) {
+        if (key === SOUNDBOARD_KEY) continue;
+        const fx = vf[key];
+        m.setSourceEffects(key, fx?.effects ?? []);
+        m.setSourceAiMuted(key, !!fx?.ai?.enabled);
+      }
+      for (const fx of Object.values(sf)) m.preloadEffects(fx);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backing?.activeProfileId, backing?.loadGen]);
 
   // Flush any pending debounced FX persist on unmount / before unload so a param
   // drag interrupted by a close or navigation isn't lost.
@@ -451,7 +543,7 @@ export function useAudioOutput(): AudioOutput {
   const setSourceEffects = useCallback((key: string, effects: EffectConfig[]) => {
     setVoiceFxState((prev) => {
       const next = { ...prev, [key]: { ...prev[key], effects } };
-      writeVoiceFx(next);
+      persistVoiceFx(next);
       return next;
     });
     mixerRef.current?.setSourceEffects(key, effects);
@@ -462,7 +554,7 @@ export function useAudioOutput(): AudioOutput {
     setVoiceFxState((prev) => {
       const effects = (prev[key]?.effects ?? []).map((e, i) => (i === index ? { ...e, params } : e));
       const next = { ...prev, [key]: { ...prev[key], effects } };
-      writeVoiceFxDebounced(next); // param drag — coalesce the persist
+      persistVoiceFxDebounced(next); // param drag — coalesce the persist
       return next;
     });
     mixerRef.current?.updateEffectParams(key, index, params);
@@ -473,7 +565,7 @@ export function useAudioOutput(): AudioOutput {
   const setSourceAi = useCallback((key: string, ai: AiConfig | undefined) => {
     setVoiceFxState((prev) => {
       const next = { ...prev, [key]: { effects: prev[key]?.effects ?? [], ai } };
-      writeVoiceFx(next);
+      persistVoiceFx(next);
       return next;
     });
     mixerRef.current?.setSourceAiMuted(key, !!ai?.enabled);
@@ -486,7 +578,7 @@ export function useAudioOutput(): AudioOutput {
       const next = { ...prev };
       if (effects.length) next[soundId] = effects;
       else delete next[soundId]; // empty chain → drop the key so the map stays lean
-      writeSoundFx(next);
+      persistSoundFx(next);
       return next;
     });
     mixerRef.current?.preloadEffects(effects);
@@ -525,15 +617,24 @@ export function useAudioOutput(): AudioOutput {
 
   // Convert a recorded PTT clip with the device's AI voice and inject it into the
   // source's chain. Best-effort: surfaces ZeroGPU/Space failures via aiError.
-  const convertAndInject = useCallback(async (deviceId: string, blob: Blob) => {
+  const convertAndInject = useCallback(async (deviceId: string, blob: Blob, seconds?: number) => {
     const ai = voiceFxRef.current[deviceId]?.ai;
     if (!ai?.enabled || blob.size === 0) return;
-    const voice = resolveVoice(ai.voiceId, ai.custom);
-    if (!voice) { setAiError("No AI voice selected."); return; }
+    const engine = ai.engine ?? "rvc_zero";
+    // Resolve the conversion fn up front so a missing voice doesn't flip aiBusy.
+    let convert: (() => Promise<Blob>) | null = null;
+    if (engine === "rvc_zero") {
+      const voice = resolveVoice(ai.voiceId, ai.custom);
+      if (voice) convert = () => convertVoice(blob, voice);
+    } else {
+      const voiceId = resolvePaidVoiceId(ai.voiceId, ai.customVoiceId);
+      if (voiceId) convert = () => convertStsViaProxy(blob, { provider: engine as PaidProvider, voiceId, seconds });
+    }
+    if (!convert) { setAiError("No AI voice selected."); return; }
     setAiBusy(true);
     setAiError(null);
     try {
-      const converted = await convertVoice(blob, voice);
+      const converted = await convert();
       const url = URL.createObjectURL(converted);
       // Retire the previous "last" clip; keep this one for replay (no revoke on end).
       if (lastConvRef.current) URL.revokeObjectURL(lastConvRef.current.url);
@@ -547,27 +648,90 @@ export function useAudioOutput(): AudioOutput {
     }
   }, [playReadyChime]);
 
+  // Re-speak: synthesize the recognized text via the paid TTS proxy and inject the
+  // result into the source's chain (raw mic stays muted via the aiMuted gate).
+  const ttsAndInject = useCallback(async (deviceId: string, text: string) => {
+    const ai = voiceFxRef.current[deviceId]?.ai;
+    const engine = ai?.engine;
+    if (!ai?.enabled || (engine !== "elevenlabs" && engine !== "respeecher")) return;
+    const voiceId = resolvePaidVoiceId(ai.voiceId, ai.customVoiceId);
+    const clean = text.trim();
+    if (!voiceId) { setAiError("No AI voice selected."); return; }
+    if (!clean) return; // nothing recognized — silently no-op
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const out = await ttsViaProxy(clean, { provider: engine as PaidProvider, voiceId });
+      const url = URL.createObjectURL(out);
+      if (lastConvRef.current) URL.revokeObjectURL(lastConvRef.current.url);
+      lastConvRef.current = { url, deviceId };
+      mixerRef.current?.injectClipToSource(deviceId, url, 1, () => {});
+      playReadyChime();
+    } catch (e) {
+      setAiError(String((e as Error)?.message || e));
+    } finally {
+      setAiBusy(false);
+    }
+  }, [playReadyChime]);
+
   // Stop a PTT capture, assemble the clip, and convert+inject it.
   const stopPtt = useCallback((deviceId: string) => {
+    // Re-speak path: stop recognition; its onend delivers the final text → TTS.
+    const stt = sttRef.current.get(deviceId);
+    if (stt) {
+      sttRef.current.delete(deviceId);
+      setPttRecording((prev) => { const n = new Set(prev); n.delete(deviceId); return n; });
+      stt.stop();
+      return;
+    }
     const rec = pttRef.current.get(deviceId);
     if (!rec) return;
     pttRef.current.delete(deviceId);
     if (rec.timer !== null) clearTimeout(rec.timer);
     setPttRecording((prev) => { const n = new Set(prev); n.delete(deviceId); return n; });
-    const { recorder, chunks, ownStream } = rec;
+    const { recorder, chunks, ownStream, startedAt } = rec;
+    const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
     recorder.onstop = () => {
       // Only stop tracks we opened ourselves — never the mixer's shared stream.
       if (ownStream) ownStream.getTracks().forEach((t) => t.stop());
       const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-      void convertAndInject(deviceId, blob);
+      void convertAndInject(deviceId, blob, seconds);
     };
     try { recorder.stop(); } catch { /* already stopped */ }
   }, [convertAndInject]);
 
   // Start a PTT capture from the device's mic (the mixer's open stream if active,
-  // else a fresh capture). Auto-stops at MAX_PTT_MS.
+  // else a fresh capture). Auto-stops at MAX_PTT_MS. For paid re-speak (STT→TTS)
+  // mode it starts browser speech recognition instead of recording audio.
   const startPtt = useCallback((deviceId: string) => {
-    if (pttRef.current.has(deviceId)) return; // already recording
+    if (pttRef.current.has(deviceId) || sttRef.current.has(deviceId)) return; // already active
+
+    // Re-speak path: paid engine + mode "respeak" → recognize speech, then TTS.
+    const ai = voiceFxRef.current[deviceId]?.ai;
+    const engine = ai?.engine;
+    const paid = engine === "elevenlabs" || engine === "respeecher";
+    if (ai?.enabled && ai.mode === "respeak" && paid) {
+      if (!sttSupported()) { setAiError("Speech recognition isn't available here."); return; }
+      setAiError(null);
+      setAiTranscript("");
+      const handle = startStt({
+        onInterim: (t) => setAiTranscript(t),
+        onFinal: (t) => {
+          sttRef.current.delete(deviceId);
+          setPttRecording((prev) => { const n = new Set(prev); n.delete(deviceId); return n; });
+          setAiTranscript("");
+          void ttsAndInject(deviceId, t);
+        },
+        onError: (e) => setAiError(e),
+      });
+      if (!handle) { setAiError("Couldn't start speech recognition."); return; }
+      sttRef.current.set(deviceId, handle);
+      setPttRecording((prev) => new Set(prev).add(deviceId));
+      // Cap recognition at the PTT ceiling (it can otherwise run on indefinitely).
+      window.setTimeout(() => { if (sttRef.current.has(deviceId)) stopPtt(deviceId); }, MAX_PTT_MS);
+      return;
+    }
+
     if (typeof MediaRecorder === "undefined") { setAiError("Recording is unavailable here."); return; }
     (async () => {
       try {
@@ -592,13 +756,13 @@ export function useAudioOutput(): AudioOutput {
         recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
         recorder.start();
         const timer = window.setTimeout(() => stopPtt(deviceId), MAX_PTT_MS);
-        pttRef.current.set(deviceId, { recorder, chunks, ownStream, timer });
+        pttRef.current.set(deviceId, { recorder, chunks, ownStream, timer, startedAt: Date.now() });
         setPttRecording((prev) => new Set(prev).add(deviceId));
       } catch (e) {
         setAiError(String((e as Error)?.message || e));
       }
     })();
-  }, [stopPtt]);
+  }, [stopPtt, ttsAndInject]);
 
   const requestLabelsPermission = useCallback(async () => {
     alog("requestLabelsPermission: clicked", {
@@ -728,6 +892,7 @@ export function useAudioOutput(): AudioOutput {
   // Tear the engine down on unmount so mic capture + the AudioContext stop cleanly.
   useEffect(() => {
     const ptt = pttRef.current;
+    const stt = sttRef.current;
     return () => {
       const m = mixerRef.current;
       mixerRef.current = null;
@@ -739,6 +904,9 @@ export function useAudioOutput(): AudioOutput {
         rec.ownStream?.getTracks().forEach((t) => t.stop());
       }
       ptt.clear();
+      // Stop any in-flight speech recognition (re-speak).
+      for (const h of stt.values()) h.stop();
+      stt.clear();
       // Free the retained last-conversion clip.
       if (lastConvRef.current) {
         URL.revokeObjectURL(lastConvRef.current.url);
@@ -896,5 +1064,6 @@ export function useAudioOutput(): AudioOutput {
     pttRecording,
     aiBusy,
     aiError,
+    aiTranscript,
   };
 }

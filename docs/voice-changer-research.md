@@ -132,6 +132,11 @@ owner decision above. Keeping the chain native-only means zero added dependency,
 zero licensing surface, and the smallest bundle; SoundTouchJS can be slotted in
 later as one more chain effect without reworking the engine.
 
+> **Update (1.4.1, §8a-bis):** a **pitch shift** later shipped as a self-authored
+> DIY granular worklet (pitch only — no dependency). **Formant** remains deferred:
+> SoundTouchJS is still the pick but couldn't be vendored/verified in-environment.
+> See §8a-bis for the registry generalisation + the upgrade path.
+
 ---
 
 ## 4. AI voice conversion — evaluation
@@ -313,8 +318,180 @@ and the DSP path is native Web Audio only. The SoundTouchJS evaluation (and the
 MPL-2.0 licensing finding) is preserved in §3b for whenever pitch/formant are
 revisited.
 
+## 8. 1.4.1 — More DSP effects + realtime-AI survey
+
+> Task 1 of **1.4.1** ("Voice changer effects improvements"). Two axes: broaden
+> the native DSP palette (ships), and survey a **realtime** AI voice path
+> (**research/document only — no realtime code lands in 1.4.1**, owner decision
+> 2026-06-16). The existing 1.4.0 push-to-talk `rvc_zero` path is untouched.
+
+### 8a. New DSP effects (shipped)
+
+All native Web Audio, real-time, no worklet, no external DSP library — added to
+`lib/voice-fx.ts` as new `EffectKind` members so the chain editors, presets, and
+persistence pick them up automatically via `EFFECT_DEFS`.
+
+| Effect | Graph | Notes |
+|---|---|---|
+| **Chorus** | dry + one LFO-modulated `DelayNode` (~25 ms base) | rate/depth(ms)/mix |
+| **Flanger** | chorus with a ~2 ms base delay + feedback loop | swept comb / "jet" |
+| **Phaser** | 4 cascaded all-pass `BiquadFilter`s swept by one LFO + dry mix | moving notches |
+| **Vibrato** | fully-wet LFO-modulated `DelayNode` | periodic pitch wobble |
+| **Compressor** | `DynamicsCompressorNode` | threshold/ratio/attack/release; level-evening before the cable |
+| **Megaphone** | narrow band-pass `BiquadFilter` → tanh `WaveShaper` | gritty bullhorn/PA timbre |
+
+The modulation effects sum an `OscillatorNode → GainNode` onto a `DelayNode`'s (or
+biquad's) `.frequency`/`.delayTime` AudioParam — the same pattern the existing
+tremolo/robot use, so they reconcile params live with no chain rebuild.
+
+**Considered but NOT shipped (native):**
+- **Stereo widener** — the mic/source chain is effectively **mono** (single capture
+  device → mono `MediaStreamSource`), so a Haas/mid-side widener has nothing to
+  widen. Not useful until multi-channel sources exist.
+
+### 8a-bis. Worklet-backed effects (shipped, appended)
+
+Owner greenlit the noise gate + pitch shift after a follow-up pass (2026-06-16).
+Both are **our own AudioWorklets** served same-origin from `web/public/worklets/`
+(CSP `script-src 'self'` allows them, no change). The bitcrusher's lazy
+register-once preload was **generalised** into a `WORKLET_MODULES` registry +
+`chainNeedsWorklet`/`ensureWorkletModules` in `lib/voice-fx.ts` (replacing the
+bitcrusher-specific helpers at the `audio-mixer.ts` call sites), so each
+worklet-backed effect registers + preloads the same way with the same
+optimistic-build → passthrough-fallback behavior.
+
+| Effect | Worklet | Params | Notes |
+|---|---|---|---|
+| **Noise gate** | `noisegate-processor.js` | threshold/attack/hold/release/range | peak envelope follower + 3 dB hysteresis + hold; ramped gain (no click); `range` = closed-gate attenuation (dB) |
+| **Pitch shift** | `pitch-processor.js` | pitch (semitones, −12..+12) | DIY dual-tap delay-line granular shifter, constant-power sin crossfade; **PITCH ONLY** |
+
+- **Formant shift — RE-DEFERRED (⚠️ flag).** The planned pick was **SoundTouchJS**
+  (`@soundtouchjs/audio-worklet` + `@soundtouchjs/formant-correction-worklet`,
+  MPL-2.0). It ships its worklets inside its npm packages, which can't be vendored
+  into `web/public/worklets/` without installing+building them, and its documented
+  path is buffer playback rather than a live `MediaStreamSource` — neither
+  verifiable under the no-install/no-run constraint. So per the locked fallback we
+  ship a self-authored **pitch-only** granular worklet and re-defer formant. **To
+  upgrade:** `pnpm add @soundtouchjs/audio-worklet @soundtouchjs/formant-
+  correction-worklet`, copy their processor JS into `web/public/worklets/`, and
+  point the `pitch` `createEffect` case at them (exposing `pitch` + `formant`).
+
+### 8b. Realtime AI voice changer — survey (NOT implemented)
+
+Goal: continuous, low-latency (<~300 ms) live conversion, vs the current PTT
+bursts. Two families, ranked by realtime feasibility.
+
+**(a) In-browser / on-device (audio stays local).**
+- *RVC / so-vits-svc in the browser (ONNX Runtime Web / WebGPU / WASM).* RVC's
+  pipeline (HuBERT/ContentVec feature extraction + RVC model + a vocoder, often
+  RMVPE for f0) is heavy; ContentVec alone is ~95 M params. ONNX Runtime Web's
+  WebGPU EP can run mid-size models, but a full realtime RVC stack in-browser is
+  still **research-grade** — chunked streaming inference, f0 estimation latency, and
+  model download size (100s of MB) make a smooth realtime experience unlikely on
+  commodity hardware today. **Verdict: not ready** for a shippable realtime feature;
+  re-evaluate as WebGPU model zoos mature.
+- *Lightweight DSP-AI hybrids* (formant/pitch via WORLD/Praat-style vocoders
+  compiled to WASM) can be realtime but are **voice *modification*, not voice
+  *conversion*** to a target speaker — closer to the DSP palette than to AI presets.
+
+**(b) External realtime providers (audio leaves the machine — continuous stream).**
+- **ElevenLabs** *Voice Changer* — speech-to-speech; a low-latency/streaming
+  (Flash/realtime) tier exists. **Paid** (credit-metered; realtime tiers gated to
+  paid plans). Best quality of the surveyed options.
+- **Respeecher / Voicemod (Cloud) / Speechify / similar** — realtime voice-skin
+  APIs, all **paid/commercial**, key-per-account.
+- **Self-hosted RVC realtime** (the `rvc_zero` lineage or `w-okada` realtime VC) on
+  our own GPU exposed via WebSocket — **free of per-call cost** but needs a GPU box
+  + ops; this is the same "self-host" scale path already noted for the PTT case.
+
+**Cost / privacy / routing tradeoff (why it's deferred to a future version):**
+- Any paid provider's key must live **server-side** (a proxy route) — unlike the
+  1.4.0 browser-direct PTT (which spends each user's *own* free ZeroGPU quota), a
+  paid realtime stream would bill **us** for **every user**, continuously. That's an
+  open-ended cost we won't take on now.
+- Realtime = a **persistent off-machine audio stream** (WebSocket/WebRTC), a larger
+  privacy exposure than PTT bursts → would need a prominent always-on disclosure and
+  a `connect-src`/`media-src` (and likely `connect-src wss:`) CSP widening to the
+  provider.
+
+**Recommended future pick (when realtime is built):** **self-host an RVC/​w-okada
+realtime VC on our own GPU behind a same-origin WebSocket proxy** — keeps audio on
+our infra (no third-party data sharing), no per-call vendor bill, and reuses the
+documented "self-host the MIT Gradio app" scale path. If a hosted option is wanted
+sooner, **ElevenLabs streaming** is the quality leader but is paid + sends audio to
+a third party. **Implementation sketch (future):** a `lib/voice-ai-realtime.ts`
+opening a WS to the proxy, `mic MediaStreamTrack → chunked PCM frames → proxy → GPU
+VC → returned frames → a `MediaStreamAudioSourceNode` injected at the mic source's
+chain head` (so DSP still applies), with the raw mic muted (the existing `aiMuted`
+gate). None of this ships in 1.4.1.
+
+### 8c. 1.4.1 verdict
+
+Ship the **six new native DSP effects** (8a). **Realtime AI is documented only**
+(8b) — no proxy, no new dependency, no CSP change; the 1.4.0 PTT path is unchanged.
+
+### 8d. Paid AI voice — IMPLEMENTED (supersedes the §8b/§8c "deferred" verdict)
+
+> Owner reversed the "paid/realtime = research-only" lock (2026-06-16, after the
+> paid-provider research pass). 1.4.1 now ships **two paid AI features** alongside
+> the free `rvc_zero` PTT path (which stays the default engine): **(A) STS** —
+> speech→speech voice conversion (push-to-talk), and **(B) STT→TTS "re-speak"** —
+> in-browser speech-to-text → paid text-to-speech.
+
+**Providers:** ElevenLabs + Respeecher. `rvc_zero` (free, browser-direct, no key)
+remains the default.
+
+**Keys / billing (hybrid):** an **app-owned key** (env `ELEVENLABS_API_KEY` /
+`RESPEECHER_API_KEY`) gated by a **per-user monthly quota** (seconds of AI audio,
+resolved user override → role default → env `DEFAULT_AI_QUOTA_SECONDS`; see
+`lib/ai-quota.ts` + the admin "AI voice" tab), **plus BYO key** — the user pastes
+their own (device-local `soundboard:aiKeys`, sent as the `x-ai-key` header, **never
+persisted server-side**, **not metered**).
+
+**Routing (no CSP change):** all paid calls go through a **same-origin Next proxy**
+(`POST /api/ai/sts` multipart, `POST /api/ai/tts` JSON; `lib/ai-providers.ts`
+server clients). Because the browser only talks to our own origin, no
+`connect-src` widening is needed (rvc_zero stays on the already-allowed HF hosts;
+Web Speech is a native browser API). Routes are auth'd, `ai-mut` rate-limited, gate
+on `aiEnabled` + `canUseAi`, and meter usage (STS = input seconds, TTS ≈ output
+seconds; BYO skips). The proxy holds the app key or forwards the BYO key, then
+discards it.
+
+**STS interaction:** ElevenLabs = **PTT** (file Voice Changer, result streamed
+back). Respeecher = **PTT/file mode only this version** — its **continuous-live**
+(full-duplex WebSocket) path is **RE-DEFERRED**: the app deploys as Next
+`output: "standalone"` (`node server.js`), whose server exposes no WS `upgrade`
+hook and whose route handlers can't accept a WS upgrade, so a same-origin WS proxy
+would require a custom server + Dockerfile change (untestable here) and
+Respeecher's realtime WS framing isn't publicly specified. **To revisit:** adopt a
+custom Node server (wrap/replace the standalone output) + obtain Respeecher's
+realtime WS spec, then build `lib/voice-ai-realtime.ts` per the §8b sketch.
+
+**STT→TTS re-speak (feature B):** in-browser `SpeechRecognition` (`lib/voice-stt.ts`)
+for the STT half (interim transcript shown live; auto-synthesize on release), the
+chosen provider's TTS for the synth half. ⚠️ **Electron:** its Chromium ships no
+Google speech key, so `sttSupported()` is false there and the UI gates re-speak to
+the web build.
+
+**Voices:** curated safe presets per provider (ElevenLabs default library voices;
+Respeecher = custom-only) + a **custom voice-ID** field, mirroring the rvc_zero
+hybrid. **Disclosure:** every off-machine path (paid providers + the Web Speech
+API) surfaces an in-UI privacy notice (`PAID_PRIVACY` / `STT_PRIVACY`), extending
+the 1.4.0 `AI_PRIVACY_NOTICE` pattern.
+
+**Persistence:** the AI config (`engine` / `mode` / `voiceId` / `customVoiceId` /
+`live`) rides in the per-source voice-changer config (`AiConfig` in the `voiceFx`
+map), which the Profiles batch already persists **per-profile server-side**; old
+device-local rvc_zero `ai` blobs read as `engine: rvc_zero` (back-compat) and
+migrate into the Default profile via the existing profiles migration. The **BYO key
+stays device-local** (a secret).
+
 ## Sources
 
+- [ONNX Runtime Web (WebGPU execution provider)](https://onnxruntime.ai/docs/tutorials/web/)
+- [w-okada Realtime Voice Changer](https://github.com/w-okada/voice-changer)
+- [ElevenLabs Voice Changer (speech-to-speech) API](https://elevenlabs.io/docs/capabilities/voice-changer)
+- [MDN — DynamicsCompressorNode](https://developer.mozilla.org/en-US/docs/Web/API/DynamicsCompressorNode)
 - [SoundTouchJS (`@soundtouchjs/audio-worklet`, MPL-2.0)](https://github.com/cutterbl/SoundTouchJS/)
 - [Tone.js `PitchShift`](https://tonejs.github.io/docs/PitchShift)
 - [Pitch shifting in Web Audio API — Tuomas Siipola](https://zpl.fi/pitch-shifting-in-web-audio-api/)

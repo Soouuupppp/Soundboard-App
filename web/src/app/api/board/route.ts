@@ -2,17 +2,24 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { boardEntries, sounds, users } from "@/db/schema";
+import { boardEntries, profilePlacements, sounds, users } from "@/db/schema";
 import { PostBoardEntryBody } from "@/lib/validation";
 import { getTagsForSounds } from "@/lib/tags";
+import { resolveProfile } from "@/lib/profiles";
 import { clientKey, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
-// GET /api/board — entries for current user, joined with the underlying sound + owner info.
-export async function GET() {
+// GET /api/board?profileId=X — the caller's Saved library (global boardEntry rows)
+// merged with profile X's per-profile placement (onBoard/position/label/keybind/
+// controllerBind). entry.id stays the boardEntry id (stable Saved id); a sound with
+// no placement in this profile reads as saved-only (onBoard false, no binds).
+export async function GET(req: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const profileId = new URL(req.url).searchParams.get("profileId");
+  const profile = await resolveProfile(session.user.id, profileId);
 
   const rows = await db
     .select({
@@ -23,16 +30,42 @@ export async function GET() {
     .from(boardEntries)
     .innerJoin(sounds, eq(sounds.id, boardEntries.soundId))
     .innerJoin(users, eq(users.id, sounds.ownerId))
-    .where(eq(boardEntries.userId, session.user.id))
-    .orderBy(boardEntries.position);
+    .where(eq(boardEntries.userId, session.user.id));
+
+  // Per-profile placements for this profile, keyed by soundId.
+  const placements = await db
+    .select()
+    .from(profilePlacements)
+    .where(eq(profilePlacements.profileId, profile.id));
+  const placeBySound = new Map(placements.map((p) => [p.soundId, p]));
 
   const tagMap = await getTagsForSounds(rows.map((r) => r.sound.id));
-  const entries = rows.map((r) => ({ ...r, tags: tagMap.get(r.sound.id) ?? [] }));
+  const entries = rows.map((r) => {
+    const p = placeBySound.get(r.sound.id);
+    return {
+      entry: {
+        id: r.entry.id,
+        soundId: r.sound.id,
+        label: p?.label ?? null,
+        keybind: p?.keybind ?? null,
+        controllerBind: p?.controllerBind ?? null,
+        position: p?.position ?? 0,
+        onBoard: p?.onBoard ?? false,
+      },
+      sound: r.sound,
+      ownerName: r.ownerName,
+      tags: tagMap.get(r.sound.id) ?? [],
+    };
+  });
+  // Stable order for the Saved grid; the Board grid re-sorts by position client-side.
+  entries.sort((a, b) => a.entry.position - b.entry.position);
 
-  return NextResponse.json({ entries });
+  return NextResponse.json({ entries, profileId: profile.id });
 }
 
-// POST /api/board — add an existing sound to the user's board (own or public).
+// POST /api/board — add an existing sound to the user's Saved library (own or
+// public). Membership is GLOBAL (not per-profile); no placement is created, so a
+// newly saved clip is saved-only in every profile until promoted to a board.
 export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "unauthorized" }, { status: 401 });

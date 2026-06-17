@@ -31,6 +31,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if ("maxFileSizeOverride" in data) updates.maxFileSizeOverride = data.maxFileSizeOverride ?? null;
   if ("maxTotalStorageOverride" in data) updates.maxTotalStorageOverride = data.maxTotalStorageOverride ?? null;
   if ("canUploadOverride" in data) updates.canUploadOverride = data.canUploadOverride ?? null;
+  if ("profileLimitOverride" in data) updates.profileLimitOverride = data.profileLimitOverride ?? null;
+  if ("aiQuotaSecondsOverride" in data) updates.aiQuotaSecondsOverride = data.aiQuotaSecondsOverride ?? null;
+  if ("canUseAiOverride" in data) updates.canUseAiOverride = data.canUseAiOverride ?? null;
 
   const [row] = await db.update(users).set(updates).where(eq(users.id, id)).returning();
   if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });

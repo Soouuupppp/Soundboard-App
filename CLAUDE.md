@@ -33,7 +33,7 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.4.0**).
+(currently **1.4.1**).
 
 ## Stack
 
@@ -482,6 +482,39 @@ VR controller state + `VrBindPicker` **lifted out of `Dashboard` into shared
 providers** (`VrProvider`, `VoiceChangerProvider`) so binds work from any page. All
 device-local (no schema change); a CSP `connect-src` widening to the HF Spaces
 hosts is the one security tradeoff, documented in `docs/voice-changer-research.md`.
+
+**1.4.1 shipped** (voice-changer effects, sharable presets/voices, paid AI, and
+profiles): the DSP palette grew with six more native effects (chorus, flanger,
+phaser, vibrato, compressor, megaphone) plus a **noise gate** (envelope-follower
+AudioWorklet with hysteresis) and a **pitch shifter** (self-authored granular
+worklet; formant re-deferred) — all auto-surfaced through `EFFECT_DEFS`
+(`lib/voice-fx.ts`). FX effect-chains and AI voice configs became **publishable
+and browsable** via new server libraries (`sharedPreset` + `sharedVoice` tables,
+`/api/presets` + `/api/voices` + admin moderation routes; `lib/shared-presets.ts`,
+`lib/shared-voices.ts`, `FxPresetBar`/`VoicePresetBar` + browse modals), alongside
+the device-local private libraries. **Paid AI voice** was wired through a
+same-origin proxy (`/api/ai/sts` + `/api/ai/tts`, `lib/ai-providers.ts`) for
+**ElevenLabs + Respeecher** — speech-to-speech conversion and in-browser
+**STT→TTS "re-speak"** (`lib/voice-stt.ts`) — with the free `rvc_zero` PTT path
+kept as the default; an **AI usage quota** (seconds/month, user override → role →
+env, `lib/ai-quota.ts`, `user`/`role`/`appSettings` columns + `/api/ai/usage`)
+mirrors the upload quota, plus a **BYO API key** path (device-local, never
+persisted server-side, bypasses the quota). Respeecher continuous-live streaming
+was researched and **re-deferred** (the standalone Next server has no WS upgrade
+hook). **Profiles** landed as a server-side per-profile bundle — the **board
+layout** (new `profile` + `profilePlacement` tables, the `boardEntry` placement
+columns left orphaned as global Saved membership), the **mic voice-changer chain**,
+and **per-clip sound effects** all sync across devices and the desktop app
+(`ProfileProvider`, `/api/profiles` CRUD + clone, profile-scoped board/config; the
+`audio.soundFx`/`voiceFx` accessors repointed to the active profile with the same
+signatures). The header was restructured into a **three-zone navbar**
+(`AppHeader`: logo · centered meter+Voice+Sound-Effects+AI popovers · Settings cog +
+profile switcher + user menu with the quota bar beneath) with a **profile switcher**
+(switch/rename/clone/delete/reorder, cap-aware via role default + per-user
+override), the Sound-Effects editors moved to **anchored popovers**, and AI voice
+split into its **own popover + a main-page section** when enabled. Schema changes
+applied via `bootstrap.sql` (idempotent DDL) per the repo's mechanism — the first
+batch to add DB tables to the otherwise device-local voice-changer feature.
 
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
@@ -1517,6 +1550,950 @@ then the cleanups (3/4/5), then the larger VR-lift refactor (2) last.
 **Explicitly NOT a task** (owner call): the `controllerProfile`-read-once-per-open
 in `VoiceChangerPanel` — the profile can't be toggled while the popover is open, so
 the staleness can't occur in practice. (Also auto-resolves if task 2 lands.)
+
+### Tasks — 1.4.1 (Voice changer effects improvements)
+
+Version bumped to **1.4.1** across all three `package.json` + docs. Owner
+decisions below are **locked** (settled in planning 2026-06-16). Build order: do
+the research (task 1) first since it feeds the new DSP effects, then the sharable
+preset work (tasks 2–4). Tasks 2–4 are independent of task 1.
+
+**Cross-cutting locked decisions:**
+- **Real-time is the priority for the AI path** (revised in planning — broadened
+  from the initial "on-device only" framing). The research evaluates **both**
+  in-browser/on-device options (native Web Audio, WASM, ONNX, WebGPU — audio stays
+  local) **and external providers**, ranked by whether they can do **low-latency
+  live conversion**. **Paid external providers are in scope** if they're realtime
+  and good (research must surface rough pricing alongside free options); **free
+  options preferred** where quality is comparable. Any path where audio **leaves
+  the machine** (esp. continuous realtime streaming, a bigger exposure than
+  1.4.0's PTT bursts) requires an **explicit in-UI privacy disclosure** (mirror
+  the 1.4.0 `AI_PRIVACY_NOTICE` pattern) + the deliberate CSP `connect-src`
+  widening in `middleware.ts`. Still honor the capture-devices/cables-only,
+  no-native-code, browser-based constraint (`virtual-mic-capture` memory) — the
+  AI runs in the browser (in-process WASM/WebGPU or a network call), not native.
+- **Realtime AI is RESEARCH + DOCUMENT ONLY this version (locked, narrowed in
+  planning 2026-06-16).** 1.4.1 **does not wire a realtime AI path** — paid
+  realtime needs a server proxy holding our key (we'd pay per use for every user)
+  and in-browser realtime RVC is still immature, so the realtime integration is
+  deferred. Task 1 fully researches realtime (in-browser + free/paid external) and
+  records the recommended pick + cost/privacy analysis in
+  `docs/voice-changer-research.md`, but **the only AI that ships unchanged is the
+  existing 1.4.0 push-to-talk `r3gm/rvc_zero` path.** The committed code
+  deliverable for 1.4.1 is the **new DSP effects** (task 1). No CSP/proxy/billing
+  work this version.
+- **Sharable presets are DSP effect chains only** — the existing `soundboard:
+  fxPresets` shape (`{ id, name, effects: EffectConfig[] }`, `lib/fx-presets.ts`).
+  **AI voice configs (RVC model/index URL + pitch) are NOT shared** (the custom-URL
+  impersonation/legal concern flagged in 1.4.0 stands). The device-local
+  `soundboard:fxPresets` library **stays** for private/unsaved presets; the new
+  server library is additive (publish to it / add from it).
+- **This batch DOES add a DB table** — a deliberate departure from the
+  voice-changer feature's device-local stance, since sharing requires a server.
+  Per the repo's mechanism, schema changes go in **BOTH `web/src/db/schema.ts` AND
+  `web/src/db/bootstrap.sql`** (CREATE TABLE block + idempotent `ADD COLUMN IF NOT
+  EXISTS` backfills), run by `migrate.ts` at container start — **NOT** drizzle-kit
+  migrations. See the `db-schema-via-bootstrap-sql` memory.
+
+1. **Research: more voice-changer effects + a realtime AI path** *(research
+   deliverable; new DSP ships)*. Survey along two axes — broaden the DSP palette,
+   and find a **realtime AI** voice path (in-browser or external; see cross-cutting
+   for the cost/privacy locks). Open-source preferred; for AI, **realtime quality
+   ranks above free/local** (paid + audio-off-machine acceptable with disclosure):
+   - **More DSP effects** to broaden the native palette beyond the 1.4.0 set
+     (robot/echo/reverb/distortion/telephone/tremolo/low-high-pass/bitcrusher) —
+     additional native Web Audio nodes, WASM DSP, vocoder/effect toolkits,
+     impulse-response packs for the reverb.
+   - **Real-time AI voice changer (research/document only — NOT implemented this
+     version, locked).** Survey + recommend, ranked by low-latency live
+     conversion: (a) **in-browser/on-device** models (WASM/ONNX/WebGPU, e.g.
+     RVC/so-vits-style or lighter realtime models) where audio stays local, and
+     (b) **external realtime providers** (free or paid — surface rough pricing,
+     latency, streaming protocol, and the audio-leaves-machine exposure). Compare
+     against the 1.4.0 HF-hosted `rvc_zero` PTT path (which ships unchanged). The
+     output is the recommendation + analysis in the docs file; **no realtime code
+     lands in 1.4.1.**
+   - **Output (locked):** extend **`docs/voice-changer-research.md`** with a new
+     section for the new-DSP survey + the realtime-AI survey (options, tradeoffs,
+     security/privacy esp. for any audio-off-machine path, pricing, licensing,
+     recommended picks + a "future version" implementation sketch). Distill the
+     DSP picks back into this task section so the implementation builds against
+     them; the realtime-AI picks stay as the documented future direction.
+   **Locked ship bar:** the **new feasible DSP effects are the ONLY committed code
+   deliverable** of task 1 — implement them in `lib/voice-fx.ts` (native Web Audio,
+   plus a worklet only if needed, mirroring the bitcrusher) and wire them into the
+   existing per-source / per-clip chain editors so they appear automatically via
+   `EFFECT_DEFS` (add `EffectKind` members + `EFFECT_DEFS` entries + `createEffect`
+   cases; the UI, presets, and persistence pick them up with no further wiring).
+   The **realtime AI path ships no code this version** (research/document only,
+   above); the existing 1.4.0 PTT AI is untouched.
+   **Progress: ✅ Done** *(added six native Web Audio effects to `lib/voice-fx.ts`
+   — `chorus`/`flanger`/`phaser`/`vibrato` (LFO-modulated `DelayNode`/all-pass
+   biquads, same osc→param pattern as tremolo/robot), `compressor`
+   (`DynamicsCompressorNode`), and `megaphone` (band-pass → tanh `WaveShaper`).
+   Each got an `EffectKind` member + `EFFECT_DEFS` entry (params drive the sliders/
+   defaults) + a `createEffect` case with live `update()`/`dispose()`; the chain
+   editors, presets, and persistence pick them up with no further wiring. No
+   worklet, no external DSP lib; pitch/formant still deferred. Extended
+   `docs/voice-changer-research.md` §8 — the new-DSP table, the
+   considered-but-skipped effects (noise gate needs an envelope/worklet; stereo
+   widener is moot on a mono mic chain), and a realtime-AI survey (in-browser
+   ONNX/WebGPU = research-grade/not-ready; external realtime = paid + server-key
+   + continuous off-machine stream) recommending self-hosted RVC/w-okada behind a
+   WS proxy as the future pick — RESEARCH ONLY, no realtime code lands. tsc
+   clean.)*
+
+2. **Server-side sharable preset library — schema + API** *(feat)*. A shareable
+   server library of FX effect-chain presets (DSP chains only — see cross-cutting).
+   - **Schema (locked):** new table **`sharedPreset`** in `schema.ts` — `id` uuid
+     PK, `ownerId` text → `user.id` (`onDelete: cascade`), `name` text, `effects`
+     text (serialized `EffectConfig[]` JSON), `isOfficial` boolean default false
+     (admin/featured flag), `createdAt` timestamp. Mirror into `bootstrap.sql`
+     (CREATE TABLE IF NOT EXISTS block; no backfill needed — it's a brand-new
+     table). Don't add a column the UI won't use (no `updatedAt`/`description`).
+   - **API (locked):** `GET /api/presets` (list — official first, then newest;
+     joins `user` for `ownerName`/`ownerImage`, **omits `ownerId`**, returns a
+     `mine` flag like `/api/public/sounds`); `POST /api/presets` (auth'd publish —
+     validate name + `effects` against the new Zod schema, see below;
+     rate-limited like `board-mut`); `DELETE /api/presets/[id]` (owner always;
+     admin any). A new **`PostSharedPresetBody`** Zod schema in `lib/validation.ts`
+     validates `name` (`printable`, ≤80) + an `effects` array (≤12 items) of
+     `{ kind ∈ EffectKind, params: Record<string, finite number> }` — bound it so
+     the DB can't be stuffed; the client re-clones with fresh ids anyway.
+   - **Admin route (locked):** `PATCH /api/admin/presets/[id]` (admin-only) to
+     toggle `isOfficial` (promote/demote) — mirrors `/api/admin/sounds/[id]`. Admin
+     DELETE goes through the same `DELETE /api/presets/[id]` (admin-any branch).
+   - **Publishing semantics (locked):** a user-published preset is **public
+     immediately** (no approval queue) and appears in the browse library; admins
+     can **delete any** and **toggle `isOfficial`**. There is **no edit** — to
+     change a published preset, delete + republish. Per-user publish cap (e.g. 50)
+     enforced in `POST`.
+   **Progress: ✅ Done** *(new `sharedPreset` table in `schema.ts` (id/ownerId→user
+   cascade/name/effects JSON/isOfficial/createdAt) + matching `CREATE TABLE IF NOT
+   EXISTS` + owner index in `bootstrap.sql` (new table, no backfill).
+   `PostSharedPresetBody` in `lib/validation.ts` — name (≤80, printable, min 1) +
+   `effects` array (1–12) of `{kind ∈ EFFECT_KINDS, params: record<string, finite
+   number>}` (EFFECT_KINDS mirrors the voice-fx `EffectKind` union with a sync
+   note, so the server module stays free of the "use client" audio lib). Routes:
+   `GET /api/presets` (official-first then newest; joins user for ownerName/Image,
+   OMITS ownerId, returns `mine`; parses effects defensively), `POST /api/presets`
+   (auth'd; rate-limited `preset-mut`; per-user cap 50 → 409; `isOfficial` honored
+   only for admins so an admin can author-as-official in one call), `DELETE
+   /api/presets/[id]` (owner-or-admin), `PATCH /api/admin/presets/[id]` (admin-only
+   isOfficial toggle). CSRF/Origin is covered by the global middleware. No edit
+   endpoint. tsc clean.)*
+
+3. **Sharable presets — user UI** *(feat)*. **Locked: a "Browse shared" button in
+   `FxPresetBar`** (`components/FxPresetBar.tsx`, reused by both the voice-changer
+   `EffectChainEditor` and the per-clip Sound-Effects editor) that opens a **modal
+   browser** (mirror `SoundEffectsPickerModal`'s `ModalShell` + searchable list in
+   `components/SoundEffectsModal.tsx`). The modal lists shared presets — **official
+   ones first with a featured badge**, then user presets with **owner display
+   name** — searchable, each with **Apply**. `FxPresetBar` also gets a **"Publish
+   to shared…"** action (name the current chain → `POST /api/presets`), shown
+   alongside the existing local "Save as preset…".
+   - **Apply behavior (locked):** applying a shared preset **clones it (fresh ids
+     via `cloneEffects`) into the working chain** AND offers a **"save to my
+     presets"** affordance so a local copy lands in `soundboard:fxPresets` (via
+     `addPreset`) and shows in the local dropdown next time.
+   - The device-local `soundboard:fxPresets` flow stays intact alongside the
+     server library (private/unsaved presets). Match the dark glassy UI / shared
+     `Select`; route failures through `useToast`/`fromResponse`. New `lib/`
+     helper (e.g. `lib/shared-presets.ts`) wraps the fetch/publish/delete calls.
+   **Progress: ✅ Done** *(new `lib/shared-presets.ts` — `SharedPreset` type +
+   `fetchSharedPresets`/`publishSharedPreset` (strips effect ids; admin-only
+   `isOfficial`)/`deleteSharedPreset`/`setSharedPresetOfficial` (returns raw
+   Response for `toast.fromResponse`). New `components/SharedPresetsModal.tsx` — a
+   portal modal (Esc/click-outside) listing the library (official-first w/ a Star
+   "Official" badge, user presets show effect count + "by <ownerName>"), searchable
+   by name/author, each row: **Apply** (clones into the working chain via
+   `cloneEffects` → `onApply`, closes), **+ Save** (`addPreset` → local
+   `soundboard:fxPresets`), and **Delete** on your own. `FxPresetBar` gained
+   **Publish to shared…** (reuses the inline name input via a `mode` flag → `POST
+   /api/presets`) and **Browse shared** (opens the modal); the local
+   "Save as preset…" + dropdown flow is unchanged. Both effect editors
+   (voice-changer + per-clip) get it for free since they share `FxPresetBar`.
+   Failures via `useToast`/`fromResponse`. tsc clean.)*
+
+4. **Admin section for shared presets** *(feat)*. A **new pill-tab in
+   `AdminPanel`** ("Presets", mirroring the `roles|users|youtube|notices|tags|
+   content` tab pattern + the `refresh()`/`onChange` data flow). **Locked: admins
+   can BOTH author and moderate** —
+   - **Author from scratch:** reuse the exported **`EffectChainEditor`**
+     (`components/VoiceChangerPanel.tsx`) to build a chain in the admin tab, name
+     it, and publish it as **official** (`POST /api/presets` then
+     `PATCH …/isOfficial=true`, or a publish-as-official path).
+   - **Moderate:** list **all** shared presets (official + user, with owner display
+     name), **toggle official** (promote/demote via `PATCH /api/admin/presets/
+     [id]`), and **delete any** (`DELETE /api/presets/[id]`).
+   - Validation reuses task 2's `PostSharedPresetBody`.
+   **Progress: ✅ Done** *(new `"presets"` pill-tab in `AdminPanel` (Sliders icon),
+   added to the tab union + the `refresh()` Promise.all (loads the shared library
+   via `fetchSharedPresets`, which already returns official+user with owner names,
+   no UUID — admins moderate the same list users see). New `PresetsAdmin` section:
+   **author** = a controlled `EffectChainBuilder` + name field → "Publish official"
+   (`publishSharedPreset(name, draft, {isOfficial:true})`, honored server-side for
+   admins); **moderate** = list all presets (official badge + owner) with
+   "Make official"/"Unofficial" (`setSharedPresetOfficial` → `PATCH
+   /api/admin/presets/[id]`) and Delete (`deleteSharedPreset` → admin-any branch).
+   **Design note:** rather than convert the live `EffectChainEditor`
+   (`VoiceChangerPanel`) — which relies on the no-rebuild `updateSourceEffectParams`
+   live path that matters for live mic audio — I added a sibling controlled
+   `components/EffectChainBuilder.tsx` (plain `EffectConfig[]` + `onChange`) for
+   offline authoring. Same UI; safer than regressing the live param path. tsc
+   clean.)*
+
+### Tasks — 1.4.1 (Noise gate + pitch/formant shift — appended)
+
+Two DSP effects that §8 of `docs/voice-changer-research.md` had **deferred** but
+the owner has now greenlit (decided 2026-06-16 after a follow-up research pass).
+Same version (1.4.1) — appended. Both are new `EffectKind` members in
+`lib/voice-fx.ts`, so the existing chain editors, presets, persistence, and the
+server-side shared-preset library pick them up automatically via `EFFECT_DEFS` —
+**no UI/editor wiring beyond the lib + worklet files.** Build the noise gate first
+(self-contained, mirrors the bitcrusher); then pitch/formant (a new dependency +
+two vendored worklets, larger).
+
+**Cross-cutting (both tasks):**
+- Worklets are served **same-origin from `web/public/worklets/`** and registered
+  lazily via `ctx.audioWorklet.addModule(url)` — our CSP is `script-src 'self'`, so
+  same-origin worklet modules need **no CSP change** (an npm `blob:`/CDN import
+  would; don't go that route). Mirror the existing `ensureBitcrusherModule`
+  lazy-once-per-context registration + `chainNeedsBitcrusher`/`preloadEffects`
+  preload pattern (generalize it — see task 6's note — rather than copy-paste a
+  third time).
+- Adding an effect = an `EffectKind` member + an `EFFECT_DEFS` entry (drives the
+  sliders + defaults) + a `createEffect` case returning `{input,output,update,
+  dispose}`. Keep the `voice-fx.ts` header ASCII/notes accurate.
+- The validation allow-list **`EFFECT_KINDS`** in `lib/validation.ts` (used by
+  `PostSharedPresetBody`) **must gain the new kinds** or shared presets containing
+  them will fail server-side validation. (Update both the `voice-fx.ts` union and
+  the `validation.ts` mirror — there's a "keep in sync" note there.)
+
+5. **Noise gate effect** *(feat — ship)*. A new `"noisegate"` effect: a custom
+   single-node **AudioWorklet** (author `web/public/worklets/noisegate-processor.js`,
+   modeled on `bitcrusher-processor.js`). DSP: a **peak/envelope follower** with
+   attack/release smoothing computes the signal level per render quantum; gate
+   opens when level ≥ open threshold and closes when it falls below a **close
+   threshold a few dB lower** (**hysteresis**, to stop chatter), with a **hold**
+   time before closing and a **range** (how far down the closed gate attenuates,
+   not necessarily −∞). **Locked params (`EFFECT_DEFS`):** `threshold` (dB,
+   −80..0, default ≈ −45), `attack` (s, small), `hold` (s), `release` (s),
+   `range` (dB of attenuation when closed, default ≈ −60). Smooth the gain ramp
+   (don't hard-switch) to avoid clicks. Register lazily like the bitcrusher;
+   `createEffect`'s `"noisegate"` case builds the `AudioWorkletNode` optimistically
+   with the same passthrough-gain fallback if construction throws.
+   **Progress: ✅ Done** *(new `web/public/worklets/noisegate-processor.js` — a
+   peak/envelope follower (instant attack, ~1ms smoothed decay) drives a hysteresis
+   gate: opens at `threshold`, closes only below `threshold−3dB`, with a `hold` time
+   before closing and a ramped gain (attack/release one-pole) toward open (1) or the
+   closed `range` floor (dB) so it doesn't click; detection from ch0, the per-sample
+   gain applied to all channels. Added `EffectKind` `"noisegate"` + `EFFECT_DEFS`
+   entry (threshold −80..0/−45, attack/hold/release, range −100..0/−60) + a
+   `createEffect` `"noisegate"` case (optimistic `AudioWorkletNode` → passthrough-gain
+   fallback). Generalised the bitcrusher's lazy register-once preload into a
+   `WORKLET_MODULES` registry + `chainNeedsWorklet`/`ensureWorkletModules` (per-ctx,
+   per-url dedupe), and repointed the three `audio-mixer.ts` call sites
+   (`buildSourceChain`/`setSourceEffects`/`preloadEffects`) off the bitcrusher-specific
+   helpers — so the gate (and the pitch effect below) register the same way. Added
+   `"noisegate"` to the `validation.ts` `EFFECT_KINDS` allow-list so shared presets
+   accept it. tsc clean.)*
+
+6. **Pitch + formant shift effect** *(feat — ship; new dependency)*. A new
+   `"pitch"` effect backed by **SoundTouchJS** — `@soundtouchjs/audio-worklet`
+   (pitch/rate, **MPL-2.0** — file-level copyleft, safe in this proprietary +
+   Electron app) plus `@soundtouchjs/formant-correction-worklet` for **formant
+   preservation/shift**. **Locked params:** `pitch` (semitones, e.g. −12..+12,
+   default 0) and `formant` (semitones or a ratio, default 0 = preserve). Owner
+   accepted the **inherent buffering latency** (~tens of ms) on the live mic path
+   (it's a per-source opt-in effect). Integration notes:
+   - **Add the deps** to `web/package.json` (they install at the same time as the
+     existing `@gradio/client`). **Vendor each package's worklet processor JS into
+     `web/public/worklets/`** (e.g. a small build/copy step or a committed copy) so
+     it loads same-origin under our CSP — an npm/CDN `addModule` would violate
+     `script-src 'self'`. Note the vendoring mechanism in the file header.
+   - SoundTouchJS's documented path is **buffer playback**, not a live mic stream —
+     the **integration risk is the live `MediaStreamSource` → worklet** path.
+     Validate it processes a continuous live stream cleanly (no buffer-underrun
+     artifacts) before considering it done; if the live path proves unworkable,
+     fall back to a **DIY granular pitch worklet (pitch-only, no formant)** and
+     flag formant as re-deferred rather than shipping something broken.
+   - `createEffect`'s `"pitch"` case wires the SoundTouch worklet node(s) in series
+     (pitch → formant-correction), exposing `pitch`/`formant` via its AudioParams
+     in `update()`; `dispose()` tears them down.
+   - **Generalize the worklet preload** (`voice-fx.ts`): the bitcrusher's
+     `ensureBitcrusherModule`/`chainNeedsBitcrusher`/`preloadEffects` is now one of
+     three worklet-backed effects — refactor to a small registry (kind → module
+     URL(s)) + a generic `ensureWorkletModules(ctx, effects)` so the noise gate and
+     pitch effect register the same way, and update the `audio-mixer.ts` /
+     `audio-output.ts` preload call sites (currently `chainNeedsBitcrusher`-gated)
+     to the generic check. Keep the optimistic-build + passthrough-fallback
+     behavior for every worklet effect.
+   - Update `docs/voice-changer-research.md` §3b / §8 to record that pitch+formant
+     (SoundTouchJS) and the noise gate are now **shipped** (move them out of the
+     "deferred / considered but not shipped" lists).
+   **Progress: ✅ Done — PITCH shipped; FORMANT re-deferred (⚠️ flag to owner).**
+   *(Spike outcome: SoundTouchJS couldn't be adopted in-environment — its
+   pitch/formant worklets live inside the npm packages and can't be vendored into
+   `web/public/worklets/` without installing+building them, and its documented path
+   is buffer playback, not a live `MediaStreamSource` (the flagged integration risk),
+   so it's unverifiable under the no-install/no-run constraint. Per the LOCKED
+   fallback I shipped a self-authored **pitch-only** worklet
+   `web/public/worklets/pitch-processor.js` — a classic dual-tap delay-line granular
+   shifter (circular buffer, two read taps a half-window apart scrolling at
+   `1−2^(st/12)`, constant-power sin-window crossfade, linear interpolation; mono →
+   copied to extra channels) — and **RE-DEFERRED formant** (no `@soundtouchjs/*`
+   dependency added). Added `EffectKind` `"pitch"` + `EFFECT_DEFS` (single `pitch`
+   param, −12..+12 st) + a `createEffect` `"pitch"` case (optimistic worklet →
+   passthrough fallback) + `"pitch"` in the `validation.ts` allow-list. The worklet
+   preload was generalised in task 5 (`WORKLET_MODULES` registry +
+   `ensureWorkletModules`), so the pitch worklet registers/preloads with no extra
+   wiring. Docs: §8a-bis records the gate + pitch as shipped + the formant re-defer +
+   the SoundTouchJS upgrade path; §3b/§8a updated (removed from the deferred lists).
+   tsc clean. **Owner decision needed** to get formant: install SoundTouchJS, vendor
+   its worklet JS into `web/public/worklets/`, and extend the `pitch` case — steps
+   recorded in the worklet header + §8a-bis.)*
+
+### Tasks — 1.4.1 (Paid AI voice — STS + STT→TTS re-speak — appended)
+
+> **This SUPERSEDES the earlier 1.4.1 "realtime/paid AI = research-only,
+> deferred" lock** (§8b of `docs/voice-changer-research.md` + the 1.4.0-batch
+> cross-cutting note). Owner reversed it (decided 2026-06-16 after the paid-provider
+> research pass): we now actually wire **paid AI providers**. Two distinct features
+> sharing one provider / proxy / quota stack:
+> **(A) STS** — speech→speech voice *conversion* (preserves your delivery), and
+> **(B) STT→TTS "re-speak"** — in-browser speech-to-text → paid AI text-to-speech
+> (clean synthetic voice, your delivery is discarded). The free 1.4.0
+> **rvc_zero** browser-direct PTT path **stays** as the default engine.
+
+**Cross-cutting locked decisions (2026-06-16):**
+- **Providers:** **ElevenLabs + Respeecher** for both features; **rvc_zero kept**
+  as the free, no-key default engine.
+- **Keys / billing — hybrid (locked):** an **app-owned key** (env
+  `ELEVENLABS_API_KEY` / `RESPEECHER_API_KEY`) gated by a **per-user free quota**,
+  PLUS **BYO key** (the user pastes their own; device-local) to bypass the quota.
+  **All paid calls route through a same-origin Next.js proxy** that holds the app
+  key OR forwards a BYO key supplied in a request header — **the BYO key is never
+  persisted server-side**. Because the browser only ever talks to our own origin,
+  **NO CSP `connect-src` change is needed** for the paid providers (rvc_zero stays
+  browser-direct on the already-allowed HF hosts; Web Speech API is a native
+  browser API). BYO-key usage is **not metered**.
+- **Quota — mirror uploads/YT (locked):** unit = **seconds of AI audio**,
+  **unified** across providers (one pool), **monthly reset**. Resolution =
+  **user override → role default → env `DEFAULT_AI_QUOTA_SECONDS`** (the
+  `lib/quota.ts` pattern). Per-user usage is **displayed in /admin on each user**
+  (used / cap), with a role default + per-user override — exactly like the file
+  quota. STS/live meter **input** (audio) seconds; TTS meters **output** seconds.
+- **Admin (locked):** a master **`aiEnabled`** toggle + the **live session cap**
+  (default ~60s) + the per-role AI quota live in **/admin appSettings**, mirroring
+  the YouTube-settings section. App keys via **env** (standard for secrets), not the
+  DB.
+- **STS interaction (locked):** **PTT for ElevenLabs** (its Voice Changer is
+  file-input, ≤300s, result streamed back) + **continuous-live for Respeecher**
+  (true full-duplex realtime <200ms). Live is **allowed on the app quota** but with
+  a **hard auto-stop session cap** (admin-configurable) and meters elapsed seconds
+  against the quota.
+- **STT→TTS (locked):** in-browser **Web Speech API** (`SpeechRecognition`) for the
+  STT half; **interim transcript shown** as feedback, **auto-speak on release** (no
+  edit-confirm). The TTS half is the chosen paid provider's voice.
+  ⚠️ **Risk: Web Speech API likely does NOT work in the Electron wrapper** (the
+  Chromium build ships no Google speech key) — validate early; if broken, gate the
+  re-speak feature to the **web build** (and surface why) or add a fallback. The
+  free rvc_zero STS path is unaffected and still works in Electron.
+- **Voices (locked):** **curated safe presets per provider + a custom voice-ID
+  field** (mirrors the rvc_zero hybrid). Bundle only safe default provider voices;
+  the custom field carries the existing "use only voices you're entitled to"
+  reminder.
+- **Disclosure (locked):** paid providers AND the Web Speech API all send audio /
+  text off the machine → extend the `AI_PRIVACY_NOTICE` pattern; the Respeecher
+  **live** stream gets a **prominent, always-on** disclosure (continuous off-machine
+  stream, a bigger exposure than PTT bursts).
+- **Persistence:** extend the device-local `soundboard:voicefx` `ai` shape
+  (engine/provider, mode = sts|respeak, voiceId | custom voice-id, optional byoKey).
+  Selecting the existing free rvc_zero engine keeps its current behavior unchanged.
+- **Schema** changes go in **BOTH `web/src/db/schema.ts` AND
+  `web/src/db/bootstrap.sql`** (idempotent DDL run by `migrate.ts` at container
+  start) — NOT drizzle-kit migrations. See the `db-schema-via-bootstrap-sql` memory.
+
+Build order: quota+admin plumbing (1) → paid proxy PTT/file (2) → Respeecher live
+(3) → STT→TTS (4) → UI (5) → persistence/validation/docs/tsc (6).
+
+1. **AI quota + admin plumbing** *(do first — both features depend on it)*.
+   - **Schema (both `schema.ts` + `bootstrap.sql`):** add a **role** AI quota
+     default + use-permission (e.g. `aiQuotaSecondsMonthly` int nullable,
+     `canUseAi` bool) mirroring the role's upload columns; matching **user**
+     overrides (`aiQuotaSecondsOverride`, `canUseAiOverride`); and **per-user usage
+     tracking** — simplest is two columns on `user` (`aiSecondsUsed` int +
+     `aiUsagePeriod` text `YYYY-MM`, rolled over when the month changes); a small
+     `aiUsage` ledger table is the more auditable alternative (pick one, note it).
+     Add `appSettings` columns: `aiEnabled` (bool) + `aiLiveSessionCapSec` (int,
+     default 60). Add `ADD COLUMN IF NOT EXISTS` backfills.
+   - **`lib/ai-quota.ts`:** resolution (user override → role → env
+     `DEFAULT_AI_QUOTA_SECONDS`), a `getAiUsage(userId)` (with monthly rollover),
+     and a `consumeAiSeconds(userId, n)` / `checkAiQuota` used by the proxy routes;
+     gate on the master `aiEnabled` + `canUseAi`. BYO-key requests skip consume.
+   - **Admin:** an "AI" settings block in `AdminPanel` (master toggle + live cap +
+     per-role AI quota/permission, reuse the YT-section + role-override patterns) and
+     a **per-user used/cap display + override** in the users tab (mirror the upload
+     quota UI). Zod validation in `lib/validation.ts` for the new settings.
+   - **`GET /api/ai/usage`** (or fold into the session/me payload) → current user's
+     `{ used, cap, enabled }` for the UI meter.
+   **Progress: ✅ Done** *(Schema — chose the **two-columns-on-`user`** option (not a
+   ledger table): `user.aiSecondsUsed` (int, default 0) + `user.aiUsagePeriod` (text
+   `YYYY-MM`, UTC), plus per-user overrides `aiQuotaSecondsOverride` + `canUseAiOverride`;
+   role `aiQuotaSecondsMonthly` (int null) + `canUseAi` (bool, default TRUE); appSettings
+   `aiEnabled` (bool, default FALSE) + `aiLiveSessionCapSec` (int, default 60). Mirrored
+   in both `schema.ts` and `bootstrap.sql` (CREATE blocks + `ADD COLUMN IF NOT EXISTS`
+   backfills). New `lib/ai-quota.ts` — `DEFAULT_AI_QUOTA_SECONDS` (env, default 300),
+   `currentAiPeriod()` (UTC YYYY-MM), `getAiQuotaSeconds`/`canUserUseAi` (user override →
+   role → env/allowed), `getAiUsage` (used/cap/enabled/canUse; stale period reads 0),
+   `consumeAiSeconds` (atomic conditional UPDATE that resets the counter on a month
+   rollover), and `checkAiQuota({byo})` (gates aiEnabled → permission → remaining; BYO
+   skips the quota, returns `{ok,status,error}` mapping straight to a response). New
+   `GET /api/ai/usage` returns the current user's meter. Validation: `aiQuotaSeconds`
+   (0–10M) added to `PatchRoleBody` (`aiQuotaSecondsMonthly`+`canUseAi`), `PatchUserBody`
+   (`aiQuotaSecondsOverride`+`canUseAiOverride`), `PatchAppSettingsBody`
+   (`aiEnabled`+`aiLiveSessionCapSec` 5–600). Admin: roles GET (`select *`) + roles PATCH
+   (`set(parsed.data)`) pass the new fields through automatically; users GET now returns
+   role defaults, overrides, resolved `aiCap` + current-period `aiUsed`, and
+   `defaultAiQuotaSeconds`; users PATCH whitelist extended. AdminPanel: a new **"AI voice"**
+   pill tab with `AiSettings` (master Toggle + live-cap input + a per-role quota/access
+   table reusing `Toggle`/`NullableNumber`), and two new Users-table columns — **AI access**
+   (`AiAccessOverride`, three-state like `UploadOverride`) + **AI quota** (used/cap +
+   `NullableNumber` override). tsc clean. App provider keys stay in env only.)*
+
+2. **Paid provider proxy — STS (file/PTT) + TTS** *(feat)*.
+   - **`lib/ai-providers.ts`** (server): ElevenLabs + Respeecher clients —
+     **STS** (ElevenLabs Voice Changer file endpoint; Respeecher S2S file) and
+     **TTS** (both providers' text→speech). Provider + voiceId params; accept an app
+     key (env) or a BYO key (from the request, never stored).
+   - **`POST /api/ai/sts`** (audio blob + provider + voiceId) and **`POST
+     /api/ai/tts`** (text + provider + voiceId): auth'd, gate on `aiEnabled` +
+     `canUseAi`, **meter usage** against the quota (skip for BYO), `board-mut`-style
+     rate-limit, return the converted audio. CSRF/Origin covered by the global
+     middleware. **No CSP change** (same-origin proxy).
+   - **Client (`audio-output.ts` / `voice-ai.ts`):** when the selected engine is a
+     paid provider, the PTT path posts the recorded clip to `/api/ai/sts` (STS mode)
+     and injects the result via `injectClipToSource` (through the source's DSP chain),
+     exactly like the rvc_zero flow. TTS is used by feature B (task 4).
+   **Progress: ✅ Done** *(new `lib/ai-providers.ts` (server-only) — `providerSts`/
+   `providerTts` for ElevenLabs (Voice Changer `/speech-to-speech/{voice}` multipart +
+   `/text-to-speech/{voice}` JSON, `xi-api-key`) and Respeecher (env-configured
+   `RESPEECHER_STS_URL`/`RESPEECHER_TTS_URL` since its REST surface is account-specific;
+   503 with a clear message when unset), `appKeyFor(provider)` reading
+   `ELEVENLABS_API_KEY`/`RESPEECHER_API_KEY`, and a `ProviderError` carrying an HTTP
+   status. Routes `POST /api/ai/sts` (multipart audio+provider+voiceId+seconds hint, 30MB
+   Content-Length pre-guard) and `POST /api/ai/tts` (JSON `PostAiTtsBody`): both auth'd,
+   `ai-mut` rate-limited, gated + metered via `checkAiQuota`/`consumeAiSeconds` (STS meters
+   the clamped input-seconds hint, TTS meters estimated output seconds ≈ text/14; BOTH
+   skip metering when a BYO key is present). The BYO key arrives in the `x-ai-key` header,
+   is used then discarded — never stored/logged. CSRF/Origin covered by the global
+   middleware; NO CSP change (same-origin proxy). Validation: `aiProvider`/`aiVoiceId` +
+   `PostAiTtsBody`. New CLIENT helper `lib/voice-ai-paid.ts` — device-local BYO-key store
+   (`soundboard:aiKeys`, sent as `x-ai-key`), curated ElevenLabs preset voices + custom
+   sentinel (Respeecher = custom-only, account voice ids), per-provider privacy notices
+   (+ a prominent live notice), and `convertStsViaProxy`/`ttsViaProxy`. `audio-output.ts`:
+   `AiConfig` extended (`engine`/`mode`/`customVoiceId`/`live`; undefined engine = rvc_zero
+   for back-compat), `convertAndInject` now branches rvc_zero vs paid STS (resolving the
+   convert fn before flipping `aiBusy`), and PTT tracks `startedAt` so the metered input
+   seconds reflect the real recording length. tsc clean. Live/respeak paths are tasks 3/4;
+   the UI (engine picker/BYO field/usage meter) is task 5.)*
+
+3. **Respeecher continuous-live (WebSocket streaming)** *(feat — biggest/riskiest)*.
+   - **Server WS proxy** to Respeecher's realtime S2S. ⚠️ **Infra risk:** the web
+     app runs Next standalone (`node server.js`) — route handlers don't do
+     WebSockets, so this needs a **custom server / upgrade handler** (or a separate
+     ws endpoint). Scope/spike this first; if a same-origin WS proxy proves
+     impractical, fall back to Respeecher **in PTT/file mode** and re-defer
+     continuous-live (flag to owner). The browser↔proxy WS is same-origin so
+     `connect-src 'self'` covers it.
+   - **Session cap:** auto-stop the stream after `aiLiveSessionCapSec`; **meter
+     elapsed seconds** against the quota (skip for BYO); refuse to start if quota
+     exhausted.
+   - **Client:** open the WS, `mic MediaStreamTrack → chunked PCM frames → proxy →
+     converted frames → MediaStreamAudioSourceNode injected at the mic source's
+     chain head` (so DSP still applies), with the raw mic muted via the existing
+     `aiMuted` gate. A **start/stop** control (optionally a bind), and the
+     **always-on** live disclosure.
+   **Progress: ✅ Done — FALLBACK (continuous-live RE-DEFERRED, per the locked
+   spike-then-fall-back decision; ⚠️ FLAG TO OWNER).** *(Spike outcome: the web app
+   ships `next.config.ts` `output: "standalone"` and the Docker `CMD` is `node
+   server.js` — the Next-generated standalone server, which exposes no `upgrade`
+   hook, and App-Router route handlers cannot accept a WebSocket upgrade. A
+   same-origin WS proxy would require replacing/wrapping the standalone server with
+   a custom Node server AND changing the Dockerfile start command — a deploy-
+   architecture change that can't be validated under the no-build/no-run constraint
+   — and Respeecher's realtime S2S WebSocket framing/auth isn't publicly specified
+   to implement faithfully. Per the LOCKED fallback, continuous-live is re-deferred
+   and **Respeecher ships in PTT/file STS mode** (already wired in task 2:
+   `providerSts` + the `engine:"respeecher"` branch in `convertAndInject`). The
+   `AiConfig.live` flag exists but is inert — task 5's Respeecher "PTT vs Live"
+   control renders Live as disabled/"coming soon". No WS code, no custom server, no
+   Dockerfile change shipped. **Owner decision needed** to revisit: adopting a
+   custom server (drop `output: standalone` or wrap it) + obtaining Respeecher's
+   realtime WS spec would unblock a future implementation; documented in task 6's
+   docs update.)*
+
+4. **In-browser STT + STT→TTS "re-speak"** *(feat — feature B)*.
+   - **`lib/voice-stt.ts`:** a thin wrapper over `SpeechRecognition`
+     (`webkitSpeechRecognition`) exposing start/stop + interim/final transcript
+     events. Feature-detect; degrade gracefully where unsupported (notably the
+     Electron wrapper — see the cross-cutting risk).
+   - **Flow:** the PTT trigger (reuse `AI_PTT_BIND` / hold button) starts
+     recognition; the **interim transcript is shown live**; on release the **final
+     text auto-converts** via `POST /api/ai/tts` (chosen provider + voice) and the
+     result is injected into the mic source path (through its DSP chain), raw mic
+     muted. Meters output seconds (skip for BYO).
+   - **Disclosure** that recognition audio goes to the browser's STT (Google for
+     Chrome) and the text goes to the TTS provider.
+   **Progress: ✅ Done** *(new `lib/voice-stt.ts` — a thin wrapper over
+   `SpeechRecognition`/`webkitSpeechRecognition`: `sttSupported()` (feature-detect;
+   ⚠️ Electron's Chromium ships no Google speech key so it returns false there →
+   the UI gates re-speak to the web build), `startStt({onInterim,onFinal,onError})`
+   → `SttHandle.stop()` (continuous + interimResults; accumulates final text,
+   delivers it on the recognizer's `onend`), and the `STT_PRIVACY` disclosure
+   string. Wired into `audio-output.ts`: `startPtt`/`stopPtt` now BRANCH on the
+   active source's `ai.mode` — for a paid engine with `mode:"respeak"` they drive
+   speech recognition instead of `MediaRecorder` (a new `sttRef` map), pushing the
+   interim transcript to a new `aiTranscript` hook field for the live display; on
+   release (or the MAX_PTT_MS cap, or `onend`) the final text auto-synthesizes via
+   `ttsAndInject` → `ttsViaProxy` (`POST /api/ai/tts`) and injects the result into
+   the source's chain through its DSP chain, raw mic still muted by the existing
+   `aiMuted` gate; output seconds are metered server-side (task 2, skipped for BYO).
+   Recognition is torn down on unmount alongside PTT recorders. So every existing
+   PTT trigger (hold button / keyboard / VR) does STS or re-speak depending on mode
+   with no extra wiring. tsc clean. The engine/mode pickers + the transcript/privacy
+   UI are task 5.)*
+
+5. **Voice-changer UI — engine/provider picker, voices, BYO key, usage meter**
+   *(feat)*. Extend the `AiSection` (in `VoiceChangerPanel`):
+   - An **engine picker** (shared `Select`): **rvc_zero (Free)** | **ElevenLabs** |
+     **Respeecher**. For paid engines, a **mode** picker where applicable —
+     **STS** vs **Re-speak (STT→TTS)** — and for Respeecher STS a **PTT vs Live**
+     toggle.
+   - **Voice picker:** curated provider presets + a **custom voice-ID** field (with
+     the entitlement reminder).
+   - **BYO key** field (device-local; masked input) with a note that it bypasses the
+     free quota; when empty, the app quota is used.
+   - The **usage meter** (used / cap from `/api/ai/usage`), the per-engine
+     **privacy disclosures**, and provider **attribution** where required. Keep
+     rvc_zero's current controls intact when it's selected. Re-use `Toggle` /
+     `Select` / the existing PTT + VR bind-capture affordances; no native `<select>`.
+   **Progress: ✅ Done** *(extended `AiSection` in `VoiceChangerPanel.tsx`: an
+   **engine** `Select` (RVC⚡ZERO Free | ElevenLabs | Respeecher) whose change resets
+   the voice (disjoint id namespaces) + mode; for paid engines a **mode** `Select`
+   (Voice conversion STS | Re-speak STT→TTS) — re-speak shows a "needs Chrome, not
+   the desktop app" note when `sttSupported()` is false — and for Respeecher a
+   "Continuous live — coming soon" line (per the task-3 fallback; live is inert).
+   **Voice picker** branches: rvc_zero keeps its presets + custom model/index/pitch
+   form unchanged; paid shows `PAID_VOICES` presets (ElevenLabs library voices;
+   Respeecher = custom-only) + a **custom provider voice-ID** field, both with the
+   entitlement reminder. A **BYO key** field (paid only, `type=password`,
+   device-local via `readAiKeys`/`writeAiKeys` keyed by provider) with a
+   "bypasses the free quota, stored only on this device" note. A live **usage meter**
+   (`AiUsageMeter` → `GET /api/ai/usage`, re-fetched on each conversion's aiBusy
+   falling edge; hidden when a BYO key is set). Per-engine **privacy disclosures**
+   (`AI_PRIVACY_NOTICE` for rvc_zero, `PAID_PRIVACY[provider]` for paid, plus
+   `STT_PRIVACY` for re-speak and the `RESPEECHER_LIVE_PRIVACY` note) and
+   **attribution** (`AI_MODEL_CREDIT` vs "Powered by <Provider>"). The hold-to-talk
+   button + PTT/replay keyboard+VR bind capture are unchanged; in re-speak the button
+   relabels and shows the live `audio.aiTranscript`. All via shared `Select`/`Toggle`;
+   no native `<select>`. tsc clean.)*
+
+6. **Persistence + validation + docs + typecheck** *(chore)*.
+   - **AI config persistence is per-profile server-side** (the Profiles batch moves
+     the voice-changer config off device-local `soundboard:voicefx`): the `ai` shape
+     (engine, mode, voiceId|custom) rides in the active profile's voice-changer
+     config, read/written through the existing `audio.setSourceAi` / voice-changer
+     accessors (which the Profiles batch repoints to the server). **The BYO key
+     stays device-local** (`soundboard:aiKeys`, per-user, NOT per-profile, NOT
+     synced — it's a secret). Old device-local rvc_zero `ai` blobs migrate into the
+     Default profile via the profiles migration (read as `engine: "rvc_zero"`).
+     Debounce/secure the BYO-key write. **Order:** land the Profiles batch before
+     this so the persistence target exists.
+   - Zod schemas for `/api/ai/*` request bodies in `lib/validation.ts`.
+   - Update `docs/voice-changer-research.md` §8b: record that paid STS
+     (ElevenLabs/Respeecher) + STT→TTS re-speak are now **implemented** (with the
+     proxy + app-quota/BYO + live-streaming architecture and the provider ranking
+     table), superseding the "deferred" verdict.
+   - `tsc --noEmit` clean (no lint per repo convention).
+   **Progress: ✅ Done** *(Persistence: the paid-AI config (`engine`/`mode`/
+   `voiceId`/`customVoiceId`/`live`) was added to `AiConfig`, which lives in the
+   `voiceFx` map → already persisted **per-profile server-side** by the Profiles
+   batch's `setSourceAi`/voiceFx accessors (no new persistence code needed). Old
+   device-local rvc_zero `ai` blobs have no `engine` field → read as `rvc_zero`
+   (back-compat default) and migrate into the Default profile via the existing
+   `ProfileProvider` one-time migration. The **BYO key stays device-local**
+   (`soundboard:aiKeys`) and its write is now **debounced (300ms) with an
+   unmount-flush** in `AiSection`. Validation: `aiProvider`/`aiVoiceId`/
+   `PostAiTtsBody` (added in task 2; STS validated field-wise in its route) cover the
+   `/api/ai/*` bodies. Docs: added `docs/voice-changer-research.md` **§8d** recording
+   paid STS (ElevenLabs/Respeecher) + STT→TTS re-speak as IMPLEMENTED — the
+   same-origin proxy + app-quota/BYO architecture, the Respeecher continuous-live
+   re-defer (standalone-server limitation) and how to revisit it — superseding the
+   §8b/§8c "deferred" verdict. Final `tsc --noEmit` clean.)*
+
+### Tasks — 1.4.1 (Profiles + header layout + Sound Effects popover — appended)
+
+Three UI/architecture changes (owner decisions **locked** 2026-06-16). Same
+version (1.4.1) — appended. The **Profiles** task is large and **server-side**, a
+deliberate departure from the device-local audio-settings stance — the owner chose
+full cross-device sync for profiles.
+
+**Cross-cutting locked decisions:**
+- **What a Profile bundles (per-profile):** the **Board layout** (placements,
+  positions, keybinds, VR binds, labels, on-board state), the **voice-changer mic
+  chain + AI config**, and **applied per-clip sound effects** (by sound id). These
+  all become **server-side per profile** and **sync across devices + the desktop
+  app**.
+- **What stays GLOBAL (shared by all profiles):** the **Saved library** (the set of
+  sounds the user has saved — owned + public-clip references) and the **FX preset
+  library** (`soundboard:fxPresets` + the server `sharedPreset` library). The Saved
+  tab + all preset options are always fully available regardless of active profile.
+- **What stays DEVICE-LOCAL / global-per-user (NOT per-profile):** output/monitor/
+  **input** device selection, the three bus volumes, Virtual-Mic + monitor-mic
+  toggles, the master keybinds/controllers enable toggles, cancel-all binds,
+  per-action hold-ms, controller profile, and the **AI BYO key** (a secret). Only
+  the three bundles above are per-profile.
+- **Active profile is DEVICE-LOCAL** (`soundboard:activeProfile` = profileId; new
+  device → Default). The desktop app registers the active profile's board hotkeys,
+  so a switch re-registers them. Switching is **instant** (everything auto-persists
+  server-side; no save button).
+- **Profile cap = role default + per-user override** (mirror the upload/AI quota
+  pattern): role `profileLimit` + user `profileLimitOverride` + env
+  `DEFAULT_PROFILE_LIMIT`, surfaced/overridable in /admin.
+- **Default profile:** renamable; **deletable only when >1 profile exists**;
+  deleting the active one switches to another; delete shows a confirm dialog.
+- **Keep the `audio` accessor API stable.** The Profiles task swaps the *backing
+  store* of `audio.soundFx`/`setSoundEffects` and `audio.voiceFx`/`setSourceEffects`/
+  `setSourceAi` from device-local localStorage to **server-side, scoped to the
+  active profile** — so the Sound-Effects popover and the (paid-AI) Voice-changer UI
+  consume the same accessors **unchanged**. This is what keeps the sprint smooth.
+- **Supersedes** the paid-AI batch's device-local `soundboard:voicefx` assumption
+  (its task 6 now points here). Schema changes go in **BOTH `schema.ts` AND
+  `bootstrap.sql`** (idempotent DDL via `migrate.ts`) — see the
+  `db-schema-via-bootstrap-sql` memory.
+
+**Recommended 1.4.1 sprint order (all appended batches — locked 2026-06-16):**
+1. **Sound-Effects popover** (this batch, task 1 — independent UI, quick).
+2. **Profiles backend** (this batch, task 2 — foundational; repoints the audio
+   accessors to server-side per-profile; migration).
+3. **Navbar + profile switcher** (this batch, task 3).
+4. **Paid-AI batch** — quota+admin, proxy STS/TTS, Respeecher live, and STT→TTS are
+   **profile-independent** (can start in parallel with 1–3); its **voice-changer UI
+   + persistence build on Profiles**, so land those after step 2.
+5. **Noise gate + pitch/formant** (the independent voice-fx batch) — **LAST**, by
+   owner decision: it carries the only external dependency (SoundTouchJS) + the
+   live-stream integration risk, so it's quarantined to the end where it can't churn
+   `audio-output.ts`/`audio-mixer.ts` mid-profiles-refactor. New effects appear
+   automatically via `EFFECT_DEFS`, so every earlier FX/preset/UI surface gains them
+   with **zero rework**. *(The noise gate alone is dependency-free and may be
+   cherry-picked first as a warm-up; pitch/formant stays last.)*
+
+1. **Sound Effects → popover (header + per-card)** *(feat — independent, do first)*.
+   - **Header button:** convert `SoundEffectsPickerModal`
+     (`components/SoundEffectsModal.tsx`) from the full-screen `ModalShell` to an
+     **anchored `Popover`** (`components/Popover.tsx`) opening below the header
+     button — behaving exactly like Settings / Voice changer, **one-open-at-a-time**
+     with them (fold into `HeaderControls`' single `panel` state instead of the
+     separate `fxOpen` flag). It may be **a bit wider** than the other two popovers.
+     The pick-a-clip → `SoundFxEditor` flow stays inside the popover.
+   - **Per-card button:** convert the per-card `SoundEffectsModal` (opened from each
+     `SoundCard`'s Sliders button) to an **anchored `Popover`** next to that button
+     too (no more centered modal). Reuse `SoundFxEditor` unchanged.
+   - `ModalShell` can be retired once both move (confirm nothing else uses it).
+   - **Planning notes (locked 2026-06-16):** the header popover folds into
+     `HeaderControls`' `Panel` union (add `"fx"`, drop the separate `fxOpen` flag)
+     so it's one-open-at-a-time with Settings/Voice; give it a wider
+     `panelClassName` (≈`w-[26rem]`) + `max-h-[80vh] overflow-y-auto` for the
+     picker→editor flow. The per-card `Sliders` button wraps its `SoundEffectsModal`
+     render in `<Popover align="right">` anchored to the button (the `Popover`
+     panel already escapes `overflow` via portalled `Select`; cap height + scroll
+     for small cards). The pick-list and `SoundFxEditor` stay as-is.
+   **Progress: ✅ Done** *(`SoundEffectsModal.tsx`: retired `ModalShell` +
+   `createPortal`; the two modal exports became popover BODIES — `SoundEffectsPanel`
+   (per-card, fixed soundId) and `SoundEffectsPickerPanel` (header picker→editor
+   flow), each a plain fragment that renders inside an anchored `Popover` (which
+   supplies the `.popover` surface + outside-click/Esc close). `HeaderControls.tsx`:
+   folded Sound Effects into the single `panel` state — added `"fx"` to the `Panel`
+   union, dropped the separate `fxOpen` flag, and render `SoundEffectsPickerPanel`
+   in a `Popover` (`align="left"`, wider `w-[26rem]` + `max-h-[80vh] overflow-y-auto
+   p-3`), one-open-at-a-time with Settings/Voice. `Dashboard.tsx`: removed the
+   Dashboard-level `fxModalSound` state + top-level modal render + the `onOpenFx`
+   prop; `SoundCard` now owns local `fxOpen` state, calls `useAudio()`, and wraps its
+   Sliders button in `<Popover align="right">` (`w-[22rem]` + `max-h-[70vh]` scroll)
+   rendering `SoundEffectsPanel` scoped to the card's sound id. tsc clean.)*
+
+2. **Profiles — server-side per-profile board + voice changer + applied FX**
+   *(feat — large; foundational)*.
+   - **Schema (`schema.ts` + `bootstrap.sql`):** a **`profile`** table (`id` uuid
+     PK, `userId` text → user cascade, `name`, `position` int, `isDefault` bool,
+     `createdAt`) carrying the per-profile **voice-changer config** + **applied FX**
+     as JSON columns (`voiceFx` json, `soundFx` json `{[soundId]:EffectConfig[]}`).
+     The **Board placement becomes per-profile** while the **Saved library stays
+     global** — split the current `boardEntry` (which conflates library membership
+     with board placement): keep `boardEntry` as the **global saved-library** row
+     (userId, soundId), and add a **`profilePlacement`** table (`profileId` →
+     profile cascade, `soundId`, `onBoard`, `position`, `label`, `keybind`,
+     `controllerBind`, `createdAt`) for the per-profile board state. Add role
+     `profileLimit` + user `profileLimitOverride` columns (mirror the quota
+     columns). `ADD COLUMN IF NOT EXISTS` backfills; new tables are plain
+     `CREATE TABLE IF NOT EXISTS`. *(Confirm the exact split during impl — this is
+     the biggest refactor; the library-global / placement-per-profile boundary is
+     the locked requirement.)*
+   - **Migration (bootstrap + one-time client):** seed a **"Default"** profile per
+     existing user; move each existing `boardEntry`'s on-board state
+     (onBoard/position/keybind/controllerBind/label) into a Default
+     `profilePlacement`; the library rows stay global. Client one-time: push any
+     existing device-local `soundboard:soundfx` / `soundboard:voicefx` into the
+     Default profile server-side, then stop reading them locally.
+   - **API:** profile CRUD — `GET /api/profiles` (list, ordered), `POST`
+     (create empty, cap-enforced via the role/override limit → 409 at cap), `PATCH
+     /api/profiles/[id]` (rename / reorder), `DELETE /api/profiles/[id]` (refuse
+     when only 1; if active, caller switches), and a **clone** path (`POST
+     /api/profiles/[id]/clone` → deep-copies that profile's placements + voiceFx +
+     soundFx, name `"<name> clone"`, cap-enforced). The board + voiceFx + soundFx
+     read/write endpoints take/scope to a `profileId`. Rate-limit like `board-mut`;
+     CSRF via the global middleware.
+   - **Repoint the engine accessors:** in `audio-output.ts`, back
+     `soundFx`/`setSoundEffects` and the voice-changer `voiceFx`/`setSourceEffects`/
+     `setSourceAi` with the **active profile's server config** instead of
+     localStorage — **keep the accessor signatures identical** so the FX/voice UIs
+     don't change. Keep the debounced-write pattern (now a debounced server PATCH).
+     BYO key + device selections + master toggles stay device-local.
+   - **Active profile** = device-local (`soundboard:activeProfile`); switching
+     refetches the board placements + voice/FX config and re-registers Electron
+     hotkeys. The Dashboard board reads the active profile's placements.
+   - **Planning decisions (locked 2026-06-16):**
+     - **Cap default = `DEFAULT_PROFILE_LIMIT` = 5** (user `profileLimitOverride`
+       → role `profileLimit` → env, mirroring `lib/quota.ts`). New `lib/profiles.ts`
+       owns the resolution (`getProfileLimit(userId)`) + the count check; `POST`
+       /clone return **409** at the cap. Surface used/cap + a per-user override in
+       /admin's user row (mirror the upload-quota UI) and a role default field.
+     - **boardEntry split = leave the placement columns ORPHANED** (locked). Add
+       `profilePlacement` and stop reading/writing `boardEntry.{label,keybind,
+       controllerBind,position,onBoard}`; do **NOT** `DROP` them (additive
+       idempotent bootstrap convention — like the orphaned `masterVolume` key).
+       `boardEntry(userId, soundId)` is now purely global Saved membership.
+     - **`profilePlacement` shape:** `id` uuid PK, `profileId` uuid → profile
+       cascade, `soundId` uuid → sound cascade, `onBoard` bool default true,
+       `position` int default 0, `label`/`keybind`/`controllerBind` text,
+       `createdAt`. **Unique `(profileId, soundId)`.** A row exists only for sounds
+       touched per-profile (promoted to board / bound / reordered); **absence =
+       saved-only in that profile** (onBoard false, no binds). The Saved tab still
+       lists every `boardEntry` (global) regardless of active profile.
+     - **API surface (keep Dashboard's `Entry` shape stable):** `GET
+       /api/board?profileId=X` returns one row per global `boardEntry`, with
+       `entry.id` = **boardEntry.id** (stable Saved id) and `onBoard`/`position`/
+       `label`/`keybind`/`controllerBind` **merged from profile X's placement**
+       (defaults when no placement row). `PATCH /api/board/[id]` (`[id]` =
+       boardEntry.id) carries `profileId` in the body and **upserts** the placement
+       for `(profileId, soundId)`. `DELETE /api/board/[id]` removes the global Saved
+       row and **app-level-deletes that sound's placements across all the user's
+       profiles** (placement FKs soundId, not boardEntry.id). Reorder commits
+       per-placement positions for the active profile. Validate `profileId` belongs
+       to the caller on every write.
+     - **Profile config columns** store JSON text: `voiceFx` = the serialized
+       `VoiceFxMap` (`audio-output.ts`, primary-mic source `{effects, ai}`),
+       `soundFx` = `{[soundId]:EffectConfig[]}`. Read on profile load/switch into
+       the existing `audio.voiceFx`/`audio.soundFx` state; writes go through the
+       **same accessors** (debounced **server PATCH** to `/api/profiles/[id]`,
+       replacing the localStorage write — keep the 250ms debounce + flush-on-unmount
+       pattern). A `ProfileProvider` (or fold into `VrProvider`/`VoiceChangerProvider`)
+       owns the profile list + active id and feeds the active id into the audio hook;
+       the **BYO AI key stays device-local** (`soundboard:aiKeys`).
+     - **Profiles are RE-ORDERABLE (locked):** the switcher (task 3) gets reorder
+       controls; `PATCH /api/profiles/[id]` accepts a `position` (or a small reorder
+       endpoint). `position` set on create (append to end).
+     - **Migration:** bootstrap seeds a `Default` profile per user with no profile
+       (`isDefault=true`, position 0) and copies each **on-board** `boardEntry`
+       (onBoard/position/label/keybind/controllerBind) into a Default
+       `profilePlacement` (idempotent: skip when a placement already exists). The
+       one-time **client** push of device-local `soundboard:soundfx`/`voicefx` into
+       the Default profile runs once (guard with a `soundboard:profilesMigrated`
+       flag), then those local keys are ignored.
+   **Progress: ✅ Done** *(Schema: new `profile` (id/userId→user cascade/name/
+   position/isDefault/voiceFx text/soundFx text/createdAt) + `profilePlacement`
+   (id/profileId→profile cascade/soundId→sound cascade/onBoard/position/label/
+   keybind/controllerBind, UNIQUE (profileId,soundId)) tables, plus role
+   `profileLimit` + user `profileLimitOverride` columns — mirrored in
+   `bootstrap.sql` (CREATE TABLE IF NOT EXISTS + ADD COLUMN IF NOT EXISTS) with an
+   idempotent migration that seeds a `Default` profile per user and copies each
+   on-board `boardEntry` into a Default placement. The `boardEntry` placement
+   columns are left ORPHANED (boardEntry = global Saved membership now). New
+   `lib/profiles.ts` owns `DEFAULT_PROFILE_LIMIT=5` + `getProfileLimit` (user→role→
+   env) + `ensureDefaultProfile`/`resolveProfile`/`getOwnedProfile`/`getProfileCount`.
+   API: `GET/POST /api/profiles` (list+create, 409 at cap), `PATCH/DELETE
+   /api/profiles/[id]` (rename/reorder/persist voiceFx|soundFx; delete refuses the
+   last one), `POST /api/profiles/[id]/clone` (deep-copies placements+config, 409 at
+   cap), all rate-limited `board-mut` + ownership-validated. Board API reworked:
+   `GET /api/board?profileId=X` returns one row per global boardEntry merged with
+   that profile's placement (entry.id = boardEntry.id; defaults when no placement),
+   `PATCH /api/board/[id]` carries `profileId` and UPSERTS the placement for
+   (profile,sound), `DELETE` removes the global row + app-side deletes that sound's
+   placements across all the caller's profiles. Validation: `PostProfileBody`/
+   `PatchProfileBody`, `profileId` on `PatchBoardEntryBody`, `profileLimit`/
+   `profileLimitOverride` on the role/user PATCH bodies. Client: new
+   `components/ProfileProvider.tsx` (wraps AudioProvider in layout) owns the profile
+   list + device-local active id (`soundboard:activeProfile`), exposes CRUD +
+   reorder + a `backing` (active profile's parsed config + debounced server PATCH,
+   250ms + flush-on-unload) and runs the one-time client migration of device-local
+   `soundfx`/`voicefx` into the Default profile (`soundboard:profilesMigrated`
+   guard). `useAudioOutput(backing?)` repointed: identical `soundFx`/`voiceFx`/
+   `setSoundEffects`/`setSourceEffects`/`setSourceAi` signatures now persist via the
+   backing (server) when present, else localStorage; a seed effect re-applies the
+   active profile's chains to the mixer only on switch / server reload (loadGen) so
+   per-edit persists don't rebuild chains. Dashboard threads `activeProfileId` into
+   the board GET + all board PATCHes (`boardPatch` helper) + commitOrder, and
+   refetches on profile switch. Admin: roles table gains a Profiles cap column
+   (`ProfileLimitInput`), users table gains a used/cap display + per-user override;
+   `/api/admin/users` GET returns the resolved cap + profile count. The switcher UI
+   itself is Task 3. tsc clean.)*
+
+3. **Navbar layout refactor + profile switcher dropdown** *(feat)*.
+   - **Layout (`app/layout.tsx` header + `HeaderControls` + `UserMenu`):**
+     restructure into **three zones** — **left:** logo icon + "Soundboard";
+     **center:** the global output **meter → Voice changer → Sound effects** buttons
+     (the meter moves into the center group); **right (horizontal cluster):**
+     **Settings cog → user dropdown → profile dropdown** side by side, with the
+     **upload-storage quota** as a thin bar **spanning beneath** them. The Settings
+     cog **moves out** of the center group to the right cluster; the quota meter
+     moves out of `UserMenu` (avatar dropdown stays) into the navbar bar. The navbar
+     may be **taller** to fit the quota bar. Use a 3-column grid so the center group
+     is truly centered.
+   - **Profile switcher dropdown** (the new right-cluster control between the user
+     dropdown and the quota): the button shows the **current profile name**; the
+     menu lists the other profiles (click to **switch**), each row with a **clone**
+     button (clones **that row's** profile → `"<name> clone"`) and a **delete**
+     button (confirm dialog; disabled/ hidden when only 1 profile). **Inline-rename**
+     the profile name (pencil / edit affordance). An **"other" input** at the bottom
+     creates a **new empty profile** by the typed name. **Cap-aware** (disable
+     create + show the limit when at the role/override cap). Uses the task-2
+     profiles API; route failures through `useToast`. Reuse the `.popover` surface /
+     `Select` styling.
+   - **Reorder (locked 2026-06-16 — owner chose YES):** the switcher rows get
+     **move up/down** controls (small ▲/▼ buttons, simplest; drag optional) that
+     PATCH the affected profiles' `position` via the task-2 API and re-sort the
+     list. Order = `position` (set on create = append). The active-profile + clone/
+     delete/rename behaviour is unchanged by reorder.
+   - **Planning notes (locked 2026-06-16):** the active profile id + profile list
+     come from the task-2 `ProfileProvider` (client), so the switcher is a client
+     component in the header reading shared context (not the server layout). On a
+     narrow viewport, follow the existing `hidden sm:` pattern — the center group +
+     quota bar may collapse/hide on small screens; the switcher stays. The header
+     becomes a **3-column grid** (`grid-cols-[auto_1fr_auto]`) so the center group
+     is truly centered independent of the side clusters' widths.
+   **Progress: ✅ Done** *(new `components/AppHeader.tsx` — a client `grid-cols-[auto_1fr_auto]`
+   navbar for signed-in users: LEFT = logo + "Soundboard"; CENTER (`hidden sm:flex`,
+   truly centered) = output meter → Voice changer → Sound Effects; RIGHT cluster =
+   Settings cog → user dropdown → profile dropdown in a row with the upload-storage
+   **quota bar spanning beneath** them. `HeaderControls` was split into two CONTROLLED
+   pieces — `CenterControls` (meter + Voice/FX popovers) and `SettingsControl` (the
+   cog, moved to the right cluster) — sharing one `panel` state owned by `AppHeader`
+   so the three popovers stay one-open-at-a-time across the split. The storage meter
+   was lifted out of `UserMenu` into a new `components/QuotaBar.tsx` (same
+   `/api/sounds` fetch + `soundboard:storage-changed` refetch, rendered as a thin bar);
+   `UserMenu` is now just the avatar dropdown. New `components/ProfileSwitcher.tsx`
+   (right cluster, between user menu + quota): a `.popover` dropdown showing the active
+   profile name; rows list every profile (ordered by `position`), click a non-active
+   row to `setActiveProfile`, with per-row inline rename (pencil → input), clone, delete
+   (`confirm()`, hidden when only 1 profile), and ▲/▼ reorder (→ `reorderProfile`); a
+   trailing "new profile name…" input creates one (disabled + "Profile limit reached"
+   at the cap) with a "N / limit" line. All mutations go through `ProfileProvider`'s
+   helpers; failures route through `useToast`/`fromResponse`. `app/layout.tsx` renders
+   `<AppHeader>` for signed-in users (logged-out keeps the simple logo + Discord login
+   header). tsc clean.)*
+
+### Tasks — 1.4.1 (UI adjustments — appended)
+
+Six UI/feature adjustments (recovered from the "Adjustments checklist" session;
+the routine that was meant to build them never committed/landed). Owner decisions
+**locked** 2026-06-17. Same version (1.4.1) — appended.
+
+1. **Header order: Settings cog + profile button left of the name + quota bar**
+   *(UI)*. In `components/AppHeader.tsx` the right cluster is currently `Settings →
+   UserMenu(name) → ProfileSwitcher`. Reorder so both the Settings cog and the
+   profile switcher sit **left of** the user name: `Settings → ProfileSwitcher →
+   UserMenu(name)`. Quota bar still spans beneath.
+   **Progress: ✅ Done** *(reordered the `AppHeader` right cluster to `Settings →
+   ProfileSwitcher → UserMenu`; updated the header comment.)*
+
+2. **AI Voice as its own header button/popover (split from Voice changer)**
+   *(feat)*. Today the AI section is nested inside the Voice-changer popover
+   (`VoiceChangerPanel` → `AiSection`). Give AI its **own header button** (4th
+   popover, `Panel` += `"ai"`, one-open-at-a-time) with its **own enable toggle**;
+   the Voice-changer popover keeps only the DSP effect chain. Move `AiSection` into
+   a shared `components/AiVoicePanel.tsx` so it's reusable (popover + main page).
+   **Progress: ✅ Done** *(new `components/AiVoicePanel.tsx` holds the moved
+   `AiSection` + `AiUsageMeter` + an `AiVoicePanel({audio})` popover wrapper (with
+   the no-mic input-picker fallback) + `AiMainSection`. `HeaderControls` gained a 4th
+   popover button (Sparkles icon, `Panel` += `"ai"`, one-open-at-a-time). The AI
+   enable Toggle stays in the section. `VoiceChangerPanel` slimmed to the DSP effect
+   chain only — removed `AiSection`/`AiUsageMeter` + the now-unused imports.)*
+
+3. **Main-page AI section when AI is enabled** *(feat)*. When AI voice is enabled
+   for the active mic (`audio.voiceFx[audio.inputDeviceId]?.ai?.enabled`), render a
+   main-page section in `Dashboard.tsx` **between the upload card and the board
+   section** showing the interactive AI buttons (hold-to-talk + replay + live
+   transcript/status). Reuse from `AiVoicePanel`. Hidden when AI is off.
+   **Progress: ✅ Done** *(`AiMainSection({audio})` (exported from `AiVoicePanel`)
+   renders a `card` with hold-to-talk + replay buttons + busy/error/transcript
+   status; returns null unless `audio.voiceFx[inputDeviceId]?.ai?.enabled`. Mounted
+   in `Dashboard` between the upload card and the board section.)*
+
+4. **API key field moves into the Settings popover** *(UI)*. Move the BYO provider
+   API-key inputs out of `AiSection` and into `SettingsPanel` (a new "AI provider
+   keys" block — ElevenLabs + Respeecher password inputs, device-local
+   `soundboard:aiKeys` via `readAiKeys`/`writeAiKeys`, debounced write). AI section
+   keeps a short pointer to Settings.
+   **Progress: ✅ Done** *(new `AiKeysSection` in `SettingsPanel` — ElevenLabs +
+   Respeecher password inputs backed by `readAiKeys`/`writeAiKeys` (300ms debounced
+   write + unmount flush). The BYO-key block was removed from `AiSection`, which now
+   shows a "paste your key in Settings to bypass the quota" pointer.)*
+
+5. **Savable + sharable AI voice configs — full public server library** *(feat —
+   overturns the prior "AI configs NOT shared" lock; owner chose the full library
+   2026-06-17)*. Mirror the shared-effect-preset stack for AI voice configs (custom
+   voice id / model+index url + engine):
+   - **Schema** (`schema.ts` + `bootstrap.sql`): new `sharedVoice` table (id,
+     ownerId→user cascade, name, engine text, config text JSON, isOfficial,
+     createdAt) — brand-new table, no backfill.
+   - **Validation:** `PostSharedVoiceBody` (name ≤80, engine enum, bounded config:
+     voiceId/customVoiceId strings, optional rvc custom {modelUrl,indexUrl,pitch}).
+   - **API:** `GET/POST /api/voices`, `DELETE /api/voices/[id]`, `PATCH
+     /api/admin/voices/[id]` (official toggle) — clones of the `/api/presets` set
+     (per-user cap, official honored for admins, rate-limited, owner-or-admin
+     delete).
+   - **Client:** `lib/voice-presets.ts` (device-local `soundboard:voicePresets`
+     save/apply + `useVoicePresets`, mirrors `fx-presets.ts`) + `lib/shared-voices.ts`
+     (fetch/publish/delete/setOfficial). A `components/VoicePresetBar.tsx` (mirror
+     `FxPresetBar`) + `components/SharedVoicesModal.tsx` (mirror
+     `SharedPresetsModal`), wired into the AI section. Keep the "use only voices you
+     have the rights to" reminder.
+   - **Admin:** a "Shared voices" moderation list in the existing Admin **Presets**
+     tab (toggle official + delete any).
+   **Progress: ✅ Done** *(new `sharedVoice` table (id/ownerId→user cascade/name/
+   engine/config JSON/isOfficial/createdAt) in `schema.ts` + `bootstrap.sql` (CREATE
+   IF NOT EXISTS + owner index, new table no backfill). `PostSharedVoiceBody` in
+   `validation.ts` (name ≤80, engine enum, bounded config — voiceId/customVoiceId
+   strings + optional https rvc {modelUrl,indexUrl,pitch}). Routes `GET/POST
+   /api/voices`, `DELETE /api/voices/[id]`, `PATCH /api/admin/voices/[id]` — clones
+   of the `/api/presets` set (per-user cap 50, `isOfficial` honored for admins,
+   `voice-mut` rate-limit, owner-or-admin delete; GET omits ownerId, returns `mine`).
+   Client: `lib/voice-presets.ts` (device-local `soundboard:voicePresets` +
+   `useVoicePresets`, mirrors `fx-presets`) + `lib/shared-voices.ts`. New
+   `components/VoicePresetBar.tsx` (Save/Publish/Browse, mirror `FxPresetBar`) +
+   `components/SharedVoicesModal.tsx` (mirror `SharedPresetsModal`), wired into
+   `AiSection` after the voice picker with the entitlement reminder. Admin: a "Shared
+   voices" moderation list (toggle official + delete) added to the Presets tab.)*
+
+6. **Sound Effects popover bigger / params wrap** *(UI)*. The Sound-Effects
+   popovers are cramped (fixed `w-[26rem]` header / `w-[22rem]` per-card, single
+   column params). Widen them and let the effect param rows **wrap to two columns**
+   on the wider width so they don't overflow a tiny column.
+   **Progress: ✅ Done** *(widened the header Sound-Effects popover `w-[26rem]`→
+   `w-[34rem]` and the per-card popover `w-[22rem]`→`w-[30rem]`; the `SoundFxEditor`
+   param rows now wrap to two columns (`sm:grid-cols-2`, label `w-20`→`w-16`).)*
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions

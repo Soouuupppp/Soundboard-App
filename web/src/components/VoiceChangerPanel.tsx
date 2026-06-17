@@ -1,49 +1,54 @@
 "use client";
 
-// Voice changer popover body (1.4.0) — PRIMARY MIC ONLY. The selected input
-// device (audio.inputDeviceId) is the single voice-changer source; its DSP effect
-// chain + AI voice config are keyed by that deviceId in the engine's voiceFx map.
-// Effects + AI only take effect with Virtual Mic mode on and the mic open.
+// Voice changer popover body (1.4.0; AI split out in 1.4.1) — PRIMARY MIC ONLY.
+// The selected input device (audio.inputDeviceId) is the single voice-changer
+// source; its DSP effect chain is keyed by that deviceId in the engine's voiceFx
+// map. Effects only take effect with Virtual Mic mode on and the mic open.
 //
-// The AI push-to-talk bind state lives in VoiceChangerProvider (shared with
-// Dashboard's matcher). The VR bind PICKER renders in Dashboard — opening it here
-// sets `capturingAiPttVr`, which Dashboard reacts to while it's mounted.
+// The AI voice now lives in its own header popover (components/AiVoicePanel.tsx) —
+// this panel is just the real-time DSP effect chain.
 
-import { useState } from "react";
-import { Sliders, Sparkles, X, ArrowUp, ArrowDown, Plus, Wand2, ShieldAlert, Mic, Keyboard, Gamepad2, Repeat } from "lucide-react";
-import type { AudioOutput, AiConfig } from "@/lib/audio-output";
+import { Sliders, Sparkles, X, ArrowUp, ArrowDown, Plus, Mic } from "lucide-react";
+import type { AudioOutput } from "@/lib/audio-output";
 import { type EffectKind, type EffectConfig, EFFECT_DEFS, makeEffect, effectLabel } from "@/lib/voice-fx";
-import { AI_PRESETS, AI_CUSTOM_ID, AI_MODEL_CREDIT, AI_PRIVACY_NOTICE, type AiVoice } from "@/lib/voice-ai";
-import { getProfileBind, setProfileBind, type VrProfile } from "@/lib/vr-bind";
 import { Select } from "@/components/Select";
-import { Toggle } from "@/components/Toggle";
-import { VrBindChips } from "@/components/VrBindChips";
 import { FxPresetBar } from "@/components/FxPresetBar";
-import { useVoiceChanger } from "@/components/VoiceChangerProvider";
-
-// The VR controller profile + desktop-app presence are device-local; the popover
-// reads them directly (Dashboard owns the live profile dropdown / SteamVR status).
-function readControllerProfile(): VrProfile {
-  if (typeof window === "undefined") return "index";
-  try {
-    const p = localStorage.getItem("soundboard:controllerProfile");
-    return p === "quest" ? "quest" : "index";
-  } catch {
-    return "index";
-  }
-}
-const hasDesktopApp = () => typeof window !== "undefined" && "soundboard" in window;
 
 export function VoiceChangerPanel({ audio }: { audio: AudioOutput }) {
   const sourceKey = audio.inputDeviceId;
 
   if (!sourceKey) {
+    // No mic selected yet → let the user pick one right here (not just in Settings)
+    // so the popover isn't a dead end. Falls back to a mic-permission prompt when
+    // no input devices are enumerated (labels/ids are hidden until granted).
+    const noMics = audio.inputDevices.length === 0;
+    const labelsHidden = audio.inputDevices.some((d) => !d.label);
+    const inputOptions = [
+      { value: "", label: "None" },
+      ...audio.inputDevices.map((d) => ({ value: d.deviceId, label: d.label || `Mic ${d.deviceId.slice(0, 6)}` })),
+    ];
     return (
       <div className="space-y-2 text-sm">
         <h3 className="font-medium">Voice changer</h3>
         <p className="text-xs text-muted">
-          Pick an Input device (mic) in Settings to add effects or an AI voice to it.
+          Add real-time effects to your mic. Pick your input device to start:
         </p>
+        <label className="block">
+          <span className="flex items-center gap-1.5 text-xs text-muted mb-1"><Mic size={12} /> Input device (mic)</span>
+          <Select
+            className="w-full"
+            aria-label="Input device"
+            value={audio.inputDeviceId}
+            onChange={audio.setInputDeviceId}
+            options={inputOptions}
+          />
+        </label>
+        {(noMics || labelsHidden) && (
+          <button type="button" className="btn-ghost text-xs" onClick={() => audio.requestLabelsPermission()}>
+            {noMics ? "Find microphones (grants mic permission)" : "Show device names (grants mic permission once)"}
+          </button>
+        )}
+        <p className="text-[11px] text-muted">This is the same setting as the Input device in Settings.</p>
       </div>
     );
   }
@@ -55,23 +60,20 @@ export function VoiceChangerPanel({ audio }: { audio: AudioOutput }) {
     <div className="space-y-3 text-sm">
       <h3 className="font-medium">Voice changer</h3>
       <p className="text-xs text-muted">
-        Real-time effects + an optional AI voice on your mic. They feed the virtual-mic cable, so they
-        only take effect with Virtual Mic mode on.
+        Real-time effects on your mic. They feed the virtual-mic cable, so they only take effect with
+        Virtual Mic mode on.
       </p>
       {!active && (
         <p className="text-xs text-amber-300/90">
           Virtual Mic mode is off — settings are saved but won&apos;t be heard until you enable it in Settings.
         </p>
       )}
-      {audio.aiError && <p className="text-xs text-red-400">AI voice error: {audio.aiError}</p>}
 
       <div className="flex items-center gap-2">
         <Sliders size={14} className="text-accent shrink-0" />
         <span className="text-sm font-medium">Effects</span>
       </div>
       <EffectChainEditor sourceKey={sourceKey} effects={effects} audio={audio} />
-
-      <AiSection sourceKey={sourceKey} audio={audio} />
     </div>
   );
 }
@@ -155,179 +157,6 @@ function EffectChainEditor({
         options={EFFECT_DEFS.map((d) => ({ value: d.kind, label: d.label }))}
       />
       <FxPresetBar effects={effects} onApply={(fx) => audio.setSourceEffects(sourceKey, fx)} />
-    </div>
-  );
-}
-
-// AI voice section for the mic: enable (mutes the raw mic), pick a preset (or
-// custom RVC model), push-to-talk (button + hotkeys), with the required HF privacy
-// disclosure and model attribution. PTT bind state comes from VoiceChangerProvider.
-function AiSection({ sourceKey, audio }: { sourceKey: string; audio: AudioOutput }) {
-  const vc = useVoiceChanger();
-  const ai = audio.voiceFx[sourceKey]?.ai;
-  const enabled = !!ai?.enabled;
-  const voiceId = ai?.voiceId ?? AI_PRESETS[0].id;
-  const custom = ai?.custom ?? null;
-  const recording = audio.pttRecording.has(sourceKey);
-
-  // Device-local profile + desktop presence (read once per popover open).
-  const [controllerProfile] = useState<VrProfile>(readControllerProfile);
-  const hasDesktop = hasDesktopApp();
-
-  const setAi = (next: Partial<AiConfig>) => {
-    audio.setSourceAi(sourceKey, { enabled, voiceId, custom, ...next });
-  };
-  const setCustom = (patch: Partial<AiVoice>) => {
-    const base: AiVoice = custom ?? { modelUrl: "", indexUrl: "", pitch: 0 };
-    setAi({ voiceId: AI_CUSTOM_ID, custom: { ...base, ...patch } });
-  };
-
-  const profBind = getProfileBind(vc.aiPttControllerBind, controllerProfile);
-  const replayBind = getProfileBind(vc.aiReplayControllerBind, controllerProfile);
-
-  return (
-    <div className="mt-1 rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/[0.04] px-2.5 py-2">
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-1.5 text-sm">
-          <Wand2 size={13} className="text-fuchsia-300 shrink-0" /> AI voice
-        </span>
-        <Toggle size="sm" checked={enabled} onChange={(b) => setAi({ enabled: b })} label="Toggle AI voice for the mic" />
-      </div>
-
-      {enabled && (
-        <div className="grid gap-2 mt-2">
-          {/* Required disclosure — mic audio leaves the machine. */}
-          <p className="flex items-start gap-1.5 text-xs text-amber-300/90">
-            <ShieldAlert size={13} className="shrink-0 mt-0.5" />
-            <span>{AI_PRIVACY_NOTICE}</span>
-          </p>
-          <p className="text-xs text-muted">
-            Enabling AI removes your raw mic from the cable — only converted push-to-talk bursts pass.
-          </p>
-
-          <Select
-            className="w-full !py-1.5 text-xs"
-            aria-label="AI voice preset"
-            value={voiceId}
-            onChange={(v) => (v === AI_CUSTOM_ID ? setCustom({}) : setAi({ voiceId: v, custom }))}
-            options={[...AI_PRESETS.map((p) => ({ value: p.id, label: p.label })), { value: AI_CUSTOM_ID, label: "Custom…" }]}
-          />
-
-          {voiceId === AI_CUSTOM_ID && (
-            <div className="grid gap-1.5">
-              <input className="input !py-1.5 text-xs" placeholder="Model URL (.pth)" value={custom?.modelUrl ?? ""} onChange={(e) => setCustom({ modelUrl: e.target.value })} />
-              <input className="input !py-1.5 text-xs" placeholder="Index URL (.index)" value={custom?.indexUrl ?? ""} onChange={(e) => setCustom({ indexUrl: e.target.value })} />
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted w-16 shrink-0">Pitch</span>
-                <input type="range" min={-12} max={12} step={1} value={custom?.pitch ?? 0} onChange={(e) => setCustom({ pitch: Number(e.target.value) })} className="flex-1 accent-accent" aria-label="Custom voice pitch" />
-                <span className="text-xs text-muted w-8 text-right tabular-nums">{custom?.pitch ?? 0}</span>
-              </div>
-              <p className="text-xs text-muted">Use only voices you have the rights to.</p>
-            </div>
-          )}
-
-          {/* Push-to-talk: hold the button (or the bound hotkey) to record. */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              className={`btn-ghost text-xs ${recording ? "!border-fuchsia-400/50 !bg-fuchsia-500/20 text-white" : ""}`}
-              onPointerDown={(e) => { e.preventDefault(); audio.startPtt(sourceKey); }}
-              onPointerUp={() => audio.stopPtt(sourceKey)}
-              onPointerLeave={() => { if (recording) audio.stopPtt(sourceKey); }}
-              title="Hold to record, release to convert"
-            >
-              <Mic size={14} className="mr-1" />
-              {recording ? "Recording… release to convert" : "Hold to talk"}
-            </button>
-            {audio.aiBusy && <span className="text-xs text-fuchsia-300">Converting…</span>}
-          </div>
-
-          {/* Hotkeys (one global PTT bind, editable here). */}
-          <div className="flex items-center gap-1.5 flex-wrap rounded-lg border border-white/10 bg-white/[0.03] p-1">
-            <span className="text-xs text-muted px-1">PTT hotkey</span>
-            <button
-              type="button"
-              className={`btn-ghost text-xs ${vc.capturingAiPtt ? "text-accent" : ""}`}
-              onClick={() => vc.setCapturingAiPtt(!vc.capturingAiPtt)}
-              title="Set a keyboard push-to-talk hotkey"
-            >
-              <Keyboard size={14} className="mr-1" />
-              {vc.capturingAiPtt ? "Hold keys…" : vc.aiPttKeybind || "Set keybind"}
-            </button>
-            {vc.aiPttKeybind && !vc.capturingAiPtt && (
-              <button type="button" className="btn-ghost text-xs !px-1.5" onClick={() => vc.setAiPttKeybind(null)} title="Clear PTT keybind">
-                ×
-              </button>
-            )}
-            {hasDesktop && (
-              <>
-                <span className="h-4 w-px bg-white/10" aria-hidden />
-                <button type="button" className="btn-ghost text-xs" onClick={() => vc.setCapturingAiPttVr(true)} title="Set a controller push-to-talk bind">
-                  <Gamepad2 size={14} className="mr-1" />
-                  {profBind ? <VrBindChips value={profBind} /> : "Set controller"}
-                </button>
-                {profBind && (
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs !px-1.5"
-                    onClick={() => vc.setAiPttControllerBind(setProfileBind(vc.aiPttControllerBind, controllerProfile, null))}
-                    title="Clear PTT controller bind"
-                  >
-                    ×
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Replay: re-inject the last converted clip (button + hotkeys). */}
-          <div className="flex items-center gap-1.5 flex-wrap rounded-lg border border-white/10 bg-white/[0.03] p-1">
-            <button
-              type="button"
-              className="btn-ghost text-xs"
-              onClick={() => audio.replayLastConversion()}
-              title="Replay the last converted clip"
-            >
-              <Repeat size={14} className="mr-1" /> Replay last
-            </button>
-            <button
-              type="button"
-              className={`btn-ghost text-xs ${vc.capturingAiReplay ? "text-accent" : ""}`}
-              onClick={() => vc.setCapturingAiReplay(!vc.capturingAiReplay)}
-              title="Set a keyboard replay hotkey"
-            >
-              <Keyboard size={14} className="mr-1" />
-              {vc.capturingAiReplay ? "Hold keys…" : vc.aiReplayKeybind || "Set keybind"}
-            </button>
-            {vc.aiReplayKeybind && !vc.capturingAiReplay && (
-              <button type="button" className="btn-ghost text-xs !px-1.5" onClick={() => vc.setAiReplayKeybind(null)} title="Clear replay keybind">
-                ×
-              </button>
-            )}
-            {hasDesktop && (
-              <>
-                <span className="h-4 w-px bg-white/10" aria-hidden />
-                <button type="button" className="btn-ghost text-xs" onClick={() => vc.setCapturingAiReplayVr(true)} title="Set a controller replay bind">
-                  <Gamepad2 size={14} className="mr-1" />
-                  {replayBind ? <VrBindChips value={replayBind} /> : "Set controller"}
-                </button>
-                {replayBind && (
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs !px-1.5"
-                    onClick={() => vc.setAiReplayControllerBind(setProfileBind(vc.aiReplayControllerBind, controllerProfile, null))}
-                    title="Clear replay controller bind"
-                  >
-                    ×
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-
-          <p className="text-[11px] text-muted">{AI_MODEL_CREDIT}</p>
-        </div>
-      )}
     </div>
   );
 }

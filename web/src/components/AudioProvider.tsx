@@ -9,11 +9,15 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import { useAudioOutput, type AudioOutput } from "@/lib/audio-output";
+import { useProfiles } from "@/components/ProfileProvider";
 
 const AudioOutputContext = createContext<AudioOutput | null>(null);
 
 export function AudioProvider({ children }: { children: ReactNode }) {
-  const audio = useAudioOutput();
+  // ver/1.4.1 Profiles: back the engine's voiceFx/soundFx accessors with the
+  // active profile's server config (ProfileProvider wraps this in app/layout.tsx).
+  const { backing } = useProfiles();
+  const audio = useAudioOutput(backing);
   return (
     <AudioOutputContext.Provider value={audio}>
       {children}

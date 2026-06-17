@@ -1,12 +1,27 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
-import { Shield, Users, Trash2, Plus, Search, AlertCircle, Music, Play, Globe, Lock, Upload, Ban, Youtube, Tag as TagIcon, Megaphone } from "lucide-react";
+import { Shield, Users, Trash2, Plus, Search, AlertCircle, Music, Play, Globe, Lock, Upload, Ban, Youtube, Tag as TagIcon, Megaphone, Sliders, Star, Sparkles } from "lucide-react";
 import { formatBytes, parseSize } from "@/lib/utils";
 import { useAudio } from "@/components/AudioProvider";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { useToast, useMutate } from "@/components/Toast";
 import { Select } from "@/components/Select";
+import { type EffectConfig, effectLabel } from "@/lib/voice-fx";
+import { EffectChainBuilder } from "@/components/EffectChainBuilder";
+import {
+  type SharedPreset,
+  fetchSharedPresets,
+  publishSharedPreset,
+  deleteSharedPreset,
+  setSharedPresetOfficial,
+} from "@/lib/shared-presets";
+import {
+  type SharedVoice,
+  fetchSharedVoices,
+  deleteSharedVoice,
+  setSharedVoiceOfficial,
+} from "@/lib/shared-voices";
 
 type Role = {
   id: string;
@@ -19,6 +34,12 @@ type Role = {
   ytMaxDurationSecOverride: number | null;
   ytMaxFileSizeOverride: number | null;
   ytConcurrencyOverride: number | null;
+  // ver/1.4.1 Profiles: per-role default profile cap (null → env default).
+  profileLimit: number | null;
+  // ver/1.4.1 Paid AI voice: per-role monthly quota (seconds; null → env) +
+  // whether the role may use AI voice.
+  aiQuotaSecondsMonthly: number | null;
+  canUseAi: boolean;
 };
 type TagRow = { id: string; name: string; count: number };
 type User = {
@@ -32,6 +53,20 @@ type User = {
   maxFileSizeOverride: number | null;
   maxTotalStorageOverride: number | null;
   canUploadOverride: boolean | null;
+  // ver/1.4.1 Profiles: per-user cap override + the resolved effective cap +
+  // current usage (count) for the used/cap display.
+  profileLimitOverride: number | null;
+  roleProfileLimit: number | null;
+  profileLimit: number;
+  profileCount: number;
+  // ver/1.4.1 Paid AI voice: per-user overrides + role defaults + resolved cap +
+  // current-period usage (seconds) for the used/cap display.
+  roleCanUseAi: boolean | null;
+  roleAiQuotaSecondsMonthly: number | null;
+  aiQuotaSecondsOverride: number | null;
+  canUseAiOverride: boolean | null;
+  aiCap: number;
+  aiUsed: number;
 };
 type Sound = {
   id: string;
@@ -59,6 +94,9 @@ type Settings = {
   motdLinkLabel: string | null;
   motdLinkUrl: string | null;
   motdSeverity: MotdSeverity;
+  // ver/1.4.1 Paid AI voice: master toggle + live-session auto-stop cap (seconds).
+  aiEnabled: boolean;
+  aiLiveSessionCapSec: number;
 };
 
 export function AdminPanel() {
@@ -68,25 +106,38 @@ export function AdminPanel() {
   const [sounds, setSounds] = useState<Sound[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [tags, setTags] = useState<TagRow[]>([]);
+  const [presets, setPresets] = useState<SharedPreset[]>([]);
+  const [voices, setVoices] = useState<SharedVoice[]>([]);
+  // ver/1.4.1 Paid AI voice: env-default monthly quota (seconds), from the users
+  // endpoint — used as the placeholder for blank (inherit) AI quota fields.
+  const [defaultAiQuota, setDefaultAiQuota] = useState(300);
   const [loading, setLoading] = useState(true);
   // Active admin section — a row of pill tabs sharing the panel below (mirrors
   // the /dashboard Control Panel / add-a-sound groups).
-  const [tab, setTab] = useState<"roles" | "users" | "youtube" | "notices" | "tags" | "content">("roles");
+  const [tab, setTab] = useState<"roles" | "users" | "youtube" | "ai" | "notices" | "tags" | "content" | "presets">("roles");
 
   const refresh = async () => {
     try {
-      const [r, u, s, cfg, t] = await Promise.all([
+      const [r, u, s, cfg, t, p, v] = await Promise.all([
         fetch("/api/admin/roles").then((x) => x.json()),
         fetch("/api/admin/users").then((x) => x.json()),
         fetch("/api/admin/sounds").then((x) => x.json()),
         fetch("/api/admin/settings").then((x) => x.json()),
         fetch("/api/admin/tags").then((x) => x.json()),
+        // The shared-preset list is the same one users see (official + user, with
+        // owner names, no UUID); admins moderate it from here.
+        fetchSharedPresets().catch(() => [] as SharedPreset[]),
+        // Likewise the shared AI-voice library — moderated from the Presets tab.
+        fetchSharedVoices().catch(() => [] as SharedVoice[]),
       ]);
       setRoles(r.roles ?? []);
       setUsers(u.users ?? []);
+      if (typeof u.defaultAiQuotaSeconds === "number") setDefaultAiQuota(u.defaultAiQuotaSeconds);
       setSounds(s.sounds ?? []);
       setSettings(cfg.settings ?? null);
       setTags(t.tags ?? []);
+      setPresets(p);
+      setVoices(v);
     } catch {
       toast.error("Couldn't load admin data — refresh to retry.");
     } finally {
@@ -121,9 +172,11 @@ export function AdminPanel() {
         <PillTab icon={<Shield size={16} />} label="Roles" count={loading ? undefined : roles.length} active={tab === "roles"} onClick={() => setTab("roles")} />
         <PillTab icon={<Users size={16} />} label="Users" count={loading ? undefined : users.length} active={tab === "users"} onClick={() => setTab("users")} />
         <PillTab icon={<Youtube size={16} />} label="YouTube import" active={tab === "youtube"} onClick={() => setTab("youtube")} />
+        <PillTab icon={<Sparkles size={16} />} label="AI voice" active={tab === "ai"} onClick={() => setTab("ai")} />
         <PillTab icon={<Megaphone size={16} />} label="Notice banner" active={tab === "notices"} onClick={() => setTab("notices")} />
         <PillTab icon={<TagIcon size={16} />} label="Tags" count={loading ? undefined : tags.length} active={tab === "tags"} onClick={() => setTab("tags")} />
         <PillTab icon={<Music size={16} />} label="Content" count={loading ? undefined : sounds.length} active={tab === "content"} onClick={() => setTab("content")} />
+        <PillTab icon={<Sliders size={16} />} label="Presets" count={loading ? undefined : presets.length} active={tab === "presets"} onClick={() => setTab("presets")} />
       </div>
 
       <section className="card">
@@ -175,6 +228,25 @@ export function AdminPanel() {
             )}
           </>
         )}
+        {tab === "ai" && (
+          <>
+            <PanelHead
+              icon={<Sparkles size={16} />}
+              title="AI voice"
+              subtitle="Master switch + per-role quotas for the paid AI voice features (ElevenLabs / Respeecher). The quota unit is seconds of AI audio per calendar month, resolved user override → role default → env DEFAULT_AI_QUOTA_SECONDS. Provider keys live in env (ELEVENLABS_API_KEY / RESPEECHER_API_KEY); a user's own BYO key bypasses the quota. The free rvc_zero engine is unaffected."
+            />
+            {settings ? (
+              <AiSettings
+                settings={settings}
+                roles={roles}
+                defaultAiQuota={defaultAiQuota}
+                onChange={refresh}
+              />
+            ) : (
+              <p className="text-sm text-muted">Loading…</p>
+            )}
+          </>
+        )}
         {tab === "notices" && (
           <>
             <PanelHead
@@ -207,6 +279,16 @@ export function AdminPanel() {
               subtitle="Every uploaded sound. Preview to review, flip clips public or private, or delete violating content."
             />
             <SoundsTable sounds={sounds} allTags={tags.map((t) => t.name)} onChange={refresh} />
+          </>
+        )}
+        {tab === "presets" && (
+          <>
+            <PanelHead
+              icon={<Sliders size={16} />}
+              title="Shared presets & voices"
+              subtitle="Author official/featured effect-chain presets, and moderate the shared preset + AI-voice libraries. Official entries sort first and show a badge for all users."
+            />
+            <PresetsAdmin presets={presets} voices={voices} onChange={refresh} />
           </>
         )}
       </section>
@@ -517,6 +599,145 @@ function MotdSettings({
           <AlertCircle size={13} /> {err}
         </p>
       )}
+    </div>
+  );
+}
+
+// ver/1.4.1 Paid AI voice settings: the master toggle + live-session cap commit
+// immediately; below is a per-role table for the monthly quota + use-permission
+// (mirrors RoleYtTable). App provider keys live in env, never in the DB.
+function AiSettings({
+  settings,
+  roles,
+  defaultAiQuota,
+  onChange,
+}: {
+  settings: Settings;
+  roles: Role[];
+  defaultAiQuota: number;
+  onChange: () => void;
+}) {
+  const [cap, setCap] = useState(String(settings.aiLiveSessionCapSec));
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const mutate = useMutate();
+
+  async function patch(body: Partial<Settings>) {
+    setErr(null);
+    setSaving(true);
+    const res = await fetch("/api/admin/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setErr(j.error ?? "Couldn't save");
+      return false;
+    }
+    onChange();
+    return true;
+  }
+
+  async function updateRole(role: Role, p: Partial<Role>) {
+    const ok = await mutate(`/api/admin/roles/${role.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    }, "Couldn't update AI role setting");
+    if (ok) onChange();
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="font-medium text-sm">Enable AI voice</div>
+          <p className="text-xs text-muted mt-0.5">
+            Master switch for all paid AI voice features. When off, the AI engine pickers are hidden
+            and the proxy rejects requests. The free rvc_zero engine is unaffected.
+          </p>
+        </div>
+        <Toggle
+          checked={settings.aiEnabled}
+          onChange={(next) => patch({ aiEnabled: next })}
+          label="Toggle AI voice"
+        />
+      </div>
+
+      <Field label="Live session cap (seconds)">
+        <input
+          className="input w-40"
+          value={cap}
+          inputMode="numeric"
+          onChange={(e) => setCap(e.target.value)}
+          onBlur={() => {
+            const n = Math.round(Number(cap));
+            if (!Number.isFinite(n) || n < 5 || n > 600) {
+              setErr("Live cap must be 5–600 seconds");
+              setCap(String(settings.aiLiveSessionCapSec));
+              return;
+            }
+            if (n !== settings.aiLiveSessionCapSec) patch({ aiLiveSessionCapSec: n });
+          }}
+        />
+      </Field>
+      <p className="text-xs text-muted -mt-3">
+        The hard auto-stop on a continuous live (Respeecher) session. Elapsed seconds meter against
+        the user&apos;s monthly quota.
+      </p>
+
+      {err && (
+        <p className="text-xs text-red-300 flex items-center gap-1.5">
+          <AlertCircle size={13} /> {err}
+        </p>
+      )}
+      {saving && <p className="text-xs text-muted">Saving…</p>}
+
+      <div>
+        <div className="font-medium text-sm mb-1">Per-role AI quota &amp; access</div>
+        <p className="text-xs text-muted mb-3">
+          Leave the quota blank to inherit the env default ({defaultAiQuota}s). The master switch
+          still gates everything; turning access off here blocks the role even when the master is on.
+        </p>
+        <div className="rounded-2xl border border-white/10 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[480px]">
+              <thead>
+                <tr className="text-left text-muted text-xs uppercase tracking-wide bg-white/[0.02]">
+                  <th className="px-5 py-3 font-medium">Role</th>
+                  <th className="px-3 py-3 font-medium">Can use AI</th>
+                  <th className="px-5 py-3 font-medium">Monthly quota (s)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roles.map((r) => (
+                  <tr key={r.id} className="border-t border-white/5 align-middle">
+                    <td className="px-5 py-3"><span className="font-medium">{r.name}</span></td>
+                    <td className="px-3 py-3">
+                      <Toggle
+                        checked={r.canUseAi}
+                        onChange={(next) => updateRole(r, { canUseAi: next })}
+                        label={`Toggle AI voice for ${r.name}`}
+                      />
+                    </td>
+                    <td className="px-5 py-3">
+                      <NullableNumber
+                        value={r.aiQuotaSecondsMonthly}
+                        placeholder={`(${defaultAiQuota})`}
+                        min={0}
+                        max={10_000_000}
+                        onCommit={(v) => updateRole(r, { aiQuotaSecondsMonthly: v })}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -835,6 +1056,7 @@ function RolesTable({ roles, onChange }: { roles: Role[]; onChange: () => void }
               <th className="px-3 py-3 font-medium">Max file size</th>
               <th className="px-3 py-3 font-medium">Max total storage</th>
               <th className="px-3 py-3 font-medium">Can upload</th>
+              <th className="px-3 py-3 font-medium">Profiles</th>
               <th className="px-5 py-3"></th>
             </tr>
           </thead>
@@ -864,6 +1086,13 @@ function RolesTable({ roles, onChange }: { roles: Role[]; onChange: () => void }
                     checked={r.canUpload}
                     onChange={(next) => update(r, { canUpload: next })}
                     label={`Toggle uploads for ${r.name}`}
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <ProfileLimitInput
+                    value={r.profileLimit}
+                    placeholder="default"
+                    onCommit={(v) => update(r, { profileLimit: v })}
                   />
                 </td>
                 <td className="px-5 py-3 text-right">
@@ -1025,7 +1254,7 @@ function UsersTable({
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[920px]">
+        <table className="w-full text-sm min-w-[1180px]">
           <thead>
             <tr className="text-left text-muted text-xs uppercase tracking-wide bg-white/[0.02]">
               <th className="px-5 py-3 font-medium">User</th>
@@ -1033,7 +1262,10 @@ function UsersTable({
               <th className="px-3 py-3 font-medium">Role</th>
               <th className="px-3 py-3 font-medium">Uploads</th>
               <th className="px-3 py-3 font-medium">Max file override</th>
-              <th className="px-5 py-3 font-medium">Max total override</th>
+              <th className="px-3 py-3 font-medium">Max total override</th>
+              <th className="px-3 py-3 font-medium">Profiles</th>
+              <th className="px-3 py-3 font-medium">AI access</th>
+              <th className="px-5 py-3 font-medium">AI quota (s)</th>
             </tr>
           </thead>
           <tbody>
@@ -1074,13 +1306,42 @@ function UsersTable({
                     onCommit={(v) => update(u, { maxFileSizeOverride: v })}
                   />
                 </td>
-                <td className="px-5 py-3">
+                <td className="px-3 py-3">
                   <SizeInput
                     value={u.maxTotalStorageOverride}
                     nullable
                     placeholder="(role default)"
                     onCommit={(v) => update(u, { maxTotalStorageOverride: v })}
                   />
+                </td>
+                <td className="px-3 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted tabular-nums whitespace-nowrap" title="Profiles used / cap">
+                      {u.profileCount} / {u.profileLimit}
+                    </span>
+                    <ProfileLimitInput
+                      value={u.profileLimitOverride}
+                      placeholder="(role)"
+                      onCommit={(v) => update(u, { profileLimitOverride: v })}
+                    />
+                  </div>
+                </td>
+                <td className="px-3 py-3">
+                  <AiAccessOverride user={u} onChange={update} />
+                </td>
+                <td className="px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted tabular-nums whitespace-nowrap" title="AI seconds used / cap this month">
+                      {u.aiUsed} / {u.aiCap}
+                    </span>
+                    <NullableNumber
+                      value={u.aiQuotaSecondsOverride}
+                      placeholder="(role)"
+                      min={0}
+                      max={10_000_000}
+                      onCommit={(v) => update(u, { aiQuotaSecondsOverride: v })}
+                    />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -1125,6 +1386,52 @@ function UploadOverride({
         value={value}
         onChange={(v) =>
           onChange(user, { canUploadOverride: v === "" ? null : v === "allow" })
+        }
+        options={[
+          { value: "", label: `Role (${roleAllows ? "allowed" : "blocked"})` },
+          { value: "allow", label: "Allow" },
+          { value: "block", label: "Block" },
+        ]}
+      />
+    </div>
+  );
+}
+
+// ver/1.4.1 Paid AI voice: effective-access icon + a three-state override
+// (inherit role / allow / block), mirroring UploadOverride.
+function AiAccessOverride({
+  user,
+  onChange,
+}: {
+  user: User;
+  onChange: (u: User, patch: Partial<User>) => void;
+}) {
+  const roleAllows = user.roleCanUseAi ?? true; // no role → allowed
+  const effective = user.canUseAiOverride ?? roleAllows;
+  const value = user.canUseAiOverride == null ? "" : user.canUseAiOverride ? "allow" : "block";
+
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        title={
+          effective
+            ? user.canUseAiOverride != null
+              ? "AI allowed (override)"
+              : "AI allowed (from role)"
+            : user.canUseAiOverride != null
+              ? "AI blocked (override)"
+              : "AI blocked (from role)"
+        }
+        className={effective ? "text-emerald-400" : "text-red-400"}
+      >
+        {effective ? <Sparkles size={16} /> : <Ban size={16} />}
+      </span>
+      <Select
+        className="min-w-[110px] !py-1.5 text-xs"
+        aria-label="AI access override"
+        value={value}
+        onChange={(v) =>
+          onChange(user, { canUseAiOverride: v === "" ? null : v === "allow" })
         }
         options={[
           { value: "", label: `Role (${roleAllows ? "allowed" : "blocked"})` },
@@ -1204,6 +1511,60 @@ function SizeInput({
         }}
       />
     </div>
+  );
+}
+
+// ver/1.4.1 Profiles: a small integer input for a profile cap (role default or
+// per-user override). Empty commits null (inherit the next level → env default).
+function ProfileLimitInput({
+  value,
+  onCommit,
+  placeholder,
+}: {
+  value: number | null;
+  onCommit: (v: number | null) => void;
+  placeholder?: string;
+}) {
+  const [v, setV] = useState(value == null ? "" : String(value));
+  const [focused, setFocused] = useState(false);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setV(value == null ? "" : String(value));
+  }, [value, focused]);
+
+  function commit() {
+    setFocused(false);
+    setErr(false);
+    const trimmed = v.trim();
+    if (trimmed === "") {
+      if (value !== null) onCommit(null);
+      setV("");
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n < 1 || n > 100) {
+      setErr(true);
+      return;
+    }
+    setV(String(n));
+    if (n !== value) onCommit(n);
+  }
+
+  return (
+    <input
+      className={err ? "input w-20 !border-red-400/60" : "input w-20"}
+      value={v}
+      placeholder={placeholder}
+      inputMode="numeric"
+      onFocus={() => setFocused(true)}
+      onChange={(e) => { setV(e.target.value); if (err) setErr(false); }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") { setV(value == null ? "" : String(value)); (e.target as HTMLInputElement).blur(); }
+      }}
+    />
   );
 }
 
@@ -1432,6 +1793,189 @@ function SoundsTable({ sounds, allTags, onChange }: { sounds: Sound[]; allTags: 
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// Admin "Presets" tab: author official presets from scratch (a controlled chain
+// builder → publish as official) + moderate the whole shared library (toggle the
+// official flag, delete any). Reuses the public preset list (GET /api/presets).
+function PresetsAdmin({ presets, voices, onChange }: { presets: SharedPreset[]; voices: SharedVoice[]; onChange: () => void }) {
+  const toast = useToast();
+  const [draft, setDraft] = useState<EffectConfig[]>([]);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const ENGINE_LABEL: Record<string, string> = { rvc_zero: "RVC⚡ZERO", elevenlabs: "ElevenLabs", respeecher: "Respeecher" };
+  const toggleVoiceOfficial = async (v: SharedVoice) => {
+    const res = await setSharedVoiceOfficial(v.id, !v.isOfficial);
+    if (!res.ok) return toast.fromResponse(res, "Couldn't update voice.");
+    onChange();
+  };
+  const removeVoice = async (v: SharedVoice) => {
+    const res = await deleteSharedVoice(v.id);
+    if (!res.ok) return toast.fromResponse(res, "Couldn't delete voice.");
+    toast.success("Voice removed");
+    onChange();
+  };
+
+  const publishOfficial = async () => {
+    if (draft.length === 0) return;
+    setBusy(true);
+    const res = await publishSharedPreset(name, draft, { isOfficial: true });
+    setBusy(false);
+    if (!res.ok) return toast.fromResponse(res, "Couldn't publish preset.");
+    toast.success(`Published "${name.trim() || "Preset"}" as official`);
+    setName("");
+    setDraft([]);
+    onChange();
+  };
+
+  const toggleOfficial = async (p: SharedPreset) => {
+    const res = await setSharedPresetOfficial(p.id, !p.isOfficial);
+    if (!res.ok) return toast.fromResponse(res, "Couldn't update preset.");
+    onChange();
+  };
+
+  const remove = async (p: SharedPreset) => {
+    const res = await deleteSharedPreset(p.id);
+    if (!res.ok) return toast.fromResponse(res, "Couldn't delete preset.");
+    toast.success("Preset removed");
+    onChange();
+  };
+
+  return (
+    <div className="grid gap-6">
+      {/* Author */}
+      <div>
+        <div className="font-medium text-sm mb-1">Author an official preset</div>
+        <p className="text-xs text-muted mb-3">
+          Build an effect chain, name it, and publish it as official — it shows a featured badge and
+          sorts first for everyone.
+        </p>
+        <div className="grid gap-2 max-w-lg">
+          <EffectChainBuilder effects={draft} onChange={setDraft} />
+          <div className="flex items-center gap-1.5">
+            <input
+              className="input !py-1.5 text-sm flex-1"
+              placeholder="Preset name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn-primary text-sm disabled:opacity-40"
+              onClick={publishOfficial}
+              disabled={busy || draft.length === 0}
+              title="Publish the chain as an official preset"
+            >
+              <Star size={14} className="mr-1" /> Publish official
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Moderate */}
+      <div>
+        <div className="font-medium text-sm mb-2">All shared presets</div>
+        {presets.length === 0 ? (
+          <p className="text-sm text-muted">No shared presets yet.</p>
+        ) : (
+          <ul className="grid gap-1.5 max-w-2xl">
+            {presets.map((p) => (
+              <li key={p.id} className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      {p.isOfficial && (
+                        <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 bg-amber-400/10 border border-amber-400/20">
+                          <Star size={10} /> Official
+                        </span>
+                      )}
+                      <span className="font-medium text-sm truncate">{p.name}</span>
+                    </div>
+                    <p className="text-xs text-muted truncate">
+                      {p.effects.length} effect{p.effects.length === 1 ? "" : "s"}
+                      {p.effects.length > 0 && <> · {p.effects.map((e) => effectLabel(e.kind)).join(", ")}</>}
+                      {p.ownerName && <> · by {p.ownerName}</>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      className={`btn-ghost text-xs ${p.isOfficial ? "text-amber-300" : ""}`}
+                      onClick={() => toggleOfficial(p)}
+                      title={p.isOfficial ? "Remove official flag" : "Mark as official"}
+                    >
+                      <Star size={14} className="mr-1" /> {p.isOfficial ? "Unofficial" : "Make official"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost text-xs !px-1.5 text-red-300/80 hover:text-red-300"
+                      onClick={() => remove(p)}
+                      title="Delete preset"
+                      aria-label="Delete preset"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Moderate shared AI voices (ver/1.4.1). Admins author official voices by
+          publishing as official from the AI popover; here they toggle/delete. */}
+      <div>
+        <div className="font-medium text-sm mb-2">All shared voices</div>
+        {voices.length === 0 ? (
+          <p className="text-sm text-muted">No shared voices yet.</p>
+        ) : (
+          <ul className="grid gap-1.5 max-w-2xl">
+            {voices.map((v) => (
+              <li key={v.id} className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      {v.isOfficial && (
+                        <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 bg-amber-400/10 border border-amber-400/20">
+                          <Star size={10} /> Official
+                        </span>
+                      )}
+                      <span className="font-medium text-sm truncate">{v.name}</span>
+                    </div>
+                    <p className="text-xs text-muted truncate">
+                      {ENGINE_LABEL[v.engine] ?? v.engine}
+                      {v.ownerName && <> · by {v.ownerName}</>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      className={`btn-ghost text-xs ${v.isOfficial ? "text-amber-300" : ""}`}
+                      onClick={() => toggleVoiceOfficial(v)}
+                      title={v.isOfficial ? "Remove official flag" : "Mark as official"}
+                    >
+                      <Star size={14} className="mr-1" /> {v.isOfficial ? "Unofficial" : "Make official"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost text-xs !px-1.5 text-red-300/80 hover:text-red-300"
+                      onClick={() => removeVoice(v)}
+                      title="Delete voice"
+                      aria-label="Delete voice"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

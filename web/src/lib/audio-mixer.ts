@@ -49,8 +49,8 @@ import {
   type EffectParams,
   type Effect,
   createEffect,
-  chainNeedsBitcrusher,
-  ensureBitcrusherModule,
+  chainNeedsWorklet,
+  ensureWorkletModules,
 } from "./voice-fx";
 
 export type MixerInputState = { deviceId: string; enabled: boolean; volume: number };
@@ -448,10 +448,10 @@ export class MicMixer {
     this.chains.set(key, { out, tail, effects });
     tail.connect(this.micBus!);
 
-    // If the chain wants a bitcrusher and its worklet isn't loaded yet, the nodes
-    // built above fell back to passthroughs — load the module then rebuild once.
-    if (chainNeedsBitcrusher(configs)) {
-      ensureBitcrusherModule(ctx).then(
+    // If the chain wants a worklet-backed effect whose module isn't loaded yet, the
+    // nodes built above fell back to passthroughs — load the module(s), rebuild once.
+    if (chainNeedsWorklet(configs)) {
+      ensureWorkletModules(ctx, configs).then(
         () => {
           const c = this.chains.get(key);
           if (c) this.rebuildChain(c, this.sourceEffects.get(key) ?? []);
@@ -508,7 +508,7 @@ export class MicMixer {
       const c = this.chains.get(key);
       if (c) this.rebuildChain(c, configs);
     };
-    if (chainNeedsBitcrusher(configs)) ensureBitcrusherModule(ctx).then(build, build);
+    if (chainNeedsWorklet(configs)) ensureWorkletModules(ctx, configs).then(build, build);
     else build();
   }
 
@@ -689,7 +689,7 @@ export class MicMixer {
   // the next injectClip builds the real node instead of a passthrough. Call when a
   // sound's effect config is set/loaded; play() itself stays synchronous.
   preloadEffects(configs: EffectConfig[]) {
-    if (this.ctx && chainNeedsBitcrusher(configs)) ensureBitcrusherModule(this.ctx).catch(() => {});
+    if (this.ctx && chainNeedsWorklet(configs)) ensureWorkletModules(this.ctx, configs).catch(() => {});
   }
 
   // Inject a soundboard clip into the soundboard sub-bus, through an optional
