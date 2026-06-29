@@ -59,7 +59,7 @@ The Electron app reads keybinds from the logged-in user's board (via an exposed 
 ## Library, board & tags
 
 - Every clip you own or save lives in your **Saved** library. You explicitly promote a curated subset onto the playable **Board**, which is the only place that gets positions, keybinds, and VR binds. The dashboard has Saved/Board pill tabs; Board has a drag-reorder mode, Saved has tag-filter chips.
-- **Tags** are global and normalized — one lowercase label is one shared tag across every clip — joined to sounds many-to-many. Each clip carries **1–3 tags**; uploads with no tag fall back to a default `misc` tag. Admins rename/merge/delete tags globally in `/admin`.
+- **Tags** are global and normalized — one lowercase label is one shared tag across every clip — joined to sounds many-to-many. Each clip carries **1–3 tags**, and **at least one tag is required** when you add a sound (the upload / YouTube-import button stays disabled until you set one; a server-side `misc` fallback remains as a safety net). Admins rename/merge/delete tags globally in `/admin`.
 - Cards are compact by default (play/cancel + name + read-only bind chips + volume); a pencil expands them into full editing.
 
 ## Clip editor
@@ -68,7 +68,7 @@ Before any upload (file or YouTube), an in-browser editor (`wavesurfer.js` + Reg
 
 ## YouTube import
 
-Paste a YouTube link and the server converts it in-process (`yt-dlp` → `ffmpeg`), capped by duration and file size. It's **admin-gated**: a global master toggle plus limits (`appSettings`), with per-role overrides. A job row tracks each request (pending → running → done/error) and the client polls for the result. Configurable via `YTDLP_*` env (cookies/proxy/extractor args) for getting past datacenter-IP bot checks.
+Paste a YouTube link (with a name and tags), and the server converts it in-process (`yt-dlp` → `ffmpeg`), capped by duration and file size. It's **admin-gated**: a global master toggle plus limits (`appSettings`), with per-role overrides. A job row tracks each request (pending → running → done/error) and the client polls for the result. Once converted, the same waveform clip editor appears below the inputs to trim/level it. **Cancelling** at any point stops the `yt-dlp` process and deletes its files (and discards the imported clip if you cancel in the editor). Configurable via `YTDLP_*` env (cookies/proxy/extractor args) for getting past datacenter-IP bot checks.
 
 ## Keybinds & VR controller binds
 
@@ -77,8 +77,16 @@ Paste a YouTube link and the server converts it in-process (`yt-dlp` → `ffmpeg
 
 ## Public sounds
 
-- Sounds flipped to **Public** appear in `/public` for every other user to browse, play, and add to their own library.
+- Sounds flipped to **Public** are browsable by every other user from the dashboard's **Browse public** tab (no standalone page) — preview, then add to your own library.
 - Authors are filtered out of their own public listing — you can't re-add a clip you already own, and adding the same clip twice is a no-op. Your uploads are auto-placed on your board.
+
+## Terms of Service
+
+On first login (and again whenever the terms are updated), users must accept a short **Terms of Service** before reaching the dashboard — illegal-content ban, zero-tolerance abuse, disclosure that the optional AI voice features send audio to third-party providers, and that basic analytics are used (we never sell data). Accepting records it in the DB; rejecting signs out. Bump `TOS_VERSION` in `web/src/lib/tos.ts` to re-prompt everyone.
+
+## Analytics (optional)
+
+Set `NEXT_PUBLIC_GA_MEASUREMENT_ID` (a GA4 id) to enable Google Analytics; leave it blank for none. It's **build-time inlined** (passed as a Docker build ARG) and **never runs under `next dev`**. Events are tagged `client_type` (web vs the Electron app), an `environment` (the runtime `GA_ENV`, for splitting staging/prod), and the signed-in `user_id`.
 
 ## Virtual Mic mode
 

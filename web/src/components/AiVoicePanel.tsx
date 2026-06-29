@@ -5,14 +5,16 @@
 // the AI source; its config is keyed by that deviceId in the engine's voiceFx map.
 //
 // Three surfaces, all driven from here:
-//   • AiVoicePanel  — the header popover body (engine/voice/mode/PTT + binds)
-//   • AiMainSection — a compact main-page strip (hold-to-talk + replay), shown on
-//                     the dashboard only while AI is enabled (below upload, above board)
+//   • AiVoicePanel  — the header popover body, CONFIG ONLY (engine/voice/mode/voice
+//                     presets/disclosures) — the interactive controls moved out
+//   • AiMainSection — a compact main-page strip (hold-to-talk + replay + the PTT/
+//                     replay hotkey bars), shown on the dashboard only while AI is
+//                     enabled (below upload, above board)
 // The provider API keys live in Settings now (Task 4); push-to-talk bind state
 // lives in VoiceChangerProvider; the VR bind PICKER renders from VrProvider.
 
 import { useEffect, useRef, useState } from "react";
-import { Wand2, ShieldAlert, Mic, Keyboard, Gamepad2, Repeat } from "lucide-react";
+import { Wand2, ShieldAlert, Mic, Keyboard, Gamepad2, Repeat, Info, Library } from "lucide-react";
 import type { AudioOutput, AiConfig, AiEngine, AiMode } from "@/lib/audio-output";
 import { AI_PRESETS, AI_CUSTOM_ID, AI_MODEL_CREDIT, AI_PRIVACY_NOTICE, type AiVoice } from "@/lib/voice-ai";
 import {
@@ -20,7 +22,6 @@ import {
   PAID_CUSTOM_ID,
   PAID_PRIVACY,
   RESPEECHER_LIVE_PRIVACY,
-  PROVIDER_LABEL,
   type PaidProvider,
 } from "@/lib/voice-ai-paid";
 import { sttSupported, STT_PRIVACY } from "@/lib/voice-stt";
@@ -44,6 +45,102 @@ function readControllerProfile(): VrProfile {
   }
 }
 const hasDesktopApp = () => typeof window !== "undefined" && "soundboard" in window;
+
+// Push-to-talk hotkey bar — keyboard + (desktop) controller bind capture with
+// tooltips + edit/clear. Shared by the AI popover section and the main-page strip
+// so the PTT keybind is viewable + editable from either surface. Bind state lives
+// in VoiceChangerProvider (works on any page); the VR picker renders from VrProvider.
+function PttHotkeyRow({ label = "PTT hotkey" }: { label?: string }) {
+  const vc = useVoiceChanger();
+  const [controllerProfile] = useState<VrProfile>(readControllerProfile);
+  const hasDesktop = hasDesktopApp();
+  const profBind = getProfileBind(vc.aiPttControllerBind, controllerProfile);
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap rounded-lg border border-white/10 bg-white/[0.03] p-1">
+      <span className="text-xs text-muted px-1">{label}</span>
+      <button
+        type="button"
+        className={`btn-ghost text-xs !py-1 !px-2 ${vc.capturingAiPtt ? "text-accent" : ""}`}
+        onClick={() => vc.setCapturingAiPtt(!vc.capturingAiPtt)}
+        title="Set a keyboard push-to-talk hotkey"
+      >
+        <Keyboard size={14} className="mr-1" />
+        {vc.capturingAiPtt ? "Hold keys…" : vc.aiPttKeybind || "Set keybind"}
+      </button>
+      {vc.aiPttKeybind && !vc.capturingAiPtt && (
+        <button type="button" className="btn-ghost text-xs !py-1 !px-1.5" onClick={() => vc.setAiPttKeybind(null)} title="Clear PTT keybind">
+          ×
+        </button>
+      )}
+      {hasDesktop && (
+        <>
+          <span className="h-4 w-px bg-white/10" aria-hidden />
+          <button type="button" className="btn-ghost text-xs !py-1 !px-2" onClick={() => vc.setCapturingAiPttVr(true)} title="Set a controller push-to-talk bind">
+            <Gamepad2 size={14} className="mr-1" />
+            {profBind ? <VrBindChips value={profBind} /> : "Set controller"}
+          </button>
+          {profBind && (
+            <button
+              type="button"
+              className="btn-ghost text-xs !py-1 !px-1.5"
+              onClick={() => vc.setAiPttControllerBind(setProfileBind(vc.aiPttControllerBind, controllerProfile, null))}
+              title="Clear PTT controller bind"
+            >
+              ×
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Replay hotkey bar — same capture controls for the AI-replay bind. Used on the
+// main-page AI strip (the popover is config-only now).
+function ReplayHotkeyRow({ label }: { label?: string }) {
+  const vc = useVoiceChanger();
+  const [controllerProfile] = useState<VrProfile>(readControllerProfile);
+  const hasDesktop = hasDesktopApp();
+  const replayBind = getProfileBind(vc.aiReplayControllerBind, controllerProfile);
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap rounded-lg border border-white/10 bg-white/[0.03] p-1">
+      {label && <span className="text-xs text-muted px-1">{label}</span>}
+      <button
+        type="button"
+        className={`btn-ghost text-xs !py-1 !px-2 ${vc.capturingAiReplay ? "text-accent" : ""}`}
+        onClick={() => vc.setCapturingAiReplay(!vc.capturingAiReplay)}
+        title="Set a keyboard replay hotkey"
+      >
+        <Keyboard size={14} className="mr-1" />
+        {vc.capturingAiReplay ? "Hold keys…" : vc.aiReplayKeybind || "Set keybind"}
+      </button>
+      {vc.aiReplayKeybind && !vc.capturingAiReplay && (
+        <button type="button" className="btn-ghost text-xs !py-1 !px-1.5" onClick={() => vc.setAiReplayKeybind(null)} title="Clear replay keybind">
+          ×
+        </button>
+      )}
+      {hasDesktop && (
+        <>
+          <span className="h-4 w-px bg-white/10" aria-hidden />
+          <button type="button" className="btn-ghost text-xs !py-1 !px-2" onClick={() => vc.setCapturingAiReplayVr(true)} title="Set a controller replay bind">
+            <Gamepad2 size={14} className="mr-1" />
+            {replayBind ? <VrBindChips value={replayBind} /> : "Set controller"}
+          </button>
+          {replayBind && (
+            <button
+              type="button"
+              className="btn-ghost text-xs !py-1 !px-1.5"
+              onClick={() => vc.setAiReplayControllerBind(setProfileBind(vc.aiReplayControllerBind, controllerProfile, null))}
+              title="Clear replay controller bind"
+            >
+              ×
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // Header popover body. Resolves the primary mic; if none is selected yet it lets
 // the user pick one right here (so the popover isn't a dead end).
@@ -100,12 +197,11 @@ export function AiVoicePanel({ audio }: { audio: AudioOutput }) {
   );
 }
 
-// The AI voice section for the mic: enable (mutes the raw mic), pick an engine
-// (rvc_zero free / ElevenLabs / Respeecher), a voice + mode, push-to-talk (button +
-// hotkeys), the required privacy disclosure, a usage meter, savable/sharable voice
-// presets and provider attribution. PTT bind state comes from VoiceChangerProvider.
+// The AI voice CONFIG section for the mic: enable (mutes the raw mic), pick an engine
+// (rvc_zero free / ElevenLabs / Respeecher), a voice + mode, the required privacy
+// disclosure, a usage meter, savable/sharable voice presets and provider attribution.
+// The interactive controls (hold-to-talk + PTT/replay hotkeys) live on AiMainSection.
 function AiSection({ sourceKey, audio }: { sourceKey: string; audio: AudioOutput }) {
-  const vc = useVoiceChanger();
   const ai = audio.voiceFx[sourceKey]?.ai;
   const enabled = !!ai?.enabled;
   const engine: AiEngine = ai?.engine ?? "rvc_zero";
@@ -113,12 +209,7 @@ function AiSection({ sourceKey, audio }: { sourceKey: string; audio: AudioOutput
   const mode: AiMode = ai?.mode ?? "sts";
   const voiceId = ai?.voiceId ?? AI_PRESETS[0].id;
   const custom = ai?.custom ?? null;
-  const recording = audio.pttRecording.has(sourceKey);
   const sttOk = sttSupported();
-
-  // Device-local profile + desktop presence (read once per popover open).
-  const [controllerProfile] = useState<VrProfile>(readControllerProfile);
-  const hasDesktop = hasDesktopApp();
 
   // Re-fetch the usage meter after a conversion lands (aiBusy falling edge).
   const [usageRefresh, setUsageRefresh] = useState(0);
@@ -158,12 +249,10 @@ function AiSection({ sourceKey, audio }: { sourceKey: string; audio: AudioOutput
   };
   const currentConfig: VoiceConfig = { voiceId, customVoiceId: ai?.customVoiceId, custom };
 
-  const profBind = getProfileBind(vc.aiPttControllerBind, controllerProfile);
-  const replayBind = getProfileBind(vc.aiReplayControllerBind, controllerProfile);
-
   const isRespeak = paid && mode === "respeak";
   const privacy = engine === "rvc_zero" ? AI_PRIVACY_NOTICE : PAID_PRIVACY[engine as PaidProvider];
-  const attribution = engine === "rvc_zero" ? AI_MODEL_CREDIT : `Powered by ${PROVIDER_LABEL[engine as PaidProvider]}`;
+  // Only rvc_zero carries a (MIT-required) attribution; paid providers show none.
+  const attribution = engine === "rvc_zero" ? AI_MODEL_CREDIT : null;
   const paidVoices = paid ? PAID_VOICES[engine as PaidProvider] : [];
 
   return (
@@ -276,12 +365,25 @@ function AiSection({ sourceKey, audio }: { sourceKey: string; audio: AudioOutput
               />
               {voiceId === PAID_CUSTOM_ID && (
                 <div className="grid gap-1">
-                  <input
-                    className="input !py-1.5 text-xs"
-                    placeholder="Provider voice ID"
-                    value={ai?.customVoiceId ?? ""}
-                    onChange={(e) => setAi({ voiceId: PAID_CUSTOM_ID, customVoiceId: e.target.value })}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      className="input !py-1.5 text-xs flex-1"
+                      placeholder="Provider voice ID"
+                      value={ai?.customVoiceId ?? ""}
+                      onChange={(e) => setAi({ voiceId: PAID_CUSTOM_ID, customVoiceId: e.target.value })}
+                    />
+                    {engine === "elevenlabs" && (
+                      <a
+                        href="https://elevenlabs.io/app/api/voice-library"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-ghost text-xs !py-1.5 !px-2 shrink-0"
+                        title="Browse the ElevenLabs Voice Library to find a voice ID"
+                      >
+                        <Library size={14} className="mr-1" /> Library
+                      </a>
+                    )}
+                  </div>
                   <p className="text-xs text-muted">Use only voices you have the rights to.</p>
                 </div>
               )}
@@ -291,111 +393,9 @@ function AiSection({ sourceKey, audio }: { sourceKey: string; audio: AudioOutput
           {/* Savable / sharable voice presets (custom voice id / model+index URL). */}
           <VoicePresetBar engine={engine} config={currentConfig} onApply={applyVoice} />
 
-          {/* Push-to-talk: hold the button (or the bound hotkey) to record. */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              className={`btn-ghost text-xs ${recording ? "!border-fuchsia-400/50 !bg-fuchsia-500/20 text-white" : ""}`}
-              onPointerDown={(e) => { e.preventDefault(); audio.startPtt(sourceKey); }}
-              onPointerUp={() => audio.stopPtt(sourceKey)}
-              onPointerLeave={() => { if (recording) audio.stopPtt(sourceKey); }}
-              title="Hold to record, release to convert"
-            >
-              <Mic size={14} className="mr-1" />
-              {recording
-                ? isRespeak ? "Listening… release to speak" : "Recording… release to convert"
-                : isRespeak ? "Hold to re-speak" : "Hold to talk"}
-            </button>
-            {audio.aiBusy && <span className="text-xs text-fuchsia-300">{isRespeak ? "Synthesizing…" : "Converting…"}</span>}
-          </div>
-          {isRespeak && recording && (
-            <p className="text-xs text-fuchsia-200/90 italic min-h-[1rem]">{audio.aiTranscript || "…"}</p>
-          )}
-
-          {/* Hotkeys (one global PTT bind, editable here). */}
-          <div className="flex items-center gap-1.5 flex-wrap rounded-lg border border-white/10 bg-white/[0.03] p-1">
-            <span className="text-xs text-muted px-1">PTT hotkey</span>
-            <button
-              type="button"
-              className={`btn-ghost text-xs ${vc.capturingAiPtt ? "text-accent" : ""}`}
-              onClick={() => vc.setCapturingAiPtt(!vc.capturingAiPtt)}
-              title="Set a keyboard push-to-talk hotkey"
-            >
-              <Keyboard size={14} className="mr-1" />
-              {vc.capturingAiPtt ? "Hold keys…" : vc.aiPttKeybind || "Set keybind"}
-            </button>
-            {vc.aiPttKeybind && !vc.capturingAiPtt && (
-              <button type="button" className="btn-ghost text-xs !px-1.5" onClick={() => vc.setAiPttKeybind(null)} title="Clear PTT keybind">
-                ×
-              </button>
-            )}
-            {hasDesktop && (
-              <>
-                <span className="h-4 w-px bg-white/10" aria-hidden />
-                <button type="button" className="btn-ghost text-xs" onClick={() => vc.setCapturingAiPttVr(true)} title="Set a controller push-to-talk bind">
-                  <Gamepad2 size={14} className="mr-1" />
-                  {profBind ? <VrBindChips value={profBind} /> : "Set controller"}
-                </button>
-                {profBind && (
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs !px-1.5"
-                    onClick={() => vc.setAiPttControllerBind(setProfileBind(vc.aiPttControllerBind, controllerProfile, null))}
-                    title="Clear PTT controller bind"
-                  >
-                    ×
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Replay: re-inject the last converted clip (button + hotkeys). */}
-          <div className="flex items-center gap-1.5 flex-wrap rounded-lg border border-white/10 bg-white/[0.03] p-1">
-            <button
-              type="button"
-              className="btn-ghost text-xs"
-              onClick={() => audio.replayLastConversion()}
-              title="Replay the last converted clip"
-            >
-              <Repeat size={14} className="mr-1" /> Replay last
-            </button>
-            <button
-              type="button"
-              className={`btn-ghost text-xs ${vc.capturingAiReplay ? "text-accent" : ""}`}
-              onClick={() => vc.setCapturingAiReplay(!vc.capturingAiReplay)}
-              title="Set a keyboard replay hotkey"
-            >
-              <Keyboard size={14} className="mr-1" />
-              {vc.capturingAiReplay ? "Hold keys…" : vc.aiReplayKeybind || "Set keybind"}
-            </button>
-            {vc.aiReplayKeybind && !vc.capturingAiReplay && (
-              <button type="button" className="btn-ghost text-xs !px-1.5" onClick={() => vc.setAiReplayKeybind(null)} title="Clear replay keybind">
-                ×
-              </button>
-            )}
-            {hasDesktop && (
-              <>
-                <span className="h-4 w-px bg-white/10" aria-hidden />
-                <button type="button" className="btn-ghost text-xs" onClick={() => vc.setCapturingAiReplayVr(true)} title="Set a controller replay bind">
-                  <Gamepad2 size={14} className="mr-1" />
-                  {replayBind ? <VrBindChips value={replayBind} /> : "Set controller"}
-                </button>
-                {replayBind && (
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs !px-1.5"
-                    onClick={() => vc.setAiReplayControllerBind(setProfileBind(vc.aiReplayControllerBind, controllerProfile, null))}
-                    title="Clear replay controller bind"
-                  >
-                    ×
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-
-          <p className="text-[11px] text-muted">{attribution}</p>
+          {/* This popover is config-only — hold-to-talk + the PTT/replay hotkeys
+              live on the AI voice section of the main page. */}
+          {attribution && <p className="text-[11px] text-muted">{attribution}</p>}
         </div>
       )}
     </div>
@@ -404,8 +404,9 @@ function AiSection({ sourceKey, audio }: { sourceKey: string; audio: AudioOutput
 
 // Compact main-page AI strip (Task 3) — rendered on the dashboard between the
 // upload card and the board only while AI is enabled for the primary mic. Surfaces
-// the interactive controls (hold-to-talk + replay + status) so the user doesn't
-// have to open the popover to talk. Configuration stays in the popover.
+// the interactive controls (hold-to-talk + replay + status) plus the PTT/replay
+// hotkey bars (view + edit), so the user can talk and rebind without opening the
+// popover. The rest of the configuration stays in the popover.
 export function AiMainSection({ audio }: { audio: AudioOutput }) {
   const sourceKey = audio.inputDeviceId;
   const ai = sourceKey ? audio.voiceFx[sourceKey]?.ai : undefined;
@@ -417,15 +418,18 @@ export function AiMainSection({ audio }: { audio: AudioOutput }) {
   const recording = audio.pttRecording.has(sourceKey);
 
   return (
-    <section className="card">
-      <div className="flex items-center gap-2 mb-3">
+    <section className="card !py-3">
+      <div className="flex items-center gap-2 mb-2">
         <Wand2 size={16} className="text-fuchsia-300" />
         <h2 className="font-semibold tracking-tight">AI voice</h2>
         {!audio.virtualMicMode && (
           <span className="text-xs text-amber-300/90">(Virtual Mic mode off — enable it in Settings)</span>
         )}
       </div>
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* Action buttons on the left; the bind view/edit rows float to the right
+          (hold a key/controller bind to record — works while unfocused in the
+          desktop app). All on one row; the hotkey stack pushes right via ml-auto. */}
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           type="button"
           className={`btn-primary text-sm ${recording ? "!bg-fuchsia-500/30 !border-fuchsia-400/50" : ""}`}
@@ -449,6 +453,10 @@ export function AiMainSection({ audio }: { audio: AudioOutput }) {
         </button>
         {audio.aiBusy && <span className="text-sm text-fuchsia-300">{isRespeak ? "Synthesizing…" : "Converting…"}</span>}
         {audio.aiError && <span className="text-sm text-red-400">{audio.aiError}</span>}
+        <div className="ml-auto flex flex-col items-end gap-1.5">
+          <PttHotkeyRow />
+          <ReplayHotkeyRow label="Replay hotkey" />
+        </div>
       </div>
       {isRespeak && recording && (
         <p className="text-sm text-fuchsia-200/90 italic mt-2 min-h-[1.25rem]">{audio.aiTranscript || "…"}</p>
@@ -474,7 +482,16 @@ function AiUsageMeter({ refresh }: { refresh: number }) {
     <div className="text-xs text-muted">
       <div className="flex justify-between">
         <span>AI quota this month</span>
-        <span className="tabular-nums">{usage.used} / {usage.cap}s</span>
+        <span className="flex items-center gap-1">
+          <span className="tabular-nums">{usage.used} / {usage.cap}s</span>
+          <span
+            className="inline-flex cursor-help"
+            title="Paste your own provider API key in Settings to bypass the free quota."
+            aria-label="Paste your own provider API key in Settings to bypass the free quota."
+          >
+            <Info size={12} className="text-muted/70 shrink-0" />
+          </span>
+        </span>
       </div>
       <div className="mt-1 h-1 w-full rounded-full bg-white/10 overflow-hidden">
         <div className="h-full bg-accent-grad" style={{ width: `${pct}%` }} />

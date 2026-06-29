@@ -2,7 +2,7 @@
   "name": "soundboard-electron",
   "productName": "Soundboard",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Desktop wrapper for the Soundboard web app with OS-level global hotkeys.",
   "author": {
     "name": "Soouuupppp",

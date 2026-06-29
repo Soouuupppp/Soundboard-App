@@ -33,7 +33,7 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.4.1**).
+(currently **1.4.2**).
 
 ## Stack
 
@@ -144,6 +144,19 @@ pnpm up / pnpm down # docker compose up --build / down
   `ffmpeg` pipeline, bounded by `ytConcurrency`. Configurable via env
   `YTDLP_PATH`, `YTDLP_COOKIES`, `YTDLP_PROXY`, `YTDLP_EXTRACTOR_ARGS`. Stale
   running/pending rows are failed on restart.
+- **Tags are collected up-front** on the import form (1.4.2): a required `TagEditor`
+  gates the **Import** button, and the tags ride to the worker via a
+  `conversionJob.requestedTags` (JSON) column → `persistSound`, so the auto-imported
+  clip is tagged with the user's tags (no `misc`). The form mirrors the file-upload
+  flow — URL/name/tags/public inputs stay visible and, once converted, the
+  `ClipEditor` waveform appears **below** them (no separate edit screen).
+- **Cancellation** (1.4.2): `cancelConversion(jobId)` (`lib/yt-convert.ts`, exposed
+  via `DELETE /api/sounds/youtube/[jobId]`) **kills the running `yt-dlp` child**
+  (tracked per job), dequeues it, removes any sound that raced the finish, and the
+  worker's `finally` drops the temp dir. The client fires it from a **Cancel button**
+  during conversion and on unmount mid-conversion (`jobIdRef`, cleared once the
+  editor opens). At the editor stage, the `ClipEditor` **Cancel discards** the
+  imported clip (`DELETE /api/sounds/[id]`) rather than keeping it.
 
 ### Clip editor (pre-upload)
 - `components/ClipEditor.tsx` (+ `lib/audio-edit.ts`) is the shared pre-upload
@@ -326,7 +339,11 @@ both **device-local** (no DB/schema change):
   converted bursts pass. An **AI replay** bind re-injects the last clip and a
   bundled chime plays on the monitor when a conversion lands. PTT + replay are
   bindable (keyboard `chord.ts` + VR `vr-bind.ts`, device-local) via the
-  `AI_PTT_BIND` / `AI_REPLAY_BIND` sentinels. **Security:** mic audio leaving the
+  `AI_PTT_BIND` / `AI_REPLAY_BIND` sentinels. **Monitor auto-toggle (1.4.2):**
+  enabling AI auto-enables the **monitor mic** (so you hear your converted voice
+  locally) and disabling AI reverts it — but only the monitor *AI* turned on
+  (`aiAutoMonitorRef` in `audio-output.ts`); a monitor that was already on, or one
+  the user toggles manually while AI is on, is left alone. **Security:** mic audio leaving the
   machine is disclosed in-UI; the CSP `connect-src` is deliberately widened to the
   HF Spaces hosts in `middleware.ts`. Full survey + tradeoffs in
   `docs/voice-changer-research.md`.
@@ -364,7 +381,37 @@ both **device-local** (no DB/schema change):
   as props.
 - `components/Select.tsx` is the shared dark dropdown primitive (portal-based, so
   its menu escapes `overflow` clipping) — used everywhere instead of native
-  `<select>`.
+  `<select>`. **Viewport-aware (1.4.2):** the portalled menu measures itself and
+  **flips above / clamps into the viewport**, so a trigger near the bottom or right
+  edge (e.g. the last admin-table row) isn't cut off.
+- `components/Popover.tsx` is the shared anchored popover (header Settings/Voice/AI/
+  Sound-Effects + the profile + per-card menus). Default mode positions an `absolute`
+  panel; an opt-in **`portal` mode (1.4.2)** renders the panel through a portal to
+  `<body>` with viewport-clamped `fixed` positioning, so a popover anchored inside a
+  scrolling/stacking container (the per-card board Sound-Effects button) escapes its
+  card's stacking context and never clips off-screen.
+
+### TOS, header & analytics (1.4.2)
+- **Terms of Service gate** — a signed-in user whose `user.tosAcceptedVersion` is
+  below `TOS_VERSION` (`lib/tos.ts`) gets `components/TosGate.tsx` rendered by
+  `app/layout.tsx` **instead of the app shell** (every route; heavy providers stay
+  unmounted). Accept → `POST /api/tos/accept` (marks the DB) → `router.refresh()`;
+  Reject → the layout's `signOut` action → landing. Bump `TOS_VERSION` to re-prompt
+  everyone. The card lists the AI providers (`AI_VOICE_PROVIDERS`, kept in sync with
+  the **Third-party AI voice providers** section above) + the analytics disclosure.
+- **Analytics** — optional GA4 (`lib/analytics.ts`, a no-op when off), see that
+  section's task entry + `NEXT_PUBLIC_GA_MEASUREMENT_ID` / `GA_ENV`. Never runs under
+  `next dev`; events tagged `client_type` (web/electron) + `environment`, tied to the
+  signed-in `user_id`.
+- **Navbar (1.4.2 tweaks)** — `components/AppHeader.tsx` right cluster is
+  Profile · Settings cog · user menu; the avatar pins left with the name/chevron
+  floating right (`UserMenu.tsx`); the upload-storage quota is its own `QuotaBar.tsx`
+  beneath the username band.
+- **Saved tab (1.4.2)** — a name/author **search** box leads the filter row; a
+  just-uploaded / just-saved clip gets a **lime "New" highlight** (cleared on hover or
+  when added to a board). **A tag is required** to upload / import / save (UI-gated:
+  the confirm button is disabled and the field highlights on a blocked submit
+  attempt) — the server's `misc` fallback (`persistSound`) is now only a safety net.
 
 ### User-facing notifications
 - `components/Toast.tsx` — `ToastProvider` + `useToast` (mounted in the root
@@ -387,6 +434,25 @@ conversion) · `fx-presets.ts` (shared device-local FX preset library) ·
 `audio-edit.ts` (decode/encode/segment for the clip editor) · `chord.ts` (keyboard
 chord model) · `vr-bind.ts` (controller step/sequence model + matcher) ·
 `validation.ts` (Zod schemas) · `utils.ts` (`formatBytes`, etc.).
+
+## Third-party AI voice providers
+The voice changer's AI paths send audio (and, for STT→TTS "re-speak", transcribed
+text) off the machine to third parties. This is disclosed in the **Terms of
+Service** (`components/TosGate.tsx`, shown on first login) and surfaced in the AI
+UI. **Keep this list in sync with `web/src/lib/tos.ts` (`AI_VOICE_PROVIDERS`)** —
+that array is the source the TOS card renders from.
+
+| Provider | When it's used | Website | Terms | Privacy |
+| --- | --- | --- | --- | --- |
+| **Hugging Face** (`r3gm/rvc_zero`) | Free preset PTT voices (default AI path) — browser-direct upload of the recorded clip | https://huggingface.co | https://huggingface.co/terms-of-service | https://huggingface.co/privacy |
+| **ElevenLabs** | Paid STS / TTS, only if the user enables it (app key or BYO) | https://elevenlabs.io | https://elevenlabs.io/terms-of-use | https://elevenlabs.io/privacy |
+| **Respeecher** | Paid STS, only if the user enables it (app key or BYO) | https://www.respeecher.com | https://www.respeecher.com/marketplace/terms-of-use | https://www.respeecher.com/privacy-policy |
+
+Also note: the **re-speak** feature's STT half uses the **browser's Web Speech
+API** (Google's speech service in Chrome), so recognition audio leaves the machine
+via the browser — disclosed via `STT_PRIVACY` (`lib/voice-stt.ts`). Analytics is
+**Google Analytics** (gtag.js, optional via `NEXT_PUBLIC_GA_MEASUREMENT_ID`); we
+never sell user data, and the TOS links Google's privacy policy.
 
 ## Security notes
 - **CSP + nonce live in `web/src/middleware.ts`** (not `next.config.ts`). The
@@ -515,6 +581,29 @@ override), the Sound-Effects editors moved to **anchored popovers**, and AI voic
 split into its **own popover + a main-page section** when enabled. Schema changes
 applied via `bootstrap.sql` (idempotent DDL) per the repo's mechanism — the first
 batch to add DB tables to the otherwise device-local voice-changer feature.
+
+**1.4.2 shipped** (UI polish + onboarding/analytics): a **Terms of Service gate**
+(`components/TosGate.tsx`, new `user.tosAcceptedVersion`/`tosAcceptedAt`) shown on
+first login and after a `TOS_VERSION` bump — Accept marks the DB → dashboard,
+Reject signs out; the card discloses the third-party AI voice providers + the
+analytics. **Optional Google Analytics** (`lib/analytics.ts`, GA4 via
+`NEXT_PUBLIC_GA_MEASUREMENT_ID`) — nonce-CSP-safe, build-time gated, **never under
+`next dev`**, tagging every event with `client_type` (web/Electron) + `environment`
+(`GA_ENV`) + the signed-in `user_id`; events cover the landing→login→TOS→new-user
+funnel, app open/close (use-time), uploads/imports/saves, profile CRUD, plays,
+previews, and board/saved mutations. The **YouTube import** was reworked to match
+the file-upload flow — tags collected up-front (new `conversionJob.requestedTags`
+→ worker, no `misc`), the clip editor below the inputs, and full **cancellation**
+(`cancelConversion` kills the `yt-dlp` child + cleans temp files; editor-stage
+Cancel discards the clip). **Tags are now required** on every new-sound path
+(disable-until-set + amber highlight on a blocked submit). Plus a batch of UI fixes:
+viewport-aware `Select` (flip/clamp) + a `Popover` **portal mode** so dropdowns and
+the per-card Sound-Effects popover never clip off-screen, fixed board/Saved column
+breakpoints, a collapsed-card volume bar, a **Saved name/author search** + a lime
+**"New" highlight** on freshly added clips, true unfocused **push-to-talk** (the
+Electron hook now emits a key-up edge), **AI monitor auto-toggle** (auto-on with AI,
+reverts only what it enabled), and navbar float tweaks. No new tables; the two new
+`user`/`conversionJob` columns ship via `bootstrap.sql`.
 
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
@@ -2494,6 +2583,177 @@ the routine that was meant to build them never committed/landed). Owner decision
    **Progress: ✅ Done** *(widened the header Sound-Effects popover `w-[26rem]`→
    `w-[34rem]` and the per-card popover `w-[22rem]`→`w-[30rem]`; the `SoundFxEditor`
    param rows now wrap to two columns (`sm:grid-cols-2`, label `w-20`→`w-16`).)*
+
+### Tasks — 1.4.2 (UI Improvements)
+
+Version bumped to **1.4.2** across all three `package.json` + docs. A
+**bug-fixes / polish** release focused on UI improvements. Owner decisions below
+are **locked**.
+
+**Sprint mode:** tasks for this version are being driven **manually, one prompt at
+a time** (no upfront enumerated task list). As each UI improvement is decided with
+the owner, append it here as a numbered task with a `**Progress: Not started**`
+field (→ `In progress` → `✅ Done`) and record any locked design decisions inline,
+following the established pattern of the prior version sections.
+
+1. **No horizontal scrollbar on popovers/modals** *(UI bug)*. The Settings popover
+   (and other scrollable popovers/modals) showed a spurious **horizontal**
+   scrollbar — a CSS-spec side effect: a box with `overflow-y-auto` but
+   `overflow-x: visible` promotes the X axis to `auto`, so once the vertical
+   scrollbar appears and any child is full-width, a horizontal scrollbar shows too.
+   **Fix:** pair every scroll surface's `overflow-y-auto` with `overflow-x-hidden`.
+   Central change in `components/Popover.tsx` (bake `overflow-x-hidden` into the
+   panel base so all popovers — Settings/Voice/AI/Sound-Effects/per-card/profile —
+   are covered + future-proofed), plus the standalone full-screen modal cards
+   (`VrBindPicker`, `SharedPresetsModal`, `SharedVoicesModal`) and inner scroll
+   lists (`SoundEffectsModal` picker, Dashboard board grid) which don't route
+   through `Popover`.
+   **Progress: ✅ Done**
+
+2. **PTT = true hold (incl. desktop global hotkey) + bind edit on the main-page AI
+   section** *(feat/bug)*. (a) The web keyboard PTT + on-screen buttons already
+   held (down→record, up→convert), but the **Electron global hotkey** — the real
+   PTT use case (talking while a game has focus, app unfocused) — only forwarded
+   the *down* edge, so an unfocused hold fell back to the 15s recorder cap, not a
+   true hold. **Fix:** the native hook now emits an **up edge**: `hotkeys.js` gains
+   an `onMatchUp(combo)` callback (tracks the keycode that completed each combo →
+   fires on its release), `main.js` forwards it as `soundboard:globalKeyUp`,
+   `preload.js` re-emits it, and `Dashboard.tsx` listens for it → `stopAiPtt` on
+   the `AI_PTT_BIND` combo. `startPtt`/`stopPtt` are idempotent so the added edge
+   is safe; sounds/cancel-all/replay ignore the up edge. (b) The **main-page AI
+   section** (`AiMainSection`) now shows the **PTT + replay hotkey bars** (keyboard
+   + controller, with tooltips + set/clear), not just the action buttons — extracted
+   the bars into shared `PttHotkeyRow`/`ReplayHotkeyRow` components in
+   `AiVoicePanel.tsx` reused by both the popover `AiSection` and the main page (the
+   popover keeps its inline "Replay last" via the row's `leading` slot). tsc clean.
+   *(Electron paths can't be run/verified in this environment — code follows the
+   existing global-hook pattern.)*
+   **Progress: ✅ Done**
+
+3. **Settings cog + profile dropdown standalone; quota sized to the username**
+   *(UI)*. The header right cluster was a two-row stack (Settings + Profile + User
+   on top, the upload-quota bar beneath). Pulled BOTH the Settings cog and the
+   profile dropdown out as standalone, vertically-centered buttons (Settings is a
+   **square `h-9 w-9` chip matching the center Voice/AI/FX buttons**, not
+   full-height). The upload-quota bar now sits beneath the **username only** (not
+   the profile), in a fixed **`min-w-[9rem] max-w-[12rem]`** band so its width stays
+   consistent across short/long usernames. `AppHeader`'s right cluster is `flex
+   items-center justify-end` = Settings cog · ProfileSwitcher · (UserMenu / Quota
+   stack). tsc clean.
+   **Progress: ✅ Done**
+
+4. **AI voice popover = config-only; main-page bind cards not full-width** *(UI)*.
+   (a) The AI **popover** (`AiSection` in `AiVoicePanel.tsx`) had the Hold-to-talk
+   button + the PTT/replay hotkey bars duplicated from the main page — removed them
+   so the popover is configuration only (engine/voice/mode/disclosures/voice
+   presets/attribution) with a one-line pointer to the main-page AI section; dropped
+   the now-unused `recording` local, the `ReplayHotkeyRow` `leading` prop, and the
+   `ReactNode` import. (b) On the **main-page** `AiMainSection` the two hotkey cards
+   (`PttHotkeyRow`/`ReplayHotkeyRow`) were full-width (grid stretch) — switched their
+   wrapper to `flex flex-col items-start` so each card sizes to its content. tsc
+   clean.
+   **Progress: ✅ Done**
+
+5. **Google Analytics + usage events** *(feat)*. Added optional GA4 (gtag.js),
+   gated on **`NEXT_PUBLIC_GA_MEASUREMENT_ID`** (unset = no analytics code, no CSP
+   widening). Loaded via `next/script` with the per-request CSP **nonce** in
+   `app/layout.tsx`; `middleware.ts` conditionally widens the CSP to the GA hosts;
+   the GA id is threaded as a build ARG (`web/Dockerfile` + `docker-compose.yml`)
+   since `NEXT_PUBLIC_*` is build-time inlined. The Electron app loads the same
+   site, so GA runs in its renderer too — every event is tagged
+   **`client_type: electron|web`** (a gtag user property) and rides the signed-in
+   **`user_id`** (set on the config) for per-user / use-time analysis. New
+   `lib/analytics.ts` (a no-op when GA is off) + `components/AnalyticsLifecycle.tsx`
+   (fires `app_open` on mount, `app_close` on `pagehide` via beacon, and `login`
+   once per session for a signed-in user). Wired events: `app_open`/`app_close`,
+   `login`, `landing` (`components/LandingAnalytics.tsx` on the logged-out home),
+   `tos_accept` + `new_user` (TosGate, see task 6), `upload_sound`,
+   `import_youtube`, `save_public_sound`, `profile_create/rename/clone/delete`,
+   `preview_sound` / `play_sound` (the `play()` preview flag), `remove_from_saved`,
+   `board_add` / `board_remove`. tsc clean. *(No consent banner — superseded by the
+   TOS gate in task 6.)* **Env gating:** analytics NEVER loads under `next dev`
+   (`GA_ACTIVE = GA_ID && NODE_ENV !== "development"`, mirrored in `middleware.ts`
+   so the CSP isn't widened in dev either); every event carries an `environment`
+   user property from **`GA_ENV`** (a RUNTIME var, defaults to NODE_ENV) so
+   staging/prod can be split in GA — or a local prod build set to "development" is
+   excludable. `GA_ENV` wired into `docker-compose.yml` (runtime env, not a build
+   ARG like the measurement id).
+   **Progress: ✅ Done**
+
+6. **Terms of Service acceptance gate** *(feat)*. A first-login TOS card that must
+   be accepted before using the app (re-prompted when the TOS is updated). Schema:
+   `user.tosAcceptedVersion` (int, null = never) + `user.tosAcceptedAt` (both in
+   `schema.ts` + `bootstrap.sql`). `lib/tos.ts` holds the client-safe `TOS_VERSION`
+   (**bump to re-prompt everyone**) + the `AI_VOICE_PROVIDERS` list (mirrored in the
+   "Third-party AI voice providers" section above). `app/layout.tsx` reads the
+   signed-in user's accepted version and, when it's below `TOS_VERSION`, renders
+   **`components/TosGate.tsx`** INSTEAD of the app shell across every route (the
+   heavy audio/profile providers stay unmounted until acceptance). The gate is a
+   centered `.card` with four bulleted terms (illegal-content ban · zero-tolerance
+   abuse · AI providers share content — links to each provider's site/terms/privacy
+   · Google-Analytics usage tracking, "never sell your data", links Google's privacy
+   policy) + **Accept** (`POST /api/tos/accept` → marks the DB, returns `firstTime`;
+   fires `tos_accept` + `new_user` when first-ever; `router.refresh()` → dashboard)
+   and **Reject** (the layout's `signOut` server action → landing page). tsc clean.
+   **Progress: ✅ Done**
+
+7. **Off-screen content fixes (popovers / dropdowns)** *(UI bug)*. The shared
+   `Select` menu opened downward with no collision detection, so a trigger near the
+   bottom/right edge (e.g. the last admin users-table row picking a role) clipped
+   off-screen. `Select.tsx` now measures the menu and **flips above / clamps into
+   the viewport** (caps height to the available space). The per-card board
+   Sound-Effects popover also rendered below the next row of cards + clipped the
+   left edge (it was `absolute` inside the card's stacking context); `Popover.tsx`
+   gained an opt-in **`portal` mode** that renders the panel through a portal to
+   `<body>` with viewport-clamped `fixed` positioning, used by the per-card Sliders
+   button. Also baked `overflow-x-hidden` into the Popover base + the standalone
+   modals to kill a spurious horizontal scrollbar. tsc clean.
+   **Progress: ✅ Done**
+
+8. **AI voice settings polish + auto-monitor** *(UI/feat)*. Removed the "Powered by
+   ElevenLabs/Respeecher" attribution (kept only rvc_zero's MIT-required credit); an
+   **info tooltip** by the AI quota points to the BYO-key field (now in Settings); a
+   **Library** link (ElevenLabs Voice Library) next to the custom voice-ID field; the
+   AI main-page section's action buttons + PTT/replay hotkey bars share one row
+   (hotkeys float right); the AI-voice popover is config-only. **Auto-monitor:**
+   enabling AI auto-enables the monitor mic and disabling AI reverts it, but only the
+   monitor AI turned on (`aiAutoMonitorRef`) — a pre-existing/manually-toggled monitor
+   is left alone. Header float tweaks: avatar pins left with name/chevron floating
+   right (`UserMenu`), right cluster reordered to Profile · Settings · user, quota
+   band widened. tsc clean.
+   **Progress: ✅ Done**
+
+9. **Saved / Board UX** *(UI/feat)*. Board + Saved grids use a fixed
+   columns-per-breakpoint scheme (`2 / 3 / 4 / 5 / 6` at `<640 / 640 / 1024 / 1280 /
+   1536px`) so cards stay consistent. Collapsed cards **hide the volume number** so
+   the slider fills the row (number returns when editing). A **name/author search**
+   box leads the Saved filter row (mirrors the public browser). A just-uploaded /
+   YouTube-imported / saved-public clip gets a **lime "New" highlight + badge** on the
+   Saved tab, cleared on hover or when added to a board. tsc clean.
+   **Progress: ✅ Done**
+
+10. **Tags required on new sounds** *(feat)*. A tag is now required to upload / import
+    from YouTube / (implicitly) save — the confirm button is **disabled** until ≥1 tag
+    is set, and the field **highlights amber + shows a hint only after a blocked submit
+    attempt** (not eagerly). `TagEditor` gained an `invalid` prop; `ClipEditor` gained
+    `confirmDisabled` + `onConfirmBlocked` (a wrapper catches the click on the disabled
+    button to reveal the missing field). The server's `misc` fallback in `persistSound`
+    stays as a safety net for the invariant / the YouTube worker / direct API calls.
+    tsc clean.
+    **Progress: ✅ Done**
+
+11. **YouTube import rework** *(feat)*. Tags moved to the **initial creation screen**
+    and carry through to the worker (new `conversionJob.requestedTags` JSON column in
+    `schema.ts` + `bootstrap.sql`, validated by `PostYoutubeBody`, applied in
+    `lib/yt-convert.ts` → `persistSound`), so the auto-import is tagged (no `misc`).
+    The flow matches file-upload: inputs stay visible and the `ClipEditor` waveform
+    appears **below** them (removed the separate edit screen). **Cancellation:**
+    `cancelConversion(jobId)` (exposed via `DELETE /api/sounds/youtube/[jobId]`) kills
+    the tracked `yt-dlp` child + cleans temp files + removes any raced sound; the
+    client calls it from a Cancel button during conversion and on unmount
+    mid-conversion. At the editor stage, **Cancel discards** the imported clip
+    (`DELETE /api/sounds/[id]`). tsc clean.
+    **Progress: ✅ Done**
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions

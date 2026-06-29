@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS "user" (
   "canUseAiOverride" BOOLEAN,
   "aiSecondsUsed" INTEGER NOT NULL DEFAULT 0,
   "aiUsagePeriod" TEXT,
+  "tosAcceptedVersion" INTEGER,
+  "tosAcceptedAt" TIMESTAMP,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 -- Added after initial release; backfill existing deployments (NULL = inherit role).
@@ -62,6 +64,9 @@ ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "aiQuotaSecondsOverride" INTEGER;
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "canUseAiOverride" BOOLEAN;
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "aiSecondsUsed" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "aiUsagePeriod" TEXT;
+-- ver/1.4.2 Terms of Service acceptance (NULL = never accepted → prompt on login).
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "tosAcceptedVersion" INTEGER;
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "tosAcceptedAt" TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS "account" (
   "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
@@ -202,11 +207,14 @@ CREATE TABLE IF NOT EXISTS "conversionJob" (
   "error" TEXT,
   "soundId" UUID REFERENCES "sound"("id") ON DELETE SET NULL,
   "requestedName" TEXT,
+  "requestedTags" TEXT,
   "isPublic" BOOLEAN NOT NULL DEFAULT FALSE,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
   "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS "conversionJob_user_idx" ON "conversionJob" ("userId");
+-- Backfill: tags collected on the import form (existing rows have none).
+ALTER TABLE "conversionJob" ADD COLUMN IF NOT EXISTS "requestedTags" TEXT;
 
 -- Any job left mid-flight by a previous process can never resume (the in-process
 -- queue is gone), so fail them on boot. Safe & idempotent.

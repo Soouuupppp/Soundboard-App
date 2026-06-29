@@ -92,7 +92,7 @@ export function SharedPresetsModal({
       aria-label="Shared presets"
       onClick={onClose}
     >
-      <div className="card w-full max-w-lg max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="card w-full max-w-lg max-h-[92vh] overflow-y-auto overflow-x-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <h2 className="text-lg font-bold tracking-tight">Shared presets</h2>
           <button type="button" className="btn-ghost !px-2" onClick={onClose} aria-label="Close">

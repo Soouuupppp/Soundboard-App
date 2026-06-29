@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth, signIn } from "@/lib/auth";
+import { LandingAnalytics } from "@/components/LandingAnalytics";
 
 export default async function Home() {
   const session = await auth();
@@ -7,6 +8,7 @@ export default async function Home() {
 
   return (
     <div className="max-w-2xl mx-auto text-center py-20">
+      <LandingAnalytics />
       <div className="inline-flex items-center gap-2 chip mb-6">
         <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
         Built for streamers, gamers & meme-lords

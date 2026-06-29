@@ -214,7 +214,7 @@ export function SoundEffectsPickerPanel({ audio, onClose }: { audio: AudioOutput
       {!entries && !error && <p className="text-xs text-muted">Loading…</p>}
       {entries && filtered.length === 0 && <p className="text-xs text-muted">No matching sounds.</p>}
 
-      <div className="grid gap-1 max-h-[55vh] overflow-y-auto">
+      <div className="grid gap-1 max-h-[55vh] overflow-y-auto overflow-x-hidden">
         {filtered.map((e) => {
           const count = (audio.soundFx[e.soundId] ?? []).length;
           return (

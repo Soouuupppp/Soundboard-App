@@ -235,7 +235,7 @@ export function VrBindPicker({
       onClick={onCancel}
     >
       <div
-        className="card w-full max-w-3xl max-h-[92vh] overflow-y-auto"
+        className="card w-full max-w-3xl max-h-[92vh] overflow-y-auto overflow-x-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header + mode toggle */}

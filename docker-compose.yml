@@ -29,6 +29,10 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* are build-time inlined — pass the (optional) GA id through
+        # to the builder so analytics is baked in. Empty = no analytics.
+        NEXT_PUBLIC_GA_MEASUREMENT_ID: ${NEXT_PUBLIC_GA_MEASUREMENT_ID:-}
     # Stable name so rebuilds replace this tag instead of leaving a dangling
     # <none> image behind. The rolling latest/prev tagging (one build back kept
     # for rollback) is handled by scripts/docker-rebuild.mjs — see that file.
@@ -60,6 +64,10 @@ services:
       DEFAULT_MAX_TOTAL_STORAGE: ${DEFAULT_MAX_TOTAL_STORAGE}
       # ver/1.4.1: default cap on profiles per user (user/role overrides live in the DB).
       DEFAULT_PROFILE_LIMIT: ${DEFAULT_PROFILE_LIMIT:-5}
+      # ver/1.4.2: GA `environment` tag (runtime; defaults to NODE_ENV=production).
+      # Set to e.g. "staging" to split a non-prod deploy in GA. Analytics never
+      # runs in `next dev`. The measurement id itself is a build ARG (see above).
+      GA_ENV: ${GA_ENV:-}
       # --- ver/1.4.1 Paid AI voice (all optional; the free rvc_zero engine needs none) ---
       # Default monthly AI quota in SECONDS (user/role overrides live in the DB).
       DEFAULT_AI_QUOTA_SECONDS: ${DEFAULT_AI_QUOTA_SECONDS:-300}

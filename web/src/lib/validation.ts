@@ -283,5 +283,6 @@ export const PostYoutubeBody = z
     url: z.string().url().max(2048),
     name: soundName.optional(),
     isPublic: z.boolean().optional(),
+    tags: tagList.optional(),
   })
   .strict();

@@ -19,6 +19,18 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+// When a GA measurement id is configured (and not in local `next dev`), gtag.js
+// loads from googletagmanager.com and beacons to *.google-analytics.com /
+// *.analytics.google.com — so widen the CSP to those hosts. Absent / dev → no GA,
+// no widening (default tight policy). Mirrors GA_ACTIVE in app/layout.tsx.
+const GA_ENABLED =
+  !!process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID && process.env.NODE_ENV !== "development";
+const GA_SCRIPT = GA_ENABLED ? " https://www.googletagmanager.com" : "";
+const GA_IMG = GA_ENABLED ? " https://*.google-analytics.com https://www.googletagmanager.com" : "";
+const GA_CONNECT = GA_ENABLED
+  ? " https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com"
+  : "";
+
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
@@ -28,9 +40,9 @@ function buildCsp(nonce: string): string {
     // chunk loader, and this app never serves user-controlled JS from its origin
     // (uploads are mp3, streamed as audio/mpeg with nosniff). Tighten to
     // 'strict-dynamic' once verified in a real build if desired.
-    `script-src 'self' 'nonce-${nonce}'`,
+    `script-src 'self' 'nonce-${nonce}'${GA_SCRIPT}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https://cdn.discordapp.com",
+    `img-src 'self' data: https://cdn.discordapp.com${GA_IMG}`,
     "media-src 'self' blob:",
     "font-src 'self' data:",
     // blob: lets the client-side clip editor (wavesurfer) fetch the in-memory
@@ -42,7 +54,7 @@ function buildCsp(nonce: string): string {
     // Space resolves to r3gm-rvc-zero.hf.space; uploads/SSE/file all hit *.hf.space,
     // and the model/index files resolve from huggingface.co. wss covers the Gradio
     // event stream. Converted audio returns as a blob: (already in media-src).
-    "connect-src 'self' blob: https://*.hf.space wss://*.hf.space https://huggingface.co",
+    `connect-src 'self' blob: https://*.hf.space wss://*.hf.space https://huggingface.co${GA_CONNECT}`,
     "frame-ancestors 'none'",
     "form-action 'self'",
     "base-uri 'self'",
