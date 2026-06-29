@@ -6,7 +6,11 @@
 // fires in whatever app currently has focus.
 //
 // Public API:
-//   start({ onMatch })   — begin listening; onMatch(combo) fires for each known combo.
+//   start({ onMatch, onMatchUp }) — begin listening; onMatch(combo) fires when a
+//                        combo completes (down edge), onMatchUp(combo) when the
+//                        key that completed it releases (up edge). The up edge lets
+//                        the renderer implement hold-to-X (e.g. AI push-to-talk:
+//                        record while held, convert on release) for unfocused keys.
 //   stop()               — tear down the hook.
 //   setCombos(combos)    — replace the active set of combos to watch (array of strings).
 //   validateCombo(combo) — returns { ok, reason } without registering anything.
@@ -122,7 +126,11 @@ function validateCombo(combo) {
 let started = false;
 let registry = []; // [{ combo, mods, keys: Set<keycode> }]
 let onMatchFn = null;
+let onMatchUpFn = null;
 const heldKeys = new Set(); // currently-held non-modifier keycodes
+// Maps the keycode that *completed* an active combo → that combo, so we can fire
+// the up edge when it releases. Keyed by completing key (one combo per key edge).
+const activeByKey = new Map();
 
 function setCombos(combos) {
   const seen = new Set();
@@ -166,6 +174,9 @@ function handleKeydown(e) {
     if (all && (!best || r.keys.size > best.keys.size)) best = r;
   }
   if (best) {
+    // Remember the completing key so its release can fire the up edge. (If this
+    // key already completed a combo and hasn't released, keep the first.)
+    if (!activeByKey.has(e.keycode)) activeByKey.set(e.keycode, best.combo);
     try {
       onMatchFn && onMatchFn(best.combo);
     } catch (err) {
@@ -176,10 +187,20 @@ function handleKeydown(e) {
 
 function handleKeyup(e) {
   heldKeys.delete(e.keycode);
+  const combo = activeByKey.get(e.keycode);
+  if (combo !== undefined) {
+    activeByKey.delete(e.keycode);
+    try {
+      onMatchUpFn && onMatchUpFn(combo);
+    } catch (err) {
+      console.warn("[hotkeys] onMatchUp threw:", err && err.message);
+    }
+  }
 }
 
-function start({ onMatch }) {
+function start({ onMatch, onMatchUp }) {
   onMatchFn = typeof onMatch === "function" ? onMatch : null;
+  onMatchUpFn = typeof onMatchUp === "function" ? onMatchUp : null;
   if (!uIOhook) return false;
   if (started) return true;
   uIOhook.on("keydown", handleKeydown);
@@ -202,6 +223,7 @@ function stop() {
   uIOhook.removeAllListeners("keydown");
   uIOhook.removeAllListeners("keyup");
   heldKeys.clear();
+  activeByKey.clear();
   started = false;
 }
 

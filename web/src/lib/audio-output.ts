@@ -6,6 +6,7 @@ import { type EffectConfig, type EffectParams } from "./voice-fx";
 import { type AiVoice, convertVoice, resolveVoice } from "./voice-ai";
 import { convertStsViaProxy, ttsViaProxy, resolvePaidVoiceId, type PaidProvider } from "./voice-ai-paid";
 import { startStt, sttSupported, type SttHandle } from "./voice-stt";
+import { analytics } from "./analytics";
 
 const LS_KEY = "soundboard:output";
 // Voice changer (1.4.0) — device-local per-source DSP chains + AI config. Kept in
@@ -344,6 +345,12 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
   // Read the current monitor device inside play() without rebuilding the callback.
   const monitorDeviceIdRef = useRef(monitorDeviceId);
   monitorDeviceIdRef.current = monitorDeviceId;
+  // Mirror monitorMic so setSourceAi can read it; aiAutoMonitorRef records whether
+  // it was AI (not the user) that turned monitoring on, so disabling AI only
+  // reverts the monitor we auto-enabled (a pre-existing monitor stays on).
+  const monitorMicRef = useRef(monitorMic);
+  monitorMicRef.current = monitorMic;
+  const aiAutoMonitorRef = useRef(false);
   // Current open inputs, so the Virtual-Mic toggle effect can sync them without
   // depending on `inputs` (which has its own reconcile effect).
   const inputsRef = useRef(inputs);
@@ -531,11 +538,19 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
     write({ ...read(), globalVolume: c });
   }, []);
 
-  const setMonitorMic = useCallback((on: boolean) => {
+  // Core monitor-mic apply (used by both the public setter and the AI auto-toggle).
+  const applyMonitorMic = useCallback((on: boolean) => {
     setMonitorMicState(on);
     mixerRef.current?.setMonitorMic(on);
     write({ ...read(), monitorMic: on });
   }, []);
+
+  const setMonitorMic = useCallback((on: boolean) => {
+    // A manual toggle hands monitor ownership back to the user, so a later AI
+    // disable won't revert it (and an AI enable won't be "ours" to revert).
+    aiAutoMonitorRef.current = false;
+    applyMonitorMic(on);
+  }, [applyMonitorMic]);
 
   // --- Voice changer accessors ---------------------------------------------
 
@@ -563,6 +578,23 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
   // Set/clear a capture device's AI config. Enabling it mutes the device's raw
   // mic (only converted PTT clips pass); clearing it unmutes.
   const setSourceAi = useCallback((key: string, ai: AiConfig | undefined) => {
+    // Auto-toggle monitoring with the AI enable/disable transition so the user
+    // hears their converted voice locally — but only revert what WE turned on.
+    const wasEnabled = !!voiceFxRef.current[key]?.ai?.enabled;
+    if (!wasEnabled && ai?.enabled) {
+      // Enabling: turn the monitor on if it was off (and remember we did), so
+      // disabling later reverts it. If it was already on, leave the flag clear.
+      if (monitorDeviceIdRef.current && !monitorMicRef.current) {
+        applyMonitorMic(true);
+        aiAutoMonitorRef.current = true; // after applyMonitorMic (doesn't clear it)
+      }
+    } else if (wasEnabled && !ai?.enabled) {
+      // Disabling: only turn the monitor back off if AI was what enabled it.
+      if (aiAutoMonitorRef.current) {
+        aiAutoMonitorRef.current = false;
+        applyMonitorMic(false);
+      }
+    }
     setVoiceFxState((prev) => {
       const next = { ...prev, [key]: { effects: prev[key]?.effects ?? [], ai } };
       persistVoiceFx(next);
@@ -932,6 +964,10 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
   const play = useCallback((soundId: string, perEntryVolume = 1, entryId?: string, preview = false) => {
     const url = `/api/sounds/${soundId}/file`;
     const vol = clamp(perEntryVolume);
+
+    // Analytics: a monitor-only preview vs a real (board/keybind/VR) play.
+    if (preview) analytics.previewSound(soundId);
+    else analytics.playSound(soundId);
 
     // Per-clip Sound Effects chain (read fresh at trigger time so an edit applies
     // on the next play). Built per play and torn down with the clip in the mixer.

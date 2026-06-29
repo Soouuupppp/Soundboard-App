@@ -53,6 +53,7 @@ export async function POST(req: Request) {
       userId: session.user.id,
       url: parsed.data.url,
       requestedName: parsed.data.name ?? null,
+      requestedTags: parsed.data.tags?.length ? JSON.stringify(parsed.data.tags) : null,
       isPublic: parsed.data.isPublic ?? false,
     })
     .returning();

@@ -29,6 +29,7 @@ import { VrBindChips } from "@/components/VrBindChips";
 import { SoundEffectsPanel } from "@/components/SoundEffectsModal";
 import { AiMainSection } from "@/components/AiVoicePanel";
 import { Popover } from "@/components/Popover";
+import { analytics } from "@/lib/analytics";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { ClipEditor } from "@/components/ClipEditor";
 import { useToast } from "@/components/Toast";
@@ -133,8 +134,24 @@ export function Dashboard({
   // Saved tab: limit to the user's own uploads (exclude saved references to
   // other people's public clips). Ephemeral, like the tag filter.
   const [savedMineOnly, setSavedMineOnly] = useState(false);
+  // Saved tab: free-text search over clip name / author. Ephemeral, like the filters.
+  const [savedSearch, setSavedSearch] = useState("");
   // Which card is expanded into full CRUD (only one at a time keeps it tidy).
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  // Just-uploaded sounds get a highlight + "New" badge on the Saved tab so they're
+  // easy to find. Ephemeral (session-only); cleared on hover or when added to a board.
+  const [newSavedIds, setNewSavedIds] = useState<Set<string>>(new Set());
+  const markNewSaved = useCallback((soundId: string) => {
+    setNewSavedIds((prev) => new Set(prev).add(soundId));
+  }, []);
+  const clearNewSaved = useCallback((soundId: string) => {
+    setNewSavedIds((prev) => {
+      if (!prev.has(soundId)) return prev;
+      const next = new Set(prev);
+      next.delete(soundId);
+      return next;
+    });
+  }, []);
   // Drag-reorder state (Board tab only): the entry id being dragged.
   const [dragId, setDragId] = useState<string | null>(null);
 
@@ -544,16 +561,28 @@ export function Dashboard({
       const hit = keybindByCombo.get(canonicalKeyCombo(mods, keys));
       if (hit) {
         if (hit.entryId === CANCEL_ALL_BIND) cancelAll();
-        // The OS global hook only forwards the down edge, so an unfocused PTT
-        // hold can't see its release — it relies on the recorder's max-length cap.
+        // PTT: start recording on the down edge; the up edge below stops it (true
+        // hold even while unfocused). startPtt is idempotent so a repeat is safe.
         else if (hit.entryId === AI_PTT_BIND) startAiPtt();
         else if (hit.entryId === AI_REPLAY_BIND) replayLastConversion();
         else playEntry(hit.entryId, hit.soundId);
       }
     }
+    // Release edge forwarded by the Electron hook (ver/1.4.2) — ends a held PTT.
+    function onGlobalUp(ev: Event) {
+      const detail = (ev as CustomEvent<{ combo: string }>).detail;
+      if (!detail?.combo) return;
+      const { mods, keys } = parseKeyCombo(detail.combo);
+      const hit = keybindByCombo.get(canonicalKeyCombo(mods, keys));
+      if (hit?.entryId === AI_PTT_BIND) stopAiPtt();
+    }
     window.addEventListener("soundboard:globalKey", onGlobal as EventListener);
-    return () => window.removeEventListener("soundboard:globalKey", onGlobal as EventListener);
-  }, [keybindByCombo, playEntry, cancelAll, startAiPtt, replayLastConversion]);
+    window.addEventListener("soundboard:globalKeyUp", onGlobalUp as EventListener);
+    return () => {
+      window.removeEventListener("soundboard:globalKey", onGlobal as EventListener);
+      window.removeEventListener("soundboard:globalKeyUp", onGlobalUp as EventListener);
+    };
+  }, [keybindByCombo, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion]);
 
   // Tell the Electron host (if any) which keybinds to register globally.
   useEffect(() => {
@@ -638,6 +667,9 @@ export function Dashboard({
   const [makePublic, setMakePublic] = useState(false);
   const [clipName, setClipName] = useState("");
   const [uploadTags, setUploadTags] = useState<string[]>([]);
+  // Set when the user tries to submit with a required field empty — reveals the
+  // validation highlight (we don't flag empty fields eagerly).
+  const [uploadTriedSubmit, setUploadTriedSubmit] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   // Pre-upload editor: once a file is picked we decode it and show the trim /
   // volume editor; confirming it encodes a fresh mp3 and uploads that.
@@ -649,6 +681,7 @@ export function Dashboard({
     if (fileRef.current) fileRef.current.value = "";
     setClipName("");
     setUploadTags([]);
+    setUploadTriedSubmit(false);
     setFileName(null);
     setMakePublic(false);
     if (editUrl) URL.revokeObjectURL(editUrl);
@@ -710,6 +743,13 @@ export function Dashboard({
       toast.error(msg);
       return;
     }
+    // Capture the new sound id so the Saved tab can highlight it.
+    const j = await res.json().catch(() => ({}));
+    if (j?.sound?.id) {
+      markNewSaved(j.sound.id);
+      setBoardTab("saved");
+    }
+    analytics.uploadSound();
     resetUpload();
     toast.success("Clip uploaded.");
     refresh();
@@ -752,7 +792,11 @@ export function Dashboard({
   }
 
   async function removeEntry(entryId: string) {
-    if (await mutate(`/api/board/${entryId}`, { method: "DELETE" }, "Couldn't remove that entry")) refresh();
+    if (await mutate(`/api/board/${entryId}`, { method: "DELETE" }, "Couldn't remove that entry")) {
+      const sid = entries.find((e) => e.entry.id === entryId)?.sound.id;
+      if (sid) analytics.removeFromSaved(sid);
+      refresh();
+    }
   }
 
   async function deleteSound(soundId: string) {
@@ -770,7 +814,11 @@ export function Dashboard({
   // Add/remove an entry from the playable board (it stays in Saved either way).
   async function setOnBoard(entryId: string, on: boolean) {
     const failMsg = on ? "Couldn't add to board" : "Couldn't remove from board";
-    if (await mutate(`/api/board/${entryId}`, boardPatch({ onBoard: on }), failMsg)) refresh();
+    if (await mutate(`/api/board/${entryId}`, boardPatch({ onBoard: on }), failMsg)) {
+      const sid = entries.find((e) => e.entry.id === entryId)?.sound.id;
+      if (sid) (on ? analytics.boardAdd : analytics.boardRemove)(sid);
+      refresh();
+    }
   }
 
   // --- Saved / Board derived lists ---
@@ -785,14 +833,21 @@ export function Dashboard({
     for (const e of entries) for (const t of e.tags) set.add(t);
     return [...set].sort();
   }, [entries]);
-  // Saved list: optional "my uploads only" + tag filter, combined with AND.
+  // Saved list: optional name/author search + "my uploads only" + tag filter, ANDed.
   const savedList = useMemo(() => {
+    const needle = savedSearch.trim().toLowerCase();
     return entries.filter((e) => {
       if (savedMineOnly && e.sound.ownerId !== user.id) return false;
       if (savedTagFilter.length > 0 && !e.tags.some((t) => savedTagFilter.includes(t))) return false;
+      if (
+        needle &&
+        !e.sound.name.toLowerCase().includes(needle) &&
+        !(e.ownerName ?? "").toLowerCase().includes(needle)
+      )
+        return false;
       return true;
     });
-  }, [entries, savedTagFilter, savedMineOnly, user.id]);
+  }, [entries, savedTagFilter, savedMineOnly, savedSearch, user.id]);
   // Sounds already in the library — lets the inline public browser mark/disable
   // clips the user has already saved.
   const savedSoundIds = useMemo(() => new Set(entries.map((e) => e.sound.id)), [entries]);
@@ -888,7 +943,12 @@ export function Dashboard({
       expanded={expandedCard === e.entry.id}
       onToggleExpand={() => setExpandedCard((id) => (id === e.entry.id ? null : e.entry.id))}
       onBoard={e.entry.onBoard}
-      onSetOnBoard={(on) => setOnBoard(e.entry.id, on)}
+      onSetOnBoard={(on) => {
+        if (on) clearNewSaved(e.sound.id);
+        setOnBoard(e.entry.id, on);
+      }}
+      isNew={view === "saved" && newSavedIds.has(e.sound.id)}
+      onSeen={() => clearNewSaved(e.sound.id)}
     />
   );
 
@@ -939,39 +999,51 @@ export function Dashboard({
                   Add an .mp3 to your board. Give it a name, then trim it and set its volume before it
                   lands.
                 </p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="block">
+                <div className="grid gap-4 sm:grid-cols-2 items-stretch">
+                  <label className="flex flex-col">
                     <span className="block text-xs text-muted mb-1">Audio file</span>
                     <input
                       ref={fileRef}
                       type="file"
                       accept="audio/mpeg,.mp3"
                       onChange={(e) => onPickFile(e.target.files?.[0])}
-                      className="input w-full file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-white file:text-xs"
+                      className="input w-full flex-1 file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-white file:text-xs"
                     />
                   </label>
-                  <label className="block">
+                  <label className="flex flex-col">
                     <span className="block text-xs text-muted mb-1">Clip name</span>
                     <input
-                      className="input w-full"
+                      className="input w-full flex-1"
                       value={clipName}
                       onChange={(e) => setClipName(e.target.value)}
                       placeholder={fileName ? fileName.replace(/\.mp3$/i, "") : "My epic clip"}
                       maxLength={200}
                     />
                   </label>
-                  <label className="flex items-center gap-3 text-sm select-none sm:col-span-2">
-                    <Toggle checked={makePublic} onChange={setMakePublic} label="Share this clip publicly" />
-                    <span className="flex items-center gap-1.5">
-                      {makePublic ? <Globe size={14} /> : <Lock size={14} />}
-                      {makePublic ? "Public — others can find and add it" : "Private — only you can use it"}
-                    </span>
-                  </label>
-                  <div className="sm:col-span-2">
+                  {/* Private toggle (≈1/4) + tags (≈2/4) on one row, with spacing
+                      between (the empty middle column). Stacks on mobile. */}
+                  <div className="sm:col-span-2 flex flex-col gap-3 sm:grid sm:grid-cols-4 sm:gap-4 sm:items-start">
+                    <label className="flex items-center gap-3 text-sm select-none">
+                      <Toggle checked={makePublic} onChange={setMakePublic} label="Share this clip publicly" />
+                      <span className="flex items-center gap-1.5">
+                        {makePublic ? <Globe size={14} /> : <Lock size={14} />}
+                        {makePublic ? "Public" : "Private"}
+                      </span>
+                    </label>
+                    <div className="sm:col-span-2 sm:col-start-3">
                     <span className="block text-xs text-muted mb-1">
-                      Tags <span className="text-muted/60">(optional — defaults to “misc”)</span>
+                      Tags <span className="text-muted/60">(at least one required)</span>
                     </span>
-                    <TagEditor value={uploadTags} suggestions={allTags} onChange={setUploadTags} />
+                    <TagEditor
+                      value={uploadTags}
+                      suggestions={allTags}
+                      onChange={setUploadTags}
+                      invalid={uploadTriedSubmit && uploadTags.length === 0}
+                    />
+                    {uploadTriedSubmit && uploadTags.length === 0 && (
+                      <p className="text-[11px] text-amber-300/80 mt-1">Add at least one tag before uploading.</p>
+                    )}
+                    </div>
                   </div>
                 </div>
                 {decoding && <p className="text-muted text-sm mt-3">Reading clip…</p>}
@@ -982,6 +1054,8 @@ export function Dashboard({
                       objectUrl={editUrl}
                       busy={busy}
                       confirmLabel={busy ? "Uploading…" : "Upload to board"}
+                      confirmDisabled={uploadTags.length === 0}
+                      onConfirmBlocked={() => setUploadTriedSubmit(true)}
                       onConfirm={uploadBlob}
                       onCancel={resetUpload}
                     />
@@ -991,13 +1065,30 @@ export function Dashboard({
               </>
             )}
             {addTab === "youtube" && yt.enabled && canUpload && (
-              <YouTubeImport maxDurationSec={yt.maxDurationSec} allTags={allTags} onImported={refresh} />
+              <YouTubeImport
+                maxDurationSec={yt.maxDurationSec}
+                allTags={allTags}
+                onImported={(newSoundId) => {
+                  if (newSoundId) {
+                    markNewSaved(newSoundId);
+                    setBoardTab("saved");
+                  }
+                  refresh();
+                }}
+              />
             )}
             {addTab === "browse" && (
               <BrowsePublicPanel
                 audio={audio}
                 savedSoundIds={savedSoundIds}
-                onAdded={() => { refresh(); refreshTags(); }}
+                onAdded={(soundId) => {
+                  if (soundId) {
+                    markNewSaved(soundId);
+                    setBoardTab("saved");
+                  }
+                  refresh();
+                  refreshTags();
+                }}
               />
             )}
           </div>
@@ -1189,7 +1280,7 @@ export function Dashboard({
               />
             )}
             {boardList.length > 0 && (
-              <MasonryGrid className="grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+              <MasonryGrid className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
                 {boardList.map((e) =>
                   reordering ? (
                     <div
@@ -1226,6 +1317,17 @@ export function Dashboard({
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                  {/* Name/author search — same behavior as the public browser. */}
+                  <div className="relative mr-1">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+                    <input
+                      className="input !py-1 text-xs pl-8 w-52"
+                      placeholder="Search name or author"
+                      value={savedSearch}
+                      onChange={(e) => setSavedSearch(e.target.value)}
+                      aria-label="Search saved clips"
+                    />
+                  </div>
                   {/* My-uploads-only filter, in front of the tag chips. */}
                   <button
                     type="button"
@@ -1271,12 +1373,12 @@ export function Dashboard({
                   </div>
                 {savedList.length === 0 ? (
                   <p className="text-muted text-sm">
-                    {savedMineOnly
+                    {savedSearch.trim() || savedMineOnly
                       ? "No saved clips match the current filters."
                       : "No saved clips match the selected tags."}
                   </p>
                 ) : (
-                  <MasonryGrid className="grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                  <MasonryGrid className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
                     {savedList.map((e) => renderCard(e, "saved"))}
                   </MasonryGrid>
                 )}
@@ -1329,7 +1431,7 @@ function BrowsePublicPanel({
 }: {
   audio: AudioOutput;
   savedSoundIds: Set<string>;
-  onAdded: () => void;
+  onAdded: (soundId?: string) => void;
 }) {
   const toast = useToast();
   type PublicSound = {
@@ -1390,8 +1492,9 @@ function BrowsePublicPanel({
     setAdding(null);
     if (res.ok) {
       setAdded((s) => new Set(s).add(soundId));
+      analytics.savePublicSound(soundId);
       toast.success("Saved to your library.");
-      onAdded();
+      onAdded(soundId);
     } else {
       await toast.fromResponse(res, "Couldn't save that clip");
     }
@@ -1445,7 +1548,7 @@ function BrowsePublicPanel({
           {others.length === 0 ? "No public clips from others yet." : "No matches."}
         </p>
       ) : (
-        <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-[28rem] overflow-y-auto pr-1">
+        <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-[28rem] overflow-y-auto overflow-x-hidden pr-1">
           {filtered.map((s) => {
             const isAdded = added.has(s.id) || savedSoundIds.has(s.id);
             return (
@@ -1492,12 +1595,14 @@ function YouTubeImport({
 }: {
   maxDurationSec: number;
   allTags: string[];
-  onImported: () => void;
+  onImported: (newSoundId?: string) => void;
 }) {
   const toast = useToast();
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  // Reveal required-field validation only after a blocked submit attempt.
+  const [triedSubmit, setTriedSubmit] = useState(false);
   const [makePublic, setMakePublic] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1511,7 +1616,22 @@ function YouTubeImport({
 
   // Cancel any in-flight poll loop if the component unmounts.
   const cancelled = useRef(false);
-  useEffect(() => () => { cancelled.current = true; }, []);
+  // The active conversion job while it's still downloading/converting (cleared
+  // once the editor opens — by then yt-dlp is done and a normal clip exists).
+  const jobIdRef = useRef<string | null>(null);
+
+  // Tell the server to stop yt-dlp + delete the job's temp files (and any sound
+  // that already landed). Best-effort + keepalive so it survives an unmount.
+  const cancelActiveJob = useCallback(() => {
+    const id = jobIdRef.current;
+    jobIdRef.current = null;
+    if (id) fetch(`/api/sounds/youtube/${id}`, { method: "DELETE", keepalive: true }).catch(() => {});
+  }, []);
+
+  useEffect(() => () => {
+    cancelled.current = true; // stop the poll loop
+    cancelActiveJob(); // kill an in-flight conversion (no-op past the editor)
+  }, [cancelActiveJob]);
 
   function resetEdit() {
     if (editUrl) URL.revokeObjectURL(editUrl);
@@ -1521,11 +1641,26 @@ function YouTubeImport({
     setUrl("");
     setName("");
     setTags([]);
+    setTriedSubmit(false);
     setMakePublic(false);
+  }
+
+  // Explicit Cancel during conversion: stop polling, cancel the job server-side
+  // (kills yt-dlp + cleans its files), and reset the form.
+  function cancelImport() {
+    cancelled.current = true;
+    cancelActiveJob();
+    resetEdit();
+    setBusy(false);
+    setPreparing(false);
+    setErr(null);
   }
 
   // Pull the freshly imported clip back to the client and open the editor.
   async function prepareEdit(soundId: string) {
+    // Conversion's done (yt-dlp finished, the clip exists) — past the cancellable
+    // window; from here the user keeps or replaces it via the editor.
+    jobIdRef.current = null;
     setPreparing(true);
     try {
       const [fileRes, listRes] = await Promise.all([
@@ -1573,19 +1708,24 @@ function YouTubeImport({
       await toast.fromResponse(res, "Couldn't save the edited clip");
       return;
     }
+    const j = await res.json().catch(() => ({}));
     if (oldSoundId) {
       await fetch(`/api/sounds/${oldSoundId}`, { method: "DELETE" }).catch(() => {});
     }
     setBusy(false);
     resetEdit();
+    analytics.importYoutube();
     toast.success("Clip saved.");
-    onImported();
+    onImported(j?.sound?.id);
   }
 
-  // Keep the original auto-imported clip unedited.
-  function keepOriginal() {
+  // Cancel at the editor stage: discard the auto-imported clip entirely (delete
+  // its file + row) rather than keeping it. resetEdit first for instant feedback.
+  async function discardImport() {
+    const id = oldSoundId;
     resetEdit();
-    onImported();
+    if (id) await fetch(`/api/sounds/${id}`, { method: "DELETE" }).catch(() => {});
+    onImported(); // refresh the library (the clip is gone)
   }
 
   async function poll(jobId: string) {
@@ -1625,6 +1765,7 @@ function YouTubeImport({
     e.preventDefault();
     setErr(null);
     if (!url.trim()) return;
+    cancelled.current = false; // a prior cancel may have set this
     setBusy(true);
     const res = await fetch("/api/sounds/youtube", {
       method: "POST",
@@ -1633,6 +1774,7 @@ function YouTubeImport({
         url: url.trim(),
         isPublic: makePublic,
         ...(name.trim() ? { name: name.trim() } : {}),
+        ...(tags.length ? { tags } : {}),
       }),
     });
     if (!res.ok) {
@@ -1642,31 +1784,8 @@ function YouTubeImport({
       return;
     }
     const { jobId } = await res.json();
+    jobIdRef.current = jobId; // mark the conversion cancellable
     poll(jobId);
-  }
-
-  if (editBuf && editUrl) {
-    return (
-      <div>
-        <p className="text-sm text-muted mb-4">
-          Imported! Trim it and set its default volume below, or keep the original as-is.
-        </p>
-        <div className="mb-4">
-          <span className="block text-xs text-muted mb-1">
-            Tags <span className="text-muted/60">(optional — defaults to “misc”)</span>
-          </span>
-          <TagEditor value={tags} suggestions={allTags} onChange={setTags} />
-        </div>
-        <ClipEditor
-          buffer={editBuf}
-          objectUrl={editUrl}
-          busy={busy}
-          confirmLabel={busy ? "Saving…" : "Save edited clip"}
-          onConfirm={finishEdit}
-          onCancel={keepOriginal}
-        />
-      </div>
-    );
   }
 
   return (
@@ -1698,6 +1817,15 @@ function YouTubeImport({
             disabled={busy}
           />
         </label>
+        <div className="sm:col-span-2">
+          <span className="block text-xs text-muted mb-1">
+            Tags <span className="text-muted/60">(at least one required)</span>
+          </span>
+          <TagEditor value={tags} suggestions={allTags} onChange={setTags} invalid={triedSubmit && tags.length === 0} />
+          {triedSubmit && tags.length === 0 && (
+            <p className="text-[11px] text-amber-300/80 mt-1">Add at least one tag before importing.</p>
+          )}
+        </div>
         <div className="flex items-center justify-between gap-4 sm:col-span-2">
           <label className="flex items-center gap-3 text-sm select-none">
             <Toggle checked={makePublic} onChange={setMakePublic} label="Share this clip publicly" />
@@ -1706,19 +1834,47 @@ function YouTubeImport({
               {makePublic ? "Public — others can find and add it" : "Private — only you can use it"}
             </span>
           </label>
-          <button className="btn-primary" disabled={busy}>
-            <Youtube size={16} className="mr-1" /> {busy ? "Converting…" : "Import"}
-          </button>
+          {/* Wrapper catches the click while the button is disabled (pointer-events
+              :none) so we can reveal the missing tag. */}
+          <span onClick={() => { if (!busy && tags.length === 0) setTriedSubmit(true); }}>
+            <button className="btn-primary" disabled={busy || tags.length === 0}>
+              <Youtube size={16} className="mr-1" /> {busy ? "Converting…" : "Import"}
+            </button>
+          </span>
         </div>
       </form>
       {busy && !preparing && (
-        <p className="text-muted text-sm mt-3">
-          Fetching and converting — this can take up to a couple of minutes. You can keep using the
-          board.
-        </p>
+        <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-muted text-sm">
+            Fetching and converting — this can take up to a couple of minutes. You can keep using the
+            board.
+          </p>
+          <button type="button" className="btn-ghost text-sm shrink-0" onClick={cancelImport}>
+            <X size={15} className="mr-1" /> Cancel
+          </button>
+        </div>
       )}
       {preparing && <p className="text-muted text-sm mt-3">Loading the clip for editing…</p>}
       {err && <p className="text-red-300 text-sm mt-3">{err}</p>}
+      {/* Once converted, the trim/volume editor appears below the inputs (same as
+          the file-upload flow). Tags live in the form above; finishEdit reads them. */}
+      {editBuf && editUrl && (
+        <div className="mt-4">
+          <p className="text-sm text-muted mb-3">
+            Imported! Trim it and set its default volume below, then save it — or cancel to discard it.
+          </p>
+          <ClipEditor
+            buffer={editBuf}
+            objectUrl={editUrl}
+            busy={busy}
+            confirmLabel={busy ? "Saving…" : "Save edited clip"}
+            confirmDisabled={tags.length === 0}
+            onConfirmBlocked={() => setTriedSubmit(true)}
+            onConfirm={finishEdit}
+            onCancel={discardImport}
+          />
+        </div>
+      )}
     </>
   );
 }
@@ -1829,6 +1985,9 @@ function SoundCard(props: {
   // Saved vs Board: whether this entry is on the playable board, and the toggle.
   onBoard: boolean;
   onSetOnBoard: (on: boolean) => void;
+  // Just-uploaded highlight (Saved tab). `onSeen` clears it (hover/add-to-board).
+  isNew?: boolean;
+  onSeen?: () => void;
 }) {
   const { entry, capturing } = props;
   const { sound, ownerName } = entry;
@@ -2009,7 +2168,17 @@ function SoundCard(props: {
   );
 
   return (
-    <div className="card flex flex-col gap-2">
+    <div
+      className={`card flex flex-col gap-2 relative ${
+        props.isNew ? "ring-2 ring-lime-400/70 shadow-[0_0_0_3px_rgba(163,230,53,0.12)]" : ""
+      }`}
+      onMouseEnter={props.isNew ? props.onSeen : undefined}
+    >
+      {props.isNew && (
+        <span className="absolute -top-2 -right-2 z-10 rounded-full bg-lime-400 px-2 py-0.5 text-[10px] font-semibold text-black shadow">
+          New
+        </span>
+      )}
       <div className="flex">
         <button
           className={`btn-primary flex-1 text-left min-w-0 ${props.isPlaying ? "rounded-r-none" : ""}`}
@@ -2074,7 +2243,11 @@ function SoundCard(props: {
             className="flex-1 min-w-0 accent-accent"
             aria-label="Volume"
           />
-          <span className="shrink-0 text-xs text-muted w-8 text-right">{Math.round(props.volume * 100)}</span>
+          {/* Number only while editing; collapsed cards give the space to the
+              bar (the wrapper title still shows the % on hover). */}
+          {expanded && (
+            <span className="shrink-0 text-xs text-muted w-8 text-right">{Math.round(props.volume * 100)}</span>
+          )}
         </div>
         {!expanded && (
           <>
@@ -2082,6 +2255,7 @@ function SoundCard(props: {
               open={fxOpen}
               onClose={() => setFxOpen(false)}
               align="right"
+              portal
               panelClassName="w-[30rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto p-3"
               trigger={
                 <button

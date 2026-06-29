@@ -41,7 +41,9 @@ export function Select({
   "aria-label": ariaLabel,
 }: Props) {
   const [open, setOpen] = useState(false);
-  const [rect, setRect] = useState<DOMRect | null>(null);
+  // Computed, viewport-clamped menu position. null until first measured (the menu
+  // renders hidden until then to avoid a flash at the wrong spot).
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; minWidth: number; maxHeight: number } | null>(null);
   // Index the keyboard cursor lands on; -1 = none highlighted yet.
   const [active, setActive] = useState(-1);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -49,8 +51,28 @@ export function Select({
 
   const selected = options.find((o) => o.value === value);
 
+  // Place the menu relative to the trigger, but flip above / clamp into the
+  // viewport so a trigger near the bottom or right edge isn't cut off (e.g. the
+  // last row of the admin users table). Measures the menu's natural height to
+  // decide above-vs-below and caps maxHeight to the available space.
   const reposition = useCallback(() => {
-    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    const btn = btnRef.current?.getBoundingClientRect();
+    const menu = menuRef.current;
+    if (!btn || !menu) return;
+    const MARGIN = 8;
+    const HARD_MAX = 256; // matches max-h-64 below
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const natural = menu.scrollHeight;
+    const spaceBelow = vh - btn.bottom - MARGIN;
+    const spaceAbove = btn.top - MARGIN;
+    const below = spaceBelow >= Math.min(natural, HARD_MAX) || spaceBelow >= spaceAbove;
+    const maxHeight = Math.min(HARD_MAX, Math.max(0, below ? spaceBelow : spaceAbove));
+    const height = Math.min(natural, maxHeight);
+    const top = below ? btn.bottom + 4 : btn.top - 4 - height;
+    const width = Math.max(menu.offsetWidth, btn.width);
+    const left = Math.min(Math.max(btn.left, MARGIN), Math.max(MARGIN, vw - width - MARGIN));
+    setMenuPos({ top, left, minWidth: btn.width, maxHeight });
   }, []);
 
   // Keep the portalled menu pinned to the trigger while it's open.
@@ -65,6 +87,16 @@ export function Select({
       window.removeEventListener("resize", onScroll);
     };
   }, [open, reposition]);
+
+  // Re-measure when the option set changes (its natural height may differ).
+  useLayoutEffect(() => {
+    if (open) reposition();
+  }, [open, options.length, reposition]);
+
+  // Reset the computed position on close so the next open re-measures cleanly.
+  useEffect(() => {
+    if (!open) setMenuPos(null);
+  }, [open]);
 
   // Outside-click + Escape close. Capture phase so it beats inner handlers.
   useEffect(() => {
@@ -138,16 +170,17 @@ export function Select({
       </button>
 
       {open &&
-        rect &&
         createPortal(
           <div
             ref={menuRef}
             role="listbox"
             className="popover fixed z-[60] max-h-64 overflow-y-auto rounded-lg p-1 shadow-xl"
             style={{
-              top: rect.bottom + 4,
-              left: rect.left,
-              minWidth: rect.width,
+              top: menuPos?.top ?? 0,
+              left: menuPos?.left ?? 0,
+              minWidth: menuPos?.minWidth,
+              maxHeight: menuPos?.maxHeight,
+              visibility: menuPos ? "visible" : "hidden",
             }}
           >
             {options.map((o, i) => {

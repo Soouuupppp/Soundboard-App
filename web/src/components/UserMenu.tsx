@@ -39,28 +39,29 @@ export function UserMenu({
   }, [open]);
 
   return (
-    <div className="relative" ref={menuRef}>
+    <div className="relative w-full" ref={menuRef}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-full p-0.5 pr-2 transition hover:bg-white/[0.06]"
+        className="flex w-full items-center gap-3 rounded-full p-0.5 pr-2 transition hover:bg-white/[0.06]"
       >
+        {/* Avatar + name beside it (a little extra gap); chevron floats far right. */}
         {image ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={image} alt="" className="h-7 w-7 rounded-full border border-white/10" />
+          <img src={image} alt="" className="h-7 w-7 shrink-0 rounded-full border border-white/10" />
         ) : (
-          <div className="h-7 w-7 rounded-full bg-white/5 border border-white/10" />
+          <div className="h-7 w-7 shrink-0 rounded-full bg-white/5 border border-white/10" />
         )}
         <span className="text-muted hidden md:inline max-w-[8rem] truncate">{name}</span>
-        <ChevronDown size={14} className="text-muted shrink-0" />
+        <ChevronDown size={14} className="text-muted shrink-0 ml-auto" />
       </button>
 
       {open && (
         <div
           role="menu"
-          className="absolute right-0 mt-2 w-44 popover rounded-lg p-1 shadow-xl z-30"
+          className="absolute right-0 mt-2 min-w-full popover rounded-lg p-1 shadow-xl z-30"
         >
           {isAdmin && (
             <Link

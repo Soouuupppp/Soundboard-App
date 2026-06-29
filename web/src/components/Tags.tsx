@@ -36,10 +36,13 @@ export function TagEditor({
   value,
   suggestions,
   onChange,
+  invalid = false,
 }: {
   value: string[];
   suggestions: string[];
   onChange: (tags: string[]) => void;
+  // Highlight the field (e.g. a tag is required and none is set yet).
+  invalid?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -73,7 +76,11 @@ export function TagEditor({
   }
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2">
+    <div
+      className={`rounded-lg border bg-white/[0.03] p-2 transition-colors ${
+        invalid ? "border-amber-400/70 ring-1 ring-amber-400/40" : "border-white/10"
+      }`}
+    >
       <div className="flex flex-wrap items-center gap-1.5">
         <TagIcon size={12} className="text-muted shrink-0" />
         {value.map((t) => (

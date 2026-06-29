@@ -62,8 +62,8 @@ SOUNDBOARD_URL=https://soundboard.example.com pnpm --filter electron dist:win
 
 Outputs to `electron/dist/`:
 
-- `Soundboard-Setup-1.4.1-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
-- `Soundboard-1.4.1-x64-portable.exe` — single-file executable, no install.
+- `Soundboard-Setup-1.4.2-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
+- `Soundboard-1.4.2-x64-portable.exe` — single-file executable, no install.
 
 Send one of these to your friends. They open it, log in with Discord, done.
 Power users can still change the URL later via **File → Change server URL…**
@@ -126,7 +126,9 @@ electron-builder's [code signing docs](https://www.electron.build/code-signing).
   has focus.
 - When a watched combo matches, the main process sends an IPC message; the
   preload re-emits it as a `soundboard:globalKey` `CustomEvent` on `window`
-  and the dashboard listener triggers playback.
+  and the dashboard listener triggers playback. The hook also emits the matching
+  **key-up** edge (`soundboard:globalKeyUp`) so a held combo works as true
+  push-to-talk for the AI voice changer even when the app is unfocused.
 - VR input flows the same way: `vr-controllers.js` spawns the native
   `vr-bridge.exe`, forwards each button edge over IPC → `soundboard:vrInput` /
   `soundboard:vrStatus` `CustomEvent`s, and the dashboard's matcher fires the

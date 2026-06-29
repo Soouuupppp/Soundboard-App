@@ -41,6 +41,11 @@ export const users = pgTable("user", {
   canUseAiOverride: boolean("canUseAiOverride"),
   aiSecondsUsed: integer("aiSecondsUsed").notNull().default(0),
   aiUsagePeriod: text("aiUsagePeriod"),
+  // ver/1.4.2 Terms of Service: the TOS version this user last accepted (null =
+  // never). When it's below the current TOS_VERSION (lib/tos.ts) the user is
+  // re-prompted to accept on next launch. See components/TosGate.tsx.
+  tosAcceptedVersion: integer("tosAcceptedVersion"),
+  tosAcceptedAt: timestamp("tosAcceptedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -162,6 +167,9 @@ export const conversionJobs = pgTable("conversionJob", {
   error: text("error"),
   soundId: uuid("soundId").references(() => sounds.id, { onDelete: "set null" }),
   requestedName: text("requestedName"),
+  // Caller-supplied tags (JSON array) applied to the created sound — collected
+  // upfront on the import form so YouTube clips are tagged without a `misc` default.
+  requestedTags: text("requestedTags"),
   isPublic: boolean("isPublic").notNull().default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),

@@ -6,8 +6,8 @@ import { formatBytes } from "@/lib/utils";
 type Storage = { used: number; maxTotalStorage: number };
 
 // Upload-storage quota meter. Lifted out of UserMenu in the 1.4.1 navbar refactor
-// so it can span beneath the right-cluster controls (Settings · user · profile)
-// as a thin bar. Fetched client-side and refetched on the
+// so it can sit as a thin bar beneath the username (in a fixed min/max-width band,
+// see AppHeader). Fetched client-side and refetched on the
 // `soundboard:storage-changed` event the dashboard fires after uploads/deletes,
 // so it stays live without a reload.
 export function QuotaBar({ className = "" }: { className?: string }) {

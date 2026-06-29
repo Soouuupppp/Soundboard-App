@@ -3,7 +3,10 @@ import type { Metadata } from "next";
 import { Play } from "next/font/google";
 import Link from "next/link";
 import Image from "next/image";
+import Script from "next/script";
+import { headers } from "next/headers";
 import { auth, signIn, signOut } from "@/lib/auth";
+import { AnalyticsLifecycle } from "@/components/AnalyticsLifecycle";
 import { SiteHeader } from "@/components/SiteHeader";
 import { AppHeader } from "@/components/AppHeader";
 import { ToastProvider } from "@/components/Toast";
@@ -12,7 +15,12 @@ import { ProfileProvider } from "@/components/ProfileProvider";
 import { VoiceChangerProvider } from "@/components/VoiceChangerProvider";
 import { VrProvider } from "@/components/VrProvider";
 import { NoticeBanners, type MotdSeverity } from "@/components/NoticeBanners";
+import { TosGate } from "@/components/TosGate";
 import { getAppSettings } from "@/lib/app-settings";
+import { TOS_VERSION } from "@/lib/tos";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import logo from "./logo.png";
 
 // App-wide typeface. Play ships only 400 + 700 — `font-medium`/`font-semibold`
@@ -60,10 +68,42 @@ export const metadata: Metadata = {
   },
 };
 
+const GA_ID = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
+// Never load analytics during local `next dev` (so dev activity can't pollute the
+// property). A built/production server loads it. The `environment` tag below
+// (GA_ENV, a RUNTIME var so the same image can self-identify per deploy; defaults
+// to NODE_ENV) lets you split staging vs prod — or mark a local prod build as dev.
+const GA_ACTIVE = !!GA_ID && process.env.NODE_ENV !== "development";
+const GA_ENV = process.env.GA_ENV || process.env.NODE_ENV || "production";
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
   const isAdmin = session?.user?.role === "admin";
   const signedIn = !!session?.user;
+
+  // Google Analytics (optional). The inline init carries the per-request CSP nonce
+  // and links events to the signed-in user (user_id) for use-time analysis;
+  // client_type (web vs Electron) + environment (dev/prod) are user properties so
+  // they tag everything.
+  const gaNonce = GA_ACTIVE ? (await headers()).get("x-nonce") ?? undefined : undefined;
+  const gaUserId = session?.user?.id;
+
+  // TOS gate: a signed-in user must have accepted the current TOS version. New
+  // users (null) and anyone after a TOS bump fall below it and get re-prompted.
+  let tosAccepted = true;
+  if (session?.user?.id) {
+    const [u] = await db
+      .select({ v: users.tosAcceptedVersion })
+      .from(users)
+      .where(eq(users.id, session.user.id))
+      .limit(1);
+    tosAccepted = (u?.v ?? 0) >= TOS_VERSION;
+  }
+
+  const doSignOut = async () => {
+    "use server";
+    await signOut({ redirectTo: "/" });
+  };
 
   // Notice banners (MOTD + desktop promo) show to signed-in users only; skip the
   // settings read entirely when logged out so the landing stays clean + cheap.
@@ -92,10 +132,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             name={session.user.name ?? null}
             image={session.user.image ?? null}
             isAdmin={isAdmin}
-            signOutAction={async () => {
-              "use server";
-              await signOut({ redirectTo: "/" });
-            }}
+            signOutAction={doSignOut}
           />
         ) : (
           // Logged-out: just logo + the Discord login button.
@@ -125,6 +162,27 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" className={play.variable}>
       <body>
+        {/* Google Analytics (gtag.js) — only when NEXT_PUBLIC_GA_MEASUREMENT_ID is
+            set. Loads in the web app AND inside the Electron wrapper (it loads this
+            same site); client_type splits the two. */}
+        {GA_ACTIVE && GA_ID && (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`}
+              strategy="afterInteractive"
+              nonce={gaNonce}
+            />
+            <Script id="ga-init" strategy="afterInteractive" nonce={gaNonce}>
+              {`window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('set', 'user_properties', { client_type: ('soundboard' in window) ? 'electron' : 'web', environment: ${JSON.stringify(GA_ENV)} });
+gtag('config', ${JSON.stringify(GA_ID)}${gaUserId ? `, { user_id: ${JSON.stringify(gaUserId)} }` : ""});`}
+            </Script>
+            <AnalyticsLifecycle signedIn={signedIn} />
+          </>
+        )}
+
         {/* Decorative ambient glow. Static on purpose: when these moved, every
             frame shifted the pixels behind the backdrop-blur glass panels, forcing
             a continuous (and costly) backdrop-filter recompute across the whole UI.
@@ -141,7 +199,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             shell — header AND main — lives inside one AudioProvider (a single
             engine that survives navigation). The logged-out landing stays outside
             it so it never enumerates devices / runs the hook. */}
-        {signedIn ? (
+        {signedIn && !tosAccepted ? (
+          // Block the whole app (every route) behind TOS acceptance. The heavy
+          // audio/profile providers stay unmounted until they accept.
+          <TosGate signOutAction={doSignOut} />
+        ) : signedIn ? (
           <ProfileProvider>
             <AudioProvider>
               <VoiceChangerProvider>

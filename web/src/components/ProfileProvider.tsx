@@ -26,6 +26,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ProfileBacking, VoiceFxMap, SoundFxMap } from "@/lib/audio-output";
+import { analytics } from "@/lib/analytics";
 
 export type ProfileMeta = {
   id: string;
@@ -239,7 +240,10 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (res.ok) await loadProfiles();
+    if (res.ok) {
+      analytics.profileCreate();
+      await loadProfiles();
+    }
     return res;
   }, [loadProfiles]);
 
@@ -249,19 +253,26 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (res.ok) await loadProfiles();
+    if (res.ok) {
+      analytics.profileRename();
+      await loadProfiles();
+    }
     return res;
   }, [loadProfiles]);
 
   const cloneProfile = useCallback(async (id: string) => {
     const res = await fetch(`/api/profiles/${id}/clone`, { method: "POST" });
-    if (res.ok) await loadProfiles();
+    if (res.ok) {
+      analytics.profileClone();
+      await loadProfiles();
+    }
     return res;
   }, [loadProfiles]);
 
   const deleteProfile = useCallback(async (id: string) => {
     const res = await fetch(`/api/profiles/${id}`, { method: "DELETE" });
     if (res.ok) {
+      analytics.profileDelete();
       // If the active profile was deleted, switch to another before refetching.
       if (activeRef.current === id) {
         const fallback = profilesRef.current.find((p) => p.id !== id);

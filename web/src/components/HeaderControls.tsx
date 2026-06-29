@@ -124,7 +124,9 @@ export function CenterControls({ panel, toggle, close }: ControlsProps) {
   );
 }
 
-// RIGHT cluster: the Settings cog. Anchored right so the panel doesn't overflow.
+// RIGHT cluster: the Settings cog — a square chip matching the center buttons,
+// sitting beside the profile/user + quota stack. Anchored right so the panel
+// doesn't overflow.
 export function SettingsControl({ panel, toggle, close }: ControlsProps) {
   const audio = useAudio();
   return (

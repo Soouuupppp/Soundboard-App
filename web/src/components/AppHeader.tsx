@@ -4,10 +4,12 @@
 // is truly centered regardless of the side clusters' widths:
 //   left   — logo + "Soundboard"
 //   center — output meter → Voice changer → Sound Effects   (hidden on small screens)
-//   right  — Settings cog → profile dropdown → user dropdown (name),
-//            with the upload-storage quota as a thin bar spanning beneath them.
-// The Settings cog sits in the right cluster but shares the one-open-at-a-time
-// `panel` state owned here with the center Voice/FX popovers.
+//   right  — a square Settings cog + profile dropdown (both standalone, matching the
+//            center chips' height), then a user-dropdown / quota stack: the username
+//            on top with the upload-storage quota as a thin bar beneath it (sized to
+//            a fixed min/max-width band so it stays consistent across name lengths).
+// The Settings cog shares the one-open-at-a-time `panel` state owned here with the
+// center Voice/FX popovers.
 
 import { useState } from "react";
 import Link from "next/link";
@@ -46,14 +48,18 @@ export function AppHeader({
         <CenterControls panel={panel} toggle={toggle} close={close} />
       </div>
 
-      {/* Right cluster — Settings · user · profile, quota bar spanning beneath */}
-      <div className="flex flex-col items-stretch gap-1">
-        <div className="flex items-center justify-end gap-2 text-sm">
-          <SettingsControl panel={panel} toggle={toggle} close={close} />
-          <ProfileSwitcher />
-          <UserMenu name={name} image={image} isAdmin={isAdmin} signOutAction={signOutAction} />
+      {/* Right cluster — Profile · Settings cog · user/quota stack, grouped
+          together (the user/quota band is left-aligned: name beside the avatar,
+          quota bar spanning beneath). */}
+      <div className="flex items-center gap-2">
+        <ProfileSwitcher />
+        <SettingsControl panel={panel} toggle={toggle} close={close} />
+        <div className="flex flex-col items-start gap-1 min-w-[12rem] max-w-[16rem]">
+          <div className="flex items-center text-sm w-full">
+            <UserMenu name={name} image={image} isAdmin={isAdmin} signOutAction={signOutAction} />
+          </div>
+          <QuotaBar className="hidden sm:block w-full" />
         </div>
-        <QuotaBar className="hidden sm:block w-full" />
       </div>
     </div>
   );

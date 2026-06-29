@@ -506,6 +506,13 @@ app.whenReady().then(async () => {
         mainWindow.webContents.send("soundboard:globalKey", { combo });
       }
     },
+    // Up edge of a completed combo — lets the renderer hold-to-X (AI push-to-talk
+    // records while held, converts on release) even when the app isn't focused.
+    onMatchUp: (combo) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("soundboard:globalKeyUp", { combo });
+      }
+    },
   });
 
   // Start the native VR controller bridge (Valve Index, via SteamVR). It runs

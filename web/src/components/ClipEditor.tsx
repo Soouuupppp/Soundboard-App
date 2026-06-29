@@ -19,6 +19,8 @@ export function ClipEditor({
   objectUrl,
   busy,
   confirmLabel = "Use this clip",
+  confirmDisabled = false,
+  onConfirmBlocked,
   onConfirm,
   onCancel,
 }: {
@@ -26,6 +28,11 @@ export function ClipEditor({
   objectUrl: string;
   busy?: boolean;
   confirmLabel?: string;
+  // Extra gate on the confirm button (e.g. the upload form requires a tag).
+  confirmDisabled?: boolean;
+  // Fired when the user clicks the confirm button while it's blocked by
+  // confirmDisabled — lets the parent reveal the missing required field.
+  onConfirmBlocked?: () => void;
   onConfirm: (blob: Blob) => void;
   onCancel: () => void;
 }) {
@@ -402,9 +409,14 @@ export function ClipEditor({
           <button type="button" className="btn-ghost text-sm" onClick={onCancel} disabled={working}>
             <X size={15} className="mr-1" /> Cancel
           </button>
-          <button type="button" className="btn-primary text-sm" onClick={confirm} disabled={working || !ready || nothingLeft}>
-            <Check size={15} className="mr-1" /> {working ? "Processing…" : confirmLabel}
-          </button>
+          {/* Wrapper catches clicks while the button is disabled by confirmDisabled
+              (a disabled .btn has pointer-events:none) so the parent can reveal
+              which required field is missing. */}
+          <span onClick={() => { if (confirmDisabled && !working) onConfirmBlocked?.(); }}>
+            <button type="button" className="btn-primary text-sm" onClick={confirm} disabled={working || !ready || nothingLeft || confirmDisabled}>
+              <Check size={15} className="mr-1" /> {working ? "Processing…" : confirmLabel}
+            </button>
+          </span>
         </div>
       </div>
     </div>

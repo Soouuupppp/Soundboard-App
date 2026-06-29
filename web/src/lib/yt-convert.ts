@@ -11,16 +11,17 @@
 // Single-process only, matching the in-memory rate limiter. Jobs left running
 // when the process dies are failed on next boot by bootstrap.sql.
 
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { conversionJobs, users } from "@/db/schema";
+import { conversionJobs, sounds, users } from "@/db/schema";
 import { getAppSettings, getYtConfigForUser, parseAllowedHosts } from "@/lib/app-settings";
 import { getUserLimits, getUsedBytes } from "@/lib/quota";
 import { looksLikeMp3, persistSound } from "@/lib/sounds";
+import { deleteStorageFile } from "@/lib/storage";
 import { soundName } from "@/lib/validation";
 
 const YTDLP = process.env.YTDLP_PATH || "yt-dlp";
@@ -44,6 +45,47 @@ const JOB_TIMEOUT_MS = 180_000;
 const queue: { jobId: string; userId: string }[] = [];
 let active = 0;
 const activeByUser = new Map<string, number>();
+
+// Cancellation bookkeeping: the running yt-dlp child per job (so it can be
+// killed) and a set of jobs the caller cancelled (checked at runJob checkpoints
+// so a killed/finished job never persists a sound).
+const running = new Map<string, ChildProcess>();
+const cancelledJobs = new Set<string>();
+
+// Cancel an in-flight (queued or running) conversion: dequeue it, kill the
+// yt-dlp process (its temp dir is removed by runJob's finally), delete any sound
+// that already landed (cancel racing the finish), and mark the job cancelled.
+// Caller is responsible for auth/ownership. Safe to call for any state.
+export async function cancelConversion(jobId: string): Promise<void> {
+  cancelledJobs.add(jobId);
+
+  // Drop it from the queue if it hasn't started.
+  const qi = queue.findIndex((q) => q.jobId === jobId);
+  if (qi !== -1) queue.splice(qi, 1);
+
+  // Kill the running download, if any.
+  const child = running.get(jobId);
+  if (child) {
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
+  }
+
+  // If the sound already persisted (cancel raced the done-update), remove it
+  // (cascades board entries / placements) and its file.
+  const [job] = await db.select().from(conversionJobs).where(eq(conversionJobs.id, jobId)).limit(1);
+  if (job?.soundId) {
+    const [snd] = await db.select().from(sounds).where(eq(sounds.id, job.soundId)).limit(1);
+    if (snd) {
+      await db.delete(sounds).where(eq(sounds.id, snd.id));
+      await deleteStorageFile(snd.storagePath).catch(() => {});
+    }
+  }
+
+  await db
+    .update(conversionJobs)
+    .set({ status: "error", error: "cancelled", soundId: null, updatedAt: new Date() })
+    .where(eq(conversionJobs.id, jobId));
+  console.log(`[yt-convert] job ${jobId} cancelled`);
+}
 
 // Validate a URL's host against the admin allowlist. Returns the parsed URL or
 // null. Exact host match only — blocks file://, internal IPs, and other
@@ -163,7 +205,9 @@ async function runJob(jobId: string) {
     // clip name from the produced filename without a second yt-dlp call.
     const outTemplate = join(workDir, "%(title).100B.%(ext)s");
 
-    await runYtDlp([
+    if (cancelledJobs.has(jobId)) return; // cancelled before the download started
+
+    await runYtDlp(jobId, [
       "--ignore-config",
       ...(await cookieArgs(workDir)),
       ...(PROXY ? ["--proxy", PROXY] : []),
@@ -187,6 +231,10 @@ async function runJob(jobId: string) {
       job.url,
     ]);
 
+    // Cancelled mid-download (the kill above rejects runYtDlp into the catch, but
+    // guard here too for the queued/finished races) — bail before persisting.
+    if (cancelledJobs.has(jobId)) return;
+
     // Find the produced mp3 (filename embeds the video title).
     const files = (await fs.readdir(workDir)).filter((f) => f.toLowerCase().endsWith(".mp3"));
     if (files.length === 0) {
@@ -209,6 +257,18 @@ async function runJob(jobId: string) {
     const name = nameParsed.success ? nameParsed.data : "YouTube clip";
     const origParsed = soundName.safeParse(producedName);
 
+    // Tags collected on the import form (JSON array); persistSound normalizes/caps
+    // them (and still falls back to `misc` only if none survive).
+    let tags: string[] | undefined;
+    if (job.requestedTags) {
+      try {
+        const arr = JSON.parse(job.requestedTags);
+        if (Array.isArray(arr)) tags = arr.map(String);
+      } catch {
+        /* ignore malformed tags */
+      }
+    }
+
     const sound = await persistSound({
       ownerId: job.userId,
       discordId: owner.discordId,
@@ -216,7 +276,16 @@ async function runJob(jobId: string) {
       originalFilename: origParsed.success ? origParsed.data : "youtube.mp3",
       buf,
       isPublic: job.isPublic,
+      tags,
     });
+
+    // Cancelled between persist and the done-update — undo the just-created sound
+    // (cancelConversion couldn't see the soundId yet) and bail.
+    if (cancelledJobs.has(jobId)) {
+      await db.delete(sounds).where(eq(sounds.id, sound.id));
+      await deleteStorageFile(sound.storagePath).catch(() => {});
+      return;
+    }
 
     await db
       .update(conversionJobs)
@@ -224,6 +293,9 @@ async function runJob(jobId: string) {
       .where(eq(conversionJobs.id, jobId));
     console.log(`[yt-convert] job ${jobId} done: sound ${sound.id} (${buf.length} bytes)`);
   } catch (e) {
+    // A cancel killed the yt-dlp child → runYtDlp rejects here; the status was
+    // already set by cancelConversion, so don't overwrite it with a fake error.
+    if (cancelledJobs.has(jobId)) return;
     // Log the raw cause (incl. yt-dlp stderr) to the server console / docker
     // logs, with proxy creds redacted; the client only ever sees the short
     // safeError() summary.
@@ -231,17 +303,20 @@ async function runJob(jobId: string) {
     console.error(`[yt-convert] job ${jobId} (${job.url}) failed:`, redactSecrets(detail));
     await fail(jobId, safeError(e));
   } finally {
+    running.delete(jobId);
+    cancelledJobs.delete(jobId);
     if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-function runYtDlp(args: string[]): Promise<void> {
+function runYtDlp(jobId: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       YTDLP,
       args,
       { timeout: JOB_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, windowsHide: true },
       (err, _stdout, stderr) => {
+        running.delete(jobId);
         if (err) {
           // Attach yt-dlp's own stderr so the catch can log why it failed.
           if (stderr) err.message = `${err.message}\n${stderr}`.trim();
@@ -251,6 +326,8 @@ function runYtDlp(args: string[]): Promise<void> {
         }
       }
     );
+    // Track the child so cancelConversion() can kill it mid-download.
+    running.set(jobId, child);
   });
 }
 
