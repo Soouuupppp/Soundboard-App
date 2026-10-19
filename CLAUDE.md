@@ -33,7 +33,7 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.4.2**).
+(currently **1.4.3**).
 
 ## Stack
 
@@ -2754,6 +2754,21 @@ following the established pattern of the prior version sections.
     mid-conversion. At the editor stage, **Cancel discards** the imported clip
     (`DELETE /api/sounds/[id]`). tsc clean.
     **Progress: ✅ Done**
+
+### Tasks — 1.4.3 (Discord OAuth fix)
+
+Version bumped to **1.4.3** across all three `package.json` + docs. Owner
+decisions below are **locked**.
+
+1. **Explicit Discord issuer** *(bug)*. Discord now returns an RFC 9207 `iss`
+   param on the OAuth callback; with no `issuer` on the provider, Auth.js
+   (`@auth/core` 0.41.2) falls back to `"https://authjs.dev"` and oauth4webapi
+   rejects the mismatch, breaking login. **Fix:** set `issuer: "https://discord.com"`
+   on the `Discord(...)` provider in `lib/auth.ts`. Because the built-in provider
+   already sets explicit `token`/`userinfo` URLs, `handleOAuth` skips OIDC
+   discovery — this only changes the issuer the callback is validated against.
+   tsc clean. *(Not yet verified against a live Discord login.)*
+   **Progress: ✅ Done**
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions

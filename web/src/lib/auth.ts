@@ -22,6 +22,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Discord({
       clientId: process.env.DISCORD_CLIENT_ID,
       clientSecret: process.env.DISCORD_CLIENT_SECRET,
+      // Discord now returns an RFC 9207 `iss` on the callback; without an explicit
+      // issuer Auth.js falls back to "https://authjs.dev" and oauth4webapi rejects
+      // the mismatch. The provider's explicit token/userinfo URLs mean this does
+      // NOT trigger OIDC discovery — it only fixes the issuer check.
+      issuer: "https://discord.com",
     }),
   ],
   events: {
