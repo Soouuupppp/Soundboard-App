@@ -33,7 +33,7 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.4.3**).
+(currently **1.4.4**).
 
 ## Stack
 
@@ -43,7 +43,7 @@ Versions across all three `package.json` files are kept in lockstep
   (waveform multi-segment cut editor) and **`@breezystack/lamejs`** (pure-JS mp3
   re-encoder). The **CSP lives in `middleware.ts`** (per-request nonce), not
   `next.config.ts`.
-- **electron/** — Electron 33, `uiohook-napi` (low-level keyboard hook),
+- **electron/** — Electron 44, `uiohook-napi` (low-level keyboard hook),
   `electron-updater` (GitHub-release auto-update), `electron-builder`. The
   **vr-bridge** sidecar is C++ linking the bundled **OpenVR** SDK.
 - **Postgres** — official `postgres:16-alpine`. **Schema is applied via
@@ -604,6 +604,21 @@ breakpoints, a collapsed-card volume bar, a **Saved name/author search** + a lim
 Electron hook now emits a key-up edge), **AI monitor auto-toggle** (auto-on with AI,
 reverts only what it enabled), and navbar float tweaks. No new tables; the two new
 `user`/`conversionJob` columns ship via `bootstrap.sql`.
+
+**1.4.3 shipped** (Discord OAuth fix): an explicit `issuer: "https://discord.com"`
+on the Discord provider so Auth.js validates Discord's new RFC 9207 `iss` callback
+param instead of rejecting it (login was broken).
+
+**1.4.4 shipped** (CA-compromise security update): eight eMudhra intermediate CA
+private keys were found recoverable (Oct 2026), so every TLS client that doesn't
+enforce Certificate Transparency needed an updated trust store. Electron
+33 → **44** (≥44.9.1 carries the distrust; also moves off an EOL line), the web
+image pinned to **`node:22.23.4-alpine`** (patched bundled CA store + that
+release's TLS/Brotli CVE fixes), the runner's Alpine **`ca-certificates-bundle`**
+upgraded to ≥20261020-r0 (python3/yt-dlp + ffmpeg use the system store), and the
+Electron release CI moved off EOL Node 20 to 22.23.4. No app-code or schema
+changes; verified locally (container TLS, packaged Electron 44 app + global
+hotkeys).
 
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
@@ -2768,6 +2783,33 @@ decisions below are **locked**.
    already sets explicit `token`/`userinfo` URLs, `handleOAuth` skips OIDC
    discovery — this only changes the issuer the callback is validated against.
    tsc clean. *(Not yet verified against a live Discord login.)*
+   **Progress: ✅ Done**
+
+### Tasks — 1.4.4 (CA-compromise security update)
+
+Version bumped to **1.4.4** across all three `package.json` + docs. A
+dependency-only security release responding to the eMudhra intermediate-CA key
+compromise (https://emudhra.we-have-a-problem.com/). Owner decisions **locked**:
+ship as a new version (not a 1.4.3 respin) so installed desktop clients
+auto-update.
+
+1. **Electron → 44** *(security)*. `electron` `^33.2.0` → `^44.9.1` (lockfile
+   44.9.3) — the fixed lines are 44.9.1 / 43.8.1 / 42.11.16. Every Electron API
+   the wrapper uses is unchanged in 44; `uiohook-napi` is N-API so no rebuild.
+   **Progress: ✅ Done** *(packaged app built + launched; global keybinds
+   verified by the owner.)*
+2. **Patched Node in the web image** *(security)*. `web/Dockerfile` stages pinned
+   `node:22-alpine` → `node:22.23.4-alpine` (bundled CA update + the October 2026
+   Node security release).
+   **Progress: ✅ Done** *(container reports v22.23.4; emSign ECC G3 root gone
+   from `tls.rootCertificates`.)*
+3. **Alpine system CA store** *(security)*. The runner stage runs
+   `apk add --no-cache --upgrade ca-certificates-bundle` (the base image ships only
+   the `-bundle` subpackage, so `apk upgrade ca-certificates` was a no-op) to get
+   ≥20261020-r0 — python3/yt-dlp + ffmpeg trust the system store, not Node's.
+   **Progress: ✅ Done** *(20261020-r0 installed; Python + Node outbound HTTPS OK.)*
+4. **CI Node** *(security)*. `electron-release.yml` `node-version: 20` (EOL,
+   unpatched) → `22.23.4`.
    **Progress: ✅ Done**
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
