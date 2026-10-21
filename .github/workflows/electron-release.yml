@@ -62,7 +62,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.23.4
           cache: pnpm
 
       # No --filter: install all workspace deps so electron's devDependencies
