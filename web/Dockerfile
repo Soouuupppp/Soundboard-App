@@ -1,12 +1,12 @@
 # --- deps ---
-FROM node:22-alpine AS deps
+FROM node:22.23.4-alpine AS deps
 WORKDIR /app
 RUN corepack enable
 COPY package.json ./
 RUN pnpm install --prod=false
 
 # --- builder ---
-FROM node:22-alpine AS builder
+FROM node:22.23.4-alpine AS builder
 WORKDIR /app
 RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
@@ -19,7 +19,7 @@ ENV NEXT_PUBLIC_GA_MEASUREMENT_ID=$NEXT_PUBLIC_GA_MEASUREMENT_ID
 RUN pnpm build
 
 # --- runner ---
-FROM node:22-alpine AS runner
+FROM node:22.23.4-alpine AS runner
 WORKDIR /app
 RUN corepack enable
 # yt-dlp + ffmpeg power the YouTube→soundbite import (web/src/lib/yt-convert.ts).
@@ -27,7 +27,10 @@ RUN corepack enable
 # frequent extractor/bot-check changes break old versions (cookies stop being
 # enough). It's a Python zipapp, so python3 is the only runtime dep. ffmpeg does
 # the audio extraction/trimming. Rebuild to pull a newer yt-dlp.
-RUN apk add --no-cache ffmpeg python3 \
+# python3/yt-dlp + ffmpeg trust the system CA store, so upgrade ca-certificates
+# (>= 20261020-r0 distrusts the compromised eMudhra intermediates).
+RUN apk add --no-cache --upgrade ca-certificates-bundle \
+ && apk add --no-cache ffmpeg python3 \
  && wget -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
  && chmod a+rx /usr/local/bin/yt-dlp
 ENV NODE_ENV=production
