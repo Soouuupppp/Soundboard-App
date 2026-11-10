@@ -42,6 +42,23 @@ dev runs the app looks for the CMake `build/Release` output; packaged builds
 ship the exe under `resources/vr`. A missing exe just disables VR input quietly
 (keybinds still work).
 
+## Livepad capture helper (native)
+
+Livepad records individual apps and playback devices through
+`native/audio-capture`, a small C++/WASAPI helper (`audio-capture.exe`). `build:native`
+builds it alongside the VR bridge and stages it into `resources/audio-capture`. It only
+runs while Livepad needs it. A missing exe just hides those sources (recording devices
+still work).
+
+The first time a source is turned on, a native dialog asks for approval. Approvals are
+stored per server + source in the app's userData folder and can be cleared with
+**File → Forget Livepad capture approvals…**.
+
+Once a source is approved, the configured server's page can start it again without another
+prompt, so only approve sources on a server you trust. Approving an app also records any child
+processes it starts, even ones with a different name. App names shown in the picker and dialog
+come from each program's own version information.
+
 ## Build a Windows .exe to share
 
 Set your public server URL first so it's baked into the binary — your friends

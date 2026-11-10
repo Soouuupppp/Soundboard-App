@@ -11,6 +11,8 @@ const path = require("path");
 const fs = require("fs");
 const hotkeys = require("./hotkeys");
 const vrControllers = require("./vr-controllers");
+const audioCapture = require("./audio-capture");
+const crypto = require("crypto");
 const { autoUpdater } = require("electron-updater");
 
 // --- Settings persistence ---------------------------------------------------
@@ -240,6 +242,8 @@ autoUpdater.on("update-downloaded", async (info) => {
 
 // --- Main window + keybinds -------------------------------------------------
 
+const CLOSE_HANDSHAKE_TIMEOUT_MS = 1000;
+
 let mainWindow = null;
 let currentOrigin = null; // canonical origin of the loaded server URL
 
@@ -261,6 +265,239 @@ function vrPaths() {
     actionsPath: path.join(base, "soundboard_actions.json"),
     dataDir: app.getPath("userData"),
   };
+}
+
+// --- Livepad native capture --------------------------------------------------
+// The page is remote, so it never gets to decide what is recorded on its own: every
+// call must come from the main frame of the configured server, sources are checked
+// against the helper's own list, and the first use of a source needs a native dialog
+// the page can't draw or dismiss.
+
+function audioCaptureExePath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "audio-capture", "audio-capture.exe")
+    : path.join(__dirname, "native", "audio-capture", "build", "Release", "audio-capture.exe");
+}
+
+const APPROVALS_PATH = () => path.join(app.getPath("userData"), "livepad-capture-approvals.json");
+
+function readApprovals() {
+  try {
+    return JSON.parse(fs.readFileSync(APPROVALS_PATH(), "utf8")) || {};
+  } catch {
+    return {};
+  }
+}
+function writeApprovals(a) {
+  try {
+    fs.mkdirSync(path.dirname(APPROVALS_PATH()), { recursive: true });
+    fs.writeFileSync(APPROVALS_PATH(), JSON.stringify(a, null, 2));
+  } catch (e) {
+    console.warn("[soundboard] failed to write capture approvals:", e?.message);
+  }
+}
+
+const DENIED_RETRY_MS = 2000; // stops a page re-opening the dialog in a loop
+
+let nativeHelperOk = false;
+let nativeReady = false; // the running helper has said hello
+let nativePerApp = false;
+let nativeSources = { apps: [], devices: [] }; // internal keys, as the helper sent them
+let nativeKeyByPublic = new Map();
+let nativePickerOpen = false;
+let nativeArmed = null; // { key, publicKey, name } while recording is wanted
+let nativeApprovalOpen = false;
+const nativeDeniedAt = new Map();
+
+// App keys contain the full exe path (and so the Windows user name), which the
+// remote page has no need for. It gets a hash instead.
+function nativePublicKey(key) {
+  if (!key.startsWith("app:")) return key;
+  return "app:" + crypto.createHash("sha256").update(key).digest("hex").slice(0, 24);
+}
+
+function pageIsTrusted() {
+  return (
+    !!mainWindow &&
+    !mainWindow.isDestroyed() &&
+    !!currentOrigin &&
+    mainWindow.webContents.mainFrame.origin === currentOrigin
+  );
+}
+
+function senderIsTrusted(evt) {
+  return (
+    pageIsTrusted() &&
+    evt.sender === mainWindow.webContents &&
+    evt.senderFrame === mainWindow.webContents.mainFrame &&
+    evt.senderFrame.origin === currentOrigin
+  );
+}
+
+function sendNativeEvent(event) {
+  if (pageIsTrusted()) mainWindow.webContents.send("soundboard:nativeCapture:event", event);
+}
+
+function publicNativeSources() {
+  const pub = (s) => ({ key: nativePublicKey(s.key), name: s.name, default: !!s.default });
+  return {
+    apps: nativePerApp ? nativeSources.apps.map(pub) : [],
+    devices: nativeSources.devices.map(pub),
+  };
+}
+
+function onNativeEvent(m) {
+  if (m.t === "hello") {
+    nativePerApp = !!m.perApp;
+    nativeReady = true;
+    sendNativeEvent({ t: "status", available: true, perApp: nativePerApp });
+  } else if (m.t === "sources") {
+    nativeSources = { apps: m.apps || [], devices: m.devices || [] };
+    nativeKeyByPublic = new Map(
+      [...nativeSources.apps, ...nativeSources.devices].map((s) => [nativePublicKey(s.key), s.key]),
+    );
+    sendNativeEvent({ t: "sources", ...publicNativeSources() });
+  } else if (m.t === "state") {
+    if (nativeArmed && m.key === nativeArmed.key && m.state !== "idle") {
+      sendNativeEvent({ t: "state", state: m.state, key: nativeArmed.publicKey });
+    }
+  } else if (m.t === "exit" && nativeArmed) {
+    sendNativeEvent({ t: "state", state: "waiting", key: nativeArmed.publicKey });
+  }
+}
+
+function onNativePcm(payload) {
+  if (!nativeArmed || !pageIsTrusted()) return;
+  // payload is a view into a pooled Buffer; send only its own bytes.
+  mainWindow.webContents.send("soundboard:nativeCapture:pcm", new Uint8Array(payload));
+}
+
+function updateNativeHelper() {
+  if (nativePickerOpen || nativeArmed) {
+    nativeHelperOk = audioCapture.start({
+      exePath: audioCaptureExePath(),
+      // Capturing this app itself would only feed back. Resolved because dev runs
+      // through a pnpm junction, and Windows reports the real path.
+      excludeExe: fs.realpathSync(process.execPath),
+      onEvent: onNativeEvent,
+      onPcm: onNativePcm,
+    });
+  } else {
+    audioCapture.stop();
+    nativeHelperOk = false;
+    nativeReady = false;
+    nativePerApp = false;
+    nativeSources = { apps: [], devices: [] };
+    nativeKeyByPublic = new Map();
+  }
+}
+
+function stopNativeCapture() {
+  nativePickerOpen = false;
+  nativeArmed = null;
+  updateNativeHelper();
+}
+
+async function approveNativeSource(key, name, origin) {
+  const approvals = readApprovals();
+  if (approvals[origin]?.[key]) return true;
+  if (nativeApprovalOpen) return false;
+  const deniedAt = nativeDeniedAt.get(key) ?? -Infinity;
+  if (Date.now() - deniedAt < DENIED_RETRY_MS) return false;
+
+  nativeApprovalOpen = true;
+  try {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      buttons: ["Allow", "Don't allow"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: "Soundboard",
+      message: `Allow Livepad to record audio from "${name}"?`,
+      detail:
+        `Requested by: ${origin}\n\n` +
+        "While Livepad is on, this page receives that audio. You'll only be asked once " +
+        "for this source on this server. To undo it later, use File > Forget Livepad " +
+        "capture approvals.",
+    });
+    if (response !== 0) {
+      nativeDeniedAt.set(key, Date.now());
+      return false;
+    }
+    const next = readApprovals();
+    next[origin] = { ...next[origin], [key]: { name, at: new Date().toISOString() } };
+    writeApprovals(next);
+    return true;
+  } finally {
+    nativeApprovalOpen = false;
+  }
+}
+
+async function forgetNativeApprovals() {
+  const count = Object.values(readApprovals()).reduce((n, o) => n + Object.keys(o).length, 0);
+  if (count === 0) {
+    await dialog.showMessageBox({ type: "info", message: "There are no Livepad capture approvals to forget." });
+    return;
+  }
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["Forget", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    message: `Forget ${count} Livepad capture approval${count === 1 ? "" : "s"}?`,
+    detail: "Livepad will ask again the next time each source is turned on. Any recording in progress stops.",
+  });
+  if (response !== 0) return;
+  writeApprovals({});
+  if (nativeArmed) {
+    nativeArmed = null;
+    audioCapture.capture(null);
+    updateNativeHelper();
+    sendNativeEvent({ t: "revoked" });
+  }
+}
+
+function registerNativeCaptureIpc() {
+  ipcMain.handle("soundboard:nativeCapture:open", (evt) => {
+    if (!senderIsTrusted(evt)) return { available: false, perApp: false, apps: [], devices: [] };
+    nativePickerOpen = true;
+    updateNativeHelper();
+    return { available: nativeHelperOk && nativeReady, perApp: nativePerApp, ...publicNativeSources() };
+  });
+
+  ipcMain.handle("soundboard:nativeCapture:close", (evt) => {
+    if (!senderIsTrusted(evt)) return;
+    nativePickerOpen = false;
+    updateNativeHelper();
+  });
+
+  ipcMain.handle("soundboard:nativeCapture:arm", async (evt, publicKey) => {
+    if (!senderIsTrusted(evt)) return { ok: false, error: "forbidden" };
+    if (typeof publicKey !== "string" || publicKey.length > 2048) return { ok: false, error: "unavailable" };
+    const key = nativeKeyByPublic.get(publicKey);
+    const source = [...nativeSources.apps, ...nativeSources.devices].find((s) => s.key === key);
+    if (!source || (key.startsWith("app:") && !nativePerApp)) return { ok: false, error: "unavailable" };
+
+    const origin = currentOrigin;
+    const approved = await approveNativeSource(key, source.name, origin);
+    if (!approved) return { ok: false, error: "denied" };
+    // The page may have navigated away while the dialog was open.
+    if (origin !== currentOrigin || !senderIsTrusted(evt)) return { ok: false, error: "forbidden" };
+
+    nativeArmed = { key, publicKey, name: source.name };
+    updateNativeHelper();
+    audioCapture.capture(key);
+    return { ok: true, name: source.name, sampleRate: 48000 };
+  });
+
+  ipcMain.handle("soundboard:nativeCapture:disarm", (evt) => {
+    if (!senderIsTrusted(evt)) return;
+    nativeArmed = null;
+    audioCapture.capture(null);
+    updateNativeHelper();
+  });
 }
 
 // Hosts allowed to navigate inside the window even when they aren't the
@@ -398,6 +635,14 @@ function createWindow(url) {
   });
 
   lockdownWindow(mainWindow);
+
+  // Any real navigation or renderer crash ends native capture. Armed state doesn't
+  // survive a reload anyway, and PCM must never reach a page it wasn't approved for.
+  mainWindow.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) stopNativeCapture();
+  });
+  mainWindow.webContents.on("render-process-gone", () => stopNativeCapture());
+
   mainWindow.loadURL(url);
 
   // Persist size/position so the window reopens where the user left it.
@@ -418,9 +663,33 @@ function createWindow(url) {
   };
   mainWindow.on("resize", debounced);
   mainWindow.on("move", debounced);
-  mainWindow.on("close", () => {
+  const win = mainWindow;
+  let closeHandshakeStarted = false;
+  win.on("close", (event) => {
     clearTimeout(saveTimer);
     persistBounds();
+
+    // Give the page a moment to delete Livepad's temp files, then close regardless
+    // (a hung or crashed renderer must not be able to keep the window open).
+    if (closeHandshakeStarted) return;
+    closeHandshakeStarted = true;
+    event.preventDefault();
+    let timer = null;
+    const finish = () => {
+      clearTimeout(timer);
+      ipcMain.removeListener("soundboard:closingDone", onDone);
+      if (!win.isDestroyed()) win.destroy();
+    };
+    const onDone = (evt) => {
+      if (evt.sender === win.webContents) finish();
+    };
+    ipcMain.on("soundboard:closingDone", onDone);
+    timer = setTimeout(finish, CLOSE_HANDSHAKE_TIMEOUT_MS);
+    try {
+      win.webContents.send("soundboard:appClosing");
+    } catch {
+      finish();
+    }
   });
 }
 
@@ -446,6 +715,10 @@ function buildMenu() {
         {
           label: "Check for updates…",
           click: () => { checkForUpdatesInteractive(); },
+        },
+        {
+          label: "Forget Livepad capture approvals…",
+          click: () => { forgetNativeApprovals(); },
         },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
@@ -535,6 +808,8 @@ app.whenReady().then(async () => {
     },
   });
 
+  registerNativeCaptureIpc();
+
   ipcMain.handle("soundboard:registerKeybinds", (_evt, combos) => {
     if (!Array.isArray(combos)) return { ok: false, error: "not an array" };
     // Cap how many combos a remote page can ever register at once.
@@ -559,6 +834,7 @@ app.whenReady().then(async () => {
 app.on("will-quit", () => {
   hotkeys.stop();
   vrControllers.stop();
+  audioCapture.stop();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

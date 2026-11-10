@@ -18,6 +18,7 @@ import { CenterControls, SettingsControl, type Panel } from "@/components/Header
 import { UserMenu } from "@/components/UserMenu";
 import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { QuotaBar } from "@/components/QuotaBar";
+import { LivepadRecordingIndicator } from "@/components/LivepadRecordingIndicator";
 import logo from "@/app/logo.png";
 
 export function AppHeader({
@@ -52,6 +53,7 @@ export function AppHeader({
           together (the user/quota band is left-aligned: name beside the avatar,
           quota bar spanning beneath). */}
       <div className="flex items-center gap-2">
+        <LivepadRecordingIndicator />
         <ProfileSwitcher />
         <SettingsControl panel={panel} toggle={toggle} close={close} />
         <div className="flex flex-col items-start gap-1 min-w-[12rem] max-w-[16rem]">

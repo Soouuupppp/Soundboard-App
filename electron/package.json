@@ -44,6 +44,7 @@
       "main.js",
       "hotkeys.js",
       "vr-controllers.js",
+      "audio-capture.js",
       "preload.js",
       "prompt-preload.js",
       "package.json",
@@ -51,7 +52,8 @@
       "assets/**"
     ],
     "extraResources": [
-      { "from": "resources/vr", "to": "vr", "filter": ["**/*"] }
+      { "from": "resources/vr", "to": "vr", "filter": ["**/*"] },
+      { "from": "resources/audio-capture", "to": "audio-capture", "filter": ["**/*"] }
     ],
     "directories": {
       "buildResources": "assets",

@@ -258,7 +258,7 @@ const WORKLET_MODULES: Partial<Record<EffectKind, readonly string[]>> = {
 const loaded = new WeakMap<BaseAudioContext, Set<string>>();
 const loading = new WeakMap<BaseAudioContext, Map<string, Promise<void>>>();
 
-function ensureModule(ctx: BaseAudioContext, url: string): Promise<void> {
+export function ensureWorkletModule(ctx: BaseAudioContext, url: string): Promise<void> {
   if (loaded.get(ctx)?.has(url)) return Promise.resolve();
   let inflight = loading.get(ctx);
   if (!inflight) { inflight = new Map(); loading.set(ctx, inflight); }
@@ -298,7 +298,7 @@ export function chainNeedsWorklet(configs: EffectConfig[]): boolean {
 export function ensureWorkletModules(ctx: BaseAudioContext, configs: EffectConfig[]): Promise<void> {
   const urls = workletUrls(configs);
   if (urls.length === 0) return Promise.resolve();
-  return Promise.all(urls.map((u) => ensureModule(ctx, u))).then(() => {});
+  return Promise.all(urls.map((u) => ensureWorkletModule(ctx, u))).then(() => {});
 }
 
 // Build a synthetic reverb impulse response: white noise with exponential decay,
@@ -333,7 +333,7 @@ function makeDistortionCurve(drive: number): Float32Array<ArrayBuffer> {
 // Construct a live effect subgraph for one config. Each branch returns a single
 // input/output pair plus update()/dispose(). For wet/dry effects (echo, reverb)
 // the input fans into a dry gain + a wet path that both sum into the output.
-export function createEffect(ctx: AudioContext, cfg: EffectConfig): Effect {
+export function createEffect(ctx: BaseAudioContext, cfg: EffectConfig): Effect {
   const { kind } = cfg;
   const p = cfg.params;
 

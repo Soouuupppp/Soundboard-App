@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MicMixer, type MixerInputState, SOUNDBOARD_KEY } from "./audio-mixer";
+import { MicMixer, type LivepadTap, type MixerInputState, SOUNDBOARD_KEY } from "./audio-mixer";
 import { type EffectConfig, type EffectParams } from "./voice-fx";
 import { type AiVoice, convertVoice, resolveVoice } from "./voice-ai";
 import { convertStsViaProxy, ttsViaProxy, resolvePaidVoiceId, type PaidProvider } from "./voice-ai-paid";
 import { startStt, sttSupported, type SttHandle } from "./voice-stt";
 import { analytics } from "./analytics";
+import { LIVEPAD_PREVIEW_KEY, livepadPlaybackKey } from "./livepad";
 
 const LS_KEY = "soundboard:output";
 // Voice changer (1.4.0) — device-local per-source DSP chains + AI config. Kept in
@@ -270,6 +271,19 @@ export type AudioOutput = {
   aiError: string | null;
   // ver/1.4.1 re-speak: live interim transcript while a re-speak PTT is held ("" otherwise).
   aiTranscript: string;
+  // Short local-only "done" chime on the monitor device.
+  playReadyChime: () => void;
+  // Livepad (1.5.0): play a temp capture like a Board clip (output / virtual mic +
+  // monitor). Tracked under livepadPlaybackKey, so cancelSound/cancelAll stop it.
+  playCapture: (captureId: string, url: string, volume: number) => void;
+  // The capture editor's preview: monitor only, tracked under LIVEPAD_PREVIEW_KEY.
+  playCapturePreview: (url: string) => void;
+  // Livepad (1.5.0): open a capture line and stream its mono PCM to the caller.
+  startLivepadTap: (
+    deviceId: string,
+    onChunk: (pcm: Int16Array) => void,
+    onEnded: () => void,
+  ) => Promise<LivepadTap>;
 };
 
 export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
@@ -1040,6 +1054,34 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
     for (const a of all) stopEntry(a);
   }, [stopEntry]);
 
+  // One tracked instance per key: playing it again restarts it.
+  const injectTracked = useCallback((key: string, url: string, volume: number, preview: boolean) => {
+    const m = mixerRef.current;
+    if (!m?.isReady()) return;
+    for (const a of activeRef.current.filter((x) => x.soundId === key)) stopEntry(a);
+    const entry: Active = { monitorAudio: null, cable: null, soundId: key, entryId: key, perEntryVolume: volume };
+    activeRef.current.push(entry);
+    recomputePlaying();
+    const done = () => removeActive(entry);
+    entry.cable = preview ? m.injectPreview(url, clamp(volume), done) : m.injectClip(url, clamp(volume), done);
+    if (!entry.cable) done();
+  }, [recomputePlaying, removeActive, stopEntry]);
+
+  const playCapture = useCallback(
+    (captureId: string, url: string, volume: number) => injectTracked(livepadPlaybackKey(captureId), url, volume, false),
+    [injectTracked],
+  );
+  const playCapturePreview = useCallback(
+    (url: string) => injectTracked(LIVEPAD_PREVIEW_KEY, url, 1, true),
+    [injectTracked],
+  );
+
+  const startLivepadTap = useCallback<AudioOutput["startLivepadTap"]>((id, onChunk, onEnded) => {
+    const m = mixerRef.current;
+    if (!m?.isReady()) return Promise.reject(new Error("The audio engine isn't running."));
+    return m.startLivepadTap(id, onChunk, onEnded);
+  }, []);
+
   const getCablePeak = useCallback(() => mixerRef.current?.getOutputPeak() ?? 0, []);
   // Global output peak — the unified engine's pre-limiter output sum (all modes).
   const getOutputPeak = useCallback(() => mixerRef.current?.getOutputPeak() ?? 0, []);
@@ -1101,5 +1143,9 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
     aiBusy,
     aiError,
     aiTranscript,
+    playReadyChime,
+    playCapture,
+    playCapturePreview,
+    startLivepadTap,
   };
 }

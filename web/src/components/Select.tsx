@@ -7,6 +7,7 @@
 // of being clipped, mirroring how a native select floats above everything.
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -17,7 +18,12 @@ import {
 import { createPortal } from "react-dom";
 import { ChevronDown, Check } from "lucide-react";
 
-export type SelectOption = { value: string; label: ReactNode };
+export type SelectOption = {
+  value: string;
+  label: ReactNode;
+  /** Heading shown above this option when it differs from the previous option's. */
+  group?: string;
+};
 
 type Props = {
   value: string;
@@ -185,9 +191,11 @@ export function Select({
           >
             {options.map((o, i) => {
               const isSel = o.value === value;
+              const heading = o.group && o.group !== options[i - 1]?.group ? o.group : null;
               return (
+                <Fragment key={o.value}>
+                {heading && <div className="px-2.5 pt-2 pb-1 text-xs font-medium text-muted/70">{heading}</div>}
                 <button
-                  key={o.value}
                   type="button"
                   role="option"
                   aria-selected={isSel}
@@ -200,6 +208,7 @@ export function Select({
                   <span className="truncate">{o.label}</span>
                   {isSel && <Check size={14} className="shrink-0 text-accent" />}
                 </button>
+                </Fragment>
               );
             })}
           </div>,

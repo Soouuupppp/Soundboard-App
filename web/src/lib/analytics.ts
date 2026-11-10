@@ -46,6 +46,11 @@ export const analytics = {
   importYoutube: () => track("import_youtube"),
   savePublicSound: (soundId: string) => track("save_public_sound", { sound_id: soundId }),
 
+  // Livepad.
+  livepadArm: () => track("livepad_arm"),
+  livepadCapture: () => track("livepad_capture"),
+  livepadSave: () => track("livepad_save"),
+
   // Profiles CRUD.
   profileCreate: () => track("profile_create"),
   profileRename: () => track("profile_rename"),

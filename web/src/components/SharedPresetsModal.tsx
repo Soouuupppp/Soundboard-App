@@ -86,6 +86,7 @@ export function SharedPresetsModal({
 
   return createPortal(
     <div
+      data-keep-popover
       className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"

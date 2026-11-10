@@ -44,3 +44,4 @@ electron/baked.json
 # is already covered by the global build/ rule above; the vendored OpenVR SDK
 # under native/vr-bridge/vendor IS committed.
 electron/resources/vr/
+electron/resources/audio-capture/
