@@ -29,11 +29,14 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
     (`vr-bridge.exe`) that reads Valve Index / Meta Quest (Touch) controllers and
     prints button edges as JSON. Built with CMake; staged into
     `electron/resources/vr` for packaging.
+  - **`electron/native/audio-capture/`** — a C++/WASAPI helper
+    (`audio-capture.exe`) for Livepad's per-app and playback-device capture.
+    Built the same way, staged into `electron/resources/audio-capture`.
 - Root `package.json` is just convenience scripts that delegate into the
   workspaces.
 
 Versions across all three `package.json` files are kept in lockstep
-(currently **1.4.4**).
+(currently **1.5.0**).
 
 ## Stack
 
@@ -367,7 +370,9 @@ both **device-local** (no DB/schema change):
 - Permissions are locked down in `main.js`: only `media` (mic for the mixer) and
   `speaker-selection` (`setSinkId`) are granted; webviews are refused. OAuth
   hosts (`discord.com`, `discordapp.com`) may navigate in-app so the session
-  cookie lands on the right origin.
+  cookie lands on the right origin. On those hosts `preload.js` refuses WebAuthn
+  `conditional` requests, because Electron has no autofill UI and Windows would open
+  its security-key dialog on page load; explicit passkey and 2FA requests still work.
 - Auto-update: installed clients poll the latest GitHub Release for a
   `latest.yml`. Portable .exe builds don't auto-update. See `electron/README.md`.
 
@@ -413,6 +418,47 @@ both **device-local** (no DB/schema change):
   the confirm button is disabled and the field highlights on a blocked submit
   attempt) — the server's `misc` fallback (`persistSound`) is now only a safety net.
 
+### Livepad (instant capture, 1.5.0)
+A rolling buffer of one source, snapshotted into temp cards on a third dashboard tab.
+On the web, sources are **capture devices / cables only**, the same as Virtual Mic (see
+the `virtual-mic-capture` memory). The desktop app also offers individual apps and
+playback devices through the native helper.
+- **Native sources (desktop):** `electron/native/audio-capture` (C++, WASAPI process
+  loopback + `AUDCLNT_STREAMFLAGS_LOOPBACK`) → `electron/audio-capture.js` → `main.js` IPC
+  → `lib/livepad-native.ts` / `LivepadProvider` → the same `PcmRing`. Always 48 kHz mono
+  16-bit. Every IPC handler checks the sender is the main frame of `currentOrigin` because
+  `preload.js` also runs on Discord's pages. First use of a source needs a native dialog,
+  remembered per server origin + source in userData (File > Forget Livepad capture
+  approvals). A lost source stays armed in a distinct waiting state and reattaches when
+  the same exe or device returns, with the buffer kept and no padding.
+- **Capture path:** `MicMixer.startLivepadTap` opens its own stream: `source →
+  livepad-capture-processor worklet → gain(0) → destination`. It joins no bus and is
+  never audible. It uses the exact device only: the relaxed `openDeviceStream` fallback
+  could silently record the default mic instead of the chosen line. The worklet posts 4096-frame Int16 chunks to a main-thread `PcmRing`
+  (`lib/livepad.ts`, always 120s capacity). Armed state is never persisted, and the ring
+  is freed on disarm.
+- **Temp files:** `lib/livepad-store.ts`, in OPFS at `livepad/<sessionId>/` + a
+  `manifest.json`. `sessionId` is in `sessionStorage`; a **Web Lock held for the page's
+  life** marks a session live, so the startup sweep deletes any folder whose lock is
+  free. Every write gets a new file name. A manifest for another user is wiped.
+  Deleted on Electron close (`soundboard:appClosing` / `closingDone`, 1s cap) and on
+  sign-out; a browser tab close is cleaned by the next launch's sweep.
+- **State:** `components/LivepadProvider.tsx` sits inside `ToastProvider`, so recording
+  survives tab and route changes. `useLivepad()` has the changing state; bind state is
+  in a separate `useLivepadBinds()` so `Dashboard` doesn't re-render on captures.
+- **Triggers:** on-screen button, keyboard + Electron global hotkey, VR, routed by the
+  `LIVEPAD_CAPTURE_BIND` sentinel. Binds capture only; unarmed = a toast.
+- **Playback:** `audio.playCapture` plays like a Board clip, tracked under
+  `livepad:<id>` so cancel-all stops it. Per-card volume is live and never baked in.
+- **Editing:** The newest capture's waveform opens automatically, unless the open editor
+  has unapplied work. `components/CaptureEditor.tsx` wraps `ClipEditor` (`renderCapture`: cuts +
+  volume → reverse → tape speed → FX, offline). Preview is monitor-only. Without FX, Apply
+  replaces the WAV with no revert; with FX, the result is added as a new temp card and the
+  original stays. Results are capped at 240s.
+- **Saving:** renders, encodes mp3, and posts to `POST /api/sounds`, so upload permission
+  and quotas are the server's usual ones. Lands in Saved only. The editor also checks
+  the user's max file size, before rendering (estimate) and after encoding (real size).
+
 ### User-facing notifications
 - `components/Toast.tsx` — `ToastProvider` + `useToast` (mounted in the root
   layout), with a `fromResponse` helper (reads a failed Response's `{error}`,
@@ -433,7 +479,10 @@ model + factory) · `voice-ai.ts` (browser-direct `@gradio/client` RVC voice
 conversion) · `fx-presets.ts` (shared device-local FX preset library) ·
 `audio-edit.ts` (decode/encode/segment for the clip editor) · `chord.ts` (keyboard
 chord model) · `vr-bind.ts` (controller step/sequence model + matcher) ·
-`validation.ts` (Zod schemas) · `utils.ts` (`formatBytes`, etc.).
+`validation.ts` (Zod schemas) · `livepad.ts` (rolling buffer, WAV encode, capture
+render pipeline) · `livepad-store.ts` (OPFS temp files + session locks) ·
+`livepad-native.ts` (desktop per-app/playback-device bridge types + helpers) · `utils.ts`
+(`formatBytes`, etc.).
 
 ## Third-party AI voice providers
 The voice changer's AI paths send audio (and, for STT→TTS "re-speak", transcribed
@@ -478,6 +527,11 @@ never sell user data, and the TOS links Google's privacy policy.
   pre-buffer ceiling.
 - API responses don't leak internal user UUIDs: `/api/public/sounds` resolves
   `mine` server-side and omits `ownerId` from the payload.
+- **Livepad native capture trusts only the main frame on the configured server's origin**
+  (`senderIsTrusted` in `electron/main.js`), because `preload.js` also runs on Discord's pages. The
+  page passes only a lookup value, so names and approval keys come from the helper's own list. The
+  helper treats other programs' version resources as untrusted input. Known consent limits are
+  listed under the 1.5.0 security review in the task section.
 
 ## Project status
 
@@ -619,6 +673,15 @@ upgraded to ≥20261020-r0 (python3/yt-dlp + ffmpeg use the system store), and t
 Electron release CI moved off EOL Node 20 to 22.23.4. No app-code or schema
 changes; verified locally (container TLS, packaged Electron 44 app + global
 hotkeys).
+
+**1.5.0 (Livepad) implemented and owner-tested from source, not yet shipped:** pick a capture device, arm
+it, and snapshot the last 1–120 seconds into temp WAV cards on a new dashboard tab.
+Cards play like Board clips, can be edited (cuts, reverse, tape speed, baked FX) and
+saved to the library through the normal upload path. Triggers are an on-screen button,
+keyboard/global hotkey and VR bind. Temp files live in OPFS with a size limit and are
+removed on close, sign-out or the next launch's sweep. The desktop app can also record
+individual apps and playback devices through a bundled native helper, with a native
+approval dialog per source. No schema change, no CSP change.
 
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
@@ -2811,6 +2874,366 @@ auto-update.
 4. **CI Node** *(security)*. `electron-release.yml` `node-version: 20` (EOL,
    unpatched) → `22.23.4`.
    **Progress: ✅ Done**
+
+### Tasks — 1.5.0 (Livepad — instant capture from an audio source)
+
+Version bumped to **1.5.0** across all three `package.json` + docs. Owner
+decisions below are **locked** (settled in `/prep-release` + `/plan-release`,
+revised 2026-11-10 to temp-file storage and a grid).
+
+**Livepad** lets a user pick an audio source (such as a game-only or chat-only
+line), keep a rolling buffer of it, and snapshot the last X seconds into a **temp
+WAV shown as a card in a grid**. Each card can be played, edited, deleted, or saved
+permanently through the normal upload path.
+
+**Cross-cutting locked decisions:**
+- **Capture devices / cables only.** A Livepad source is a Windows `audioinput`
+  device. Getting a game or chat onto its own line means routing that app to a
+  virtual cable or GoXLR bus in Windows. No loopback and no native code (see the
+  `virtual-mic-capture` memory).
+- **One source at a time**, with one rolling buffer, **independent of Virtual Mic
+  mode** (with Virtual Mic off, captures play on the normal output device).
+- **Records only while armed.** Explicit on/off toggle plus a visible recording
+  indicator. **Off on every app start and reload** (armed state is never restored).
+- **Audio is mono 16-bit**, on disk and in the live buffer. Only the **rolling
+  buffer stays in RAM** (about 11.5 MB for 120s at 48 kHz). **Finished captures are
+  temp WAV files.** RAM holds a capture's samples only while it is open in the editor.
+- **Capture length is a free slider, 1–120 seconds** (whole seconds, device-local,
+  default 30). Moving the slider applies at once. Armed for less than X gives a
+  shorter capture (**no silence padding**).
+- **Temp files live in the Origin Private File System** (web and desktop alike, not
+  browsable in Explorer). No fixed count cap.
+- **Size limit, not a count limit:** a device-local setting, **default 250 MB**,
+  adjustable up to 5 GB (`soundboard:livepadMaxBytes`). Past the limit, the oldest
+  **Saved-badged** cards are removed first, then the oldest unsaved. The card open in
+  the editor is never removed. **Every automatic removal shows a toast.** The tab
+  shows current temp usage.
+- **Session lifetime:** page reloads keep the grid. Closing the app removes the temp
+  files. Anything left behind (crash, closed browser tab) is swept on the next launch.
+  Signing out also deletes them.
+- **Access:** no admin toggle or role gate. Users without upload permission can
+  capture, play and edit, but not save. No schema change.
+- **Save follows the normal clip rules:** lands in the **Saved library only** (not
+  auto-added to a Board). Public sharing is allowed. **No `TOS_VERSION` bump and no
+  new consent term.**
+- **Availability:** needs the engine (`AudioContext.setSinkId`), so Livepad shows an
+  explanation instead of its controls where `audio.supportsSinkId` is false. No CSP
+  change. The only Electron change is the close handshake in task 2.
+
+**Explicitly out of scope for 1.5.0:** native or per-app loopback, several
+simultaneous sources, a separate replay-last bind, fades, pitch-preserving speed
+changes, revert after Apply, mini waveforms on cards, a Livepad-only private flag,
+and stereo capture.
+
+1. **Source picker + rolling buffer** *(feat, do first)*. Keys
+   `soundboard:livepadSource` and `soundboard:livepadLengthSec`.
+   *Plan (locked):* new `web/public/worklets/livepad-capture-processor.js` converts
+   each quantum to Int16 and posts ~4096-frame chunks to the main thread, reusing
+   buffers the main thread sends back. **The ring lives on the main thread** (new
+   `lib/livepad.ts`, `PcmRing`), so a snapshot never copies megabytes on the audio
+   thread that also carries the live mic and board; `SharedArrayBuffer` is out because
+   the app is not cross-origin isolated. `MicMixer.startLivepadTap(deviceId, onChunk)`
+   reuses `openDeviceStream`, wires `MediaStreamSource → AudioWorkletNode (channelCount
+   1, explicit) → GainNode(0) → destination` so the node is always pulled and nothing
+   is ever audible, and returns `{sampleRate, stop}`. It touches no bus. Update the
+   `audio-mixer.ts` ASCII diagram, tear the tap down in `stop()`, and export a
+   single-url module loader from `voice-fx.ts`. New `components/LivepadProvider.tsx`
+   (mounted inside `ToastProvider`, wrapping the shell) owns source, length, armed
+   state and the ring, so recording survives tab and route changes. Changing the
+   source while armed restarts the tap and clears the buffer; a track `ended` event
+   disarms with a toast. **Self-capture warning (warn, allow):** amber inline note when
+   the source's parenthesised device name matches the output or monitor device's
+   (for example both `(VB-Audio Virtual Cable)`). Best effort only.
+   **Progress: ✅ Done** *(new `public/worklets/livepad-capture-processor.js` posts
+   4096-frame Int16 chunks and reuses the buffers main sends back. New `lib/livepad.ts`:
+   `PcmRing` (always 120s capacity so the slider applies at once; `latest(frames)` never
+   pads) + `looksLikeSelfCapture` (outermost parenthesised label group, ignoring a USB
+   `(vid:pid)` suffix). `MicMixer.startLivepadTap(deviceId, onChunk, onEnded)` opens its
+   own stream and wires `source → worklet → gain(0) → destination`, one tap at a time,
+   stopped in `stop()`; the third arg was added for the track `ended` disarm. Exposed as
+   `audio.startLivepadTap`. `voice-fx.ts` now exports `ensureWorkletModule`. New
+   `components/LivepadProvider.tsx` (`useLivepad`, inside `ToastProvider`) owns source,
+   length, armed/arming and the ring; a generation counter stops a slow `getUserMedia`
+   reviving a superseded start, and the ring is freed on disarm. tsc clean.)*
+2. **Temp WAV store + cleanup** *(feat)*. New `lib/livepad-store.ts` over OPFS
+   (`navigator.storage.getDirectory()`), with one folder per session,
+   `livepad/<sessionId>/`, plus `manifest.json` (id, createdAt, durationSec, sampleRate,
+   file name, name, volume, edited, savedSoundId, owning userId). `sessionId` lives in
+   `sessionStorage`, so a reload finds the same folder. A held Web Lock on the session id
+   marks it live: the startup sweep deletes every folder whose lock is free, and a
+   duplicated tab that copied a locked id takes a new one. A manifest for a different
+   `userId` is deleted, not shown. **Each write uses a new file name** and the old file is
+   deleted afterwards, so a `File` snapshot or object URL is never overwritten in place.
+   Quota errors become a toast. Limit enforcement runs after each capture or Apply and
+   when the limit is lowered. **Cleanup:** on app close, Electron's `mainWindow` `close`
+   handler holds the window, sends `soundboard:appClosing` (bridged in `preload.js`), and
+   destroys the window on `soundboard:closingDone` or after a ~1s timeout. Provider
+   unmount (sign-out) deletes the session; a reload does not run that cleanup. In a
+   browser tab, close can't be told apart from reload, so deletion happens at the next
+   launch's sweep.
+   **Progress: ✅ Done** *(new `lib/livepad-store.ts`: `LivepadStore` over OPFS with one
+   queue serializing file + manifest writes, per-write file names, `pickEvictions`, and
+   `claimSession` (a Web Lock held for the page's life, retried briefly so a reloading
+   page's lock can clear; still held = duplicated tab, new id). The startup sweep removes
+   any folder whose lock is free; a manifest for another user is wiped. `LivepadProvider`
+   gained `userId` (keyed in the layout), `captures`/`usedBytes`/`maxBytes`/`setMaxBytes`
+   and limit enforcement with a toast. Teardown is deferred one tick so a Strict Mode
+   remount doesn't delete the session. Electron: `main.js` holds `close`, sends
+   `soundboard:appClosing`, destroys on `soundboard:closingDone` or after 1s; `preload.js`
+   exposes `onAppClosing` and replies at once when no handler is registered, so a
+   signed-out page doesn't delay closing. Added a 50 MB floor on the limit (fits the
+   largest single result) and `dom.asynciterable` to `tsconfig.json` for directory
+   iteration. tsc clean.)*
+3. **Capture snapshot → grid card** *(feat)*. `capture()` in the provider reads the
+   last X seconds, writes a 16-bit mono WAV to the store, and adds a card, newest
+   first. A ~200ms guard coalesces the double event a focused press produces (in-app
+   `keydown` + OS hook). Playback URLs come from `URL.createObjectURL(await
+   handle.getFile())`, so audio stays on disk. Removing a card stops its playback,
+   revokes the URL and deletes the file.
+   **Progress: ✅ Done** *(`lib/livepad.ts` gained `encodeWav16` + `defaultCaptureName`.
+   `LivepadProvider` gained `capture()` (200ms coalesce checked first so a double event
+   can't double-toast either; reads `lengthRef`, writes through the store, enforces the
+   limit), `getCaptureUrl` (lazy object URL cached per id + file name),
+   `removeCapture`/`clearCaptures`. Every removal path, automatic ones included, goes
+   through `releaseCaptures` (cancels `livepad:<id>` playback and revokes the URL) before
+   deleting the file. tsc clean.)*
+4. **Instant playback** *(feat)*. Play/stop per card, **routed like a Board clip** via
+   `mixer.injectClip` into `soundboardBus` (output / virtual mic + monitor). New
+   `audio.playCapture` registers in `activeRef` under `livepad:<id>`, so **cancel-all
+   stops it** and `cancelSound` is the stop button. The **per-card volume slider** is
+   live via `updateEntryVolume`, persisted in the manifest, and never baked into the WAV
+   or the saved clip.
+   **Progress: ✅ Done** *(`audio.playCapture(captureId, url, volume)` injects via
+   `injectClip` and registers in `activeRef` under `livepadPlaybackKey`, restarting if
+   that card is already playing, so cancel-all and `cancelSound` stop it. The provider
+   wraps it as `playCapture(capture)` / `stopCapture(id)`; `setCaptureVolume` updates the
+   live gain via `updateEntryVolume`. New `LivepadStore.setVolume` applies at once and
+   debounces the manifest write (250ms), and the store's mutators now change memory
+   before persisting so a slider tick can't be lost to an in-flight write. tsc clean.)*
+5. **Livepad dashboard tab + grid** *(feat)*. A third `AddTabButton` beside **Board**
+   and **Saved** (`boardTab` union + `"livepad"`), rendering new
+   `components/LivepadPanel.tsx`: source `Select`, arm toggle, length slider, Capture
+   button, bind setup, temp usage + limit, routing guidance, and the **grid** using the
+   Board/Saved column breakpoints. New `LivepadCard`: play/stop, **inline rename**,
+   duration + capture time, **Edited** / **Saved** badges, volume slider, Edit, Save,
+   Delete. **Delete is instant per card; Clear all asks for confirmation.** A small
+   **recording indicator also shows in `AppHeader`** while armed. Leaving the tab
+   unmounts the editor, so un-applied edits are lost (keeping it mounted hidden would
+   leave `ClipEditor`'s capture-phase Space/Del listeners live).
+   **Progress: ✅ Done** *(new `components/LivepadPanel.tsx`: controls card (source
+   `Select`, arm `Toggle`, Capture button, 1–120s slider, temp usage + a preset limit
+   `Select` of 50 MB–5 GB, Clear all with `confirm()`, routing note, hedged self-capture
+   warning, "Show device names") plus the grid using the Board/Saved breakpoints.
+   `LivepadCard` has play/stop, click-to-rename, duration + time, Edited/Saved chips,
+   volume, Edit, Save (disabled with a tooltip without upload permission), Delete.
+   `LivepadRecordingIndicator` sits in the `AppHeader` right cluster while armed.
+   `Dashboard` gained the third tab. The unsupported check uses `supportsContextSink`,
+   the capability the engine really needs, plus OPFS/Web Locks. Edit and Save only set
+   local `editing` state until tasks 7 + 8. tsc clean.)*
+6. **Capture triggers** *(feat)*. On-screen button, **keyboard chord** (also an
+   Electron global hotkey) and **VR bind**. Device-local `soundboard:livepadKeybind` /
+   `soundboard:livepadControllerBind` (per-profile `{index,quest}` map), routed by a
+   `LIVEPAD_CAPTURE_BIND` sentinel through all three `Dashboard.tsx` matchers, under
+   the same master keybinds / controllers switches as cancel-all; add the capture flags
+   to the matcher guards. Export `useLocalBind` / `useChordCapture` from
+   `VoiceChangerProvider`; `LivepadProvider` renders its own `VrBindPicker`. **Binds
+   capture only, never play.** Not armed = **toast only**, and a bind never arms.
+   **Bind captures play a short chime on the monitor only** (reuse `playReadyChime`,
+   device-local off switch `soundboard:livepadChime`).
+   **Progress: ✅ Done** *(`LIVEPAD_CAPTURE_BIND` routes through the in-app keyboard,
+   Electron global-hook and VR matchers, with the capture flags added to their guards.
+   `useLocalBind`/`useChordCapture` are exported from `VoiceChangerProvider`, and
+   `audio.playReadyChime` is exposed. `LivepadProvider` owns the binds, the chime switch
+   and its own `VrBindPicker`. Binds live in a separate `useLivepadBinds` context so
+   `Dashboard` doesn't re-render on every capture or volume tick. `triggerCapture` chimes
+   only after a capture really lands; not armed = the toast from `capture()`. New
+   `CaptureBindRow` in `LivepadPanel` (off switch persisted as `"off"`). tsc clean.)*
+7. **Capture editor** *(feat)*. Opens as a **full-width panel above the grid**. New
+   `components/CaptureEditor.tsx` wraps `ClipEditor`, which gains additive optional
+   props (`children` slot, `onConfirmEdit`, `secondaryAction`, external-preview props)
+   so uploads are unchanged. Edit pipeline (`renderCapture` in `lib/livepad.ts`), **in
+   this order:** kept segments + volume → **reverse** → **speed 0.5x–2x** in 0.05 steps
+   (`AudioBufferSourceNode.playbackRate`, tape-style, so **speed changes pitch**) →
+   **baked FX** (`EffectChainBuilder` + `FxPresetBar`, built through `createEffect`,
+   which widens to `BaseAudioContext`; `await ensureWorkletModules` on the offline
+   context) in an `OfflineAudioContext`, mono, at `min(sampleRate, 48000)` because lamejs
+   has no higher MPEG rates. With FX, add a 3s tail and trim trailing audio below -60
+   dBFS. **Preview renders the full result** and plays via `injectPreview` (monitor
+   only). **Apply overwrites the temp WAV with no revert**, marks the card Edited and
+   clears any Saved badge. Reject a result over 240s.
+   **Progress: ✅ Done** *(`ClipEditor` gained the additive `children`, `onConfirmEdit`,
+   `secondaryAction` and `externalPreview` props, and `onConfirm` became optional;
+   uploads are unchanged. `renderCapture` in `lib/livepad.ts` runs cuts + volume → reverse
+   → speed → FX in a mono `OfflineAudioContext` at `min(rate, 48000)`. With FX it adds a
+   3s tail, clipped so a max-length result still fits 240s, and trims only the silent
+   part of that tail, never the clip. `ensureWorkletModules` is awaited and allowed to
+   throw so a bypassed effect can't get baked in. `createEffect` now takes
+   `BaseAudioContext`. New `components/CaptureEditor.tsx` (reverse, 0.5–2x speed,
+   `FxPresetBar` + `EffectChainBuilder`; decoded audio held only while open).
+   `audio.playCapturePreview` injects monitor-only under `LIVEPAD_PREVIEW_KEY`.
+   `applyCaptureEdit` replaces the file, marks Edited, clears Saved and re-checks the
+   limit; `setEditingCapture` protects the open card from eviction. tsc clean.)*
+8. **Save as a soundboard clip** *(feat)*. The card's Save button **always opens the
+   editor**, with name (prefilled from the card name), required tags and Public shown
+   there. Saving renders the pipeline, encodes with `encodeMp3Segments`, and sends a
+   multipart `POST /api/sounds`, so `canUpload`, quotas and the required-tag gate apply.
+   **Save also applies the edits**, so the temp card matches what was uploaded. On
+   success: `markNewSaved`, `refresh`, a toast, **stay on the Livepad tab**, and the card
+   **stays with a Saved badge** until deleted, auto-removed, or the session ends. Without
+   upload permission, Save is disabled with a short explanation and Apply still works.
+   **Progress: ✅ Done** *(`CaptureEditor` gained `saveMode`: name, required tags and
+   Public, with "Save to library" as the confirm and "Apply only" as the secondary
+   action. Save renders the pipeline, encodes the result with `encodeMp3Segments`, and
+   posts multipart to `POST /api/sounds`, so permission, quotas and validation are the
+   server's existing ones. On success `onSaved` runs `markNewSaved` + `refresh` +
+   `refreshTags` and the tab doesn't change. If nothing was edited, the card only records
+   `savedSoundId` (new `markCaptureSaved`) and isn't marked Edited; otherwise it goes
+   through `applyCaptureEdit` with the sound id. The editor closes after a successful
+   upload even if the local update fails, so a retry can't upload twice. tsc clean.)*
+9. **Docs + typecheck** *(chore)*. Add `livepad_arm` / `livepad_capture` /
+   `livepad_save` to `lib/analytics.ts`, a Livepad section under **Key concepts**, the
+   `lib/` map entries, and a 1.5.0 entry under **Project status** when shipped. `tsc
+   --noEmit` clean (no lint per repo convention).
+   **Progress: ✅ Done** *(added `analytics.livepadArm`/`livepadCapture`/`livepadSave`
+   (arm fires on a user arm only, not a source-change restart; capture and save fire on
+   success). Added the Livepad section under Key concepts, the two `lib/` map entries,
+   and a Project status entry worded as not yet tested or shipped. tsc clean.)*
+
+### Tasks — 1.5.0 (Livepad native capture — appended)
+
+Same version (1.5.0), appended: Livepad ships with native capture from day one (owner
+decision 2026-11-10). **This supersedes, for Livepad only, the 1.5.0 "capture devices
+only / no native code" lock and the "native or per-app loopback" out-of-scope item.**
+Virtual Mic is unchanged. Build order is top to bottom; task 10 decides whether per-app
+capture can ship as designed.
+
+**Owner decisions (locked 2026-11-10):**
+- **Sources:** individual apps + playback devices + the existing recording devices. App
+  and playback sources are desktop-only; the web version keeps recording devices only.
+  No "everything except Soundboard" source.
+- **One source at a time**, one rolling buffer, as before. **Keep mono 16-bit.**
+- **Own C++ helper** (`audio-capture.exe`), built like vr-bridge with no new dependency.
+  Per-app uses WASAPI process loopback (`ActivateAudioInterfaceAsync`, include-process-
+  tree); playback devices use `AUDCLNT_STREAMFLAGS_LOOPBACK`.
+- **Consent:** a native Electron dialog (not page UI) names the source the first time it
+  is armed. Approval is remembered on this PC, stored by the main process per server
+  origin + source, with a way to forget approvals.
+- **App list:** apps with Windows audio sessions, updating automatically while Livepad
+  is open (session notifications), no refresh button.
+- **Source lost while armed:** stay armed and reattach when the same exe or device
+  returns. A toast states each change ("waiting for X", "reattached to X"), and the Livepad
+  and header indicators show a distinct waiting state instead of Recording.
+
+**Design notes:** the helper runs only while it's needed, and records only while armed.
+The new bridge must reject calls unless the sender's origin is the configured server,
+because `preload.js` also runs on Discord's login pages. Playback-device capture includes
+the soundboard's own clips if they play there, so the self-capture note applies. Microsoft
+documents process loopback for build 20348+, while other projects report it working from
+Windows 10 2004 (19041), so availability is checked at runtime.
+
+10. **Feasibility spike** *(do first)*. Minimal helper proving per-app and playback-device
+    capture on the owner's Windows 10 build 19045, including format negotiation.
+    **Progress: ✅ Done (passed on build 19045)** *(Process loopback via
+    `ActivateAudioInterfaceAsync` with include-process-tree works here. `IAudioClient::Initialize`
+    accepts 48 kHz mono 16-bit directly on both paths with `AUTOCONVERTPCM`, so no
+    resampling in our code. Isolation: two tone processes on one endpoint, each per-app capture
+    held only its own tone, with the other at -146 dBFS or lower, while a playback-device capture of
+    that endpoint held both. Long runs (305s per-app): a test tone and real Spotify audio
+    both had 0 discontinuity flags and 0 timestamp errors, max 14 ms between packets, and
+    frame count matching wall time; the tone also had 0 glitches in a sample-level scan.
+    The owner later confirmed a real game captures cleanly. Facts the helper depends on: process-loopback streams never
+    report device position (always stuck) and `GetBufferSize` returns garbage, so neither is
+    used; a dead target gives no error (activating a dead PID even succeeds and returns dither
+    forever), so loss is detected from a process handle; an idle app keeps delivering packets but
+    an idle playback device delivers none, so the helper fills that gap with silence.)*
+11. **`audio-capture.exe`** *(feat)*. Session listing + change events, one capture at a
+    time, framed binary PCM on stdout, CMake target, `build-native.js` + extraResources
+    staging, CI build.
+    **Progress: ✅ Done** *(`electron/native/audio-capture`: one exe, static CRT, GUI subsystem so
+    no console flashes. stdin takes `start <key>` / `stop` / `list` lines; stdout is framed binary
+    (type byte, 3 reserved, u32 length) carrying JSON events or 48 kHz mono Int16 PCM in 2048-frame
+    chunks. Exits on stdin EOF or a broken pipe, so it can't outlive Electron. App list changes come
+    from `IAudioSessionNotification`, `IMMNotificationClient` and a wait on each listed process;
+    these proved reliable in testing (new app listed in 0.24 s, exit in 0.18 s), so no polling fallback
+    was added. Apps are keyed by exe and captured from the topmost same-exe ancestor so multi-process
+    apps are covered whole. `start` only resolves keys from its own list. An idle playback device gets
+    silence fill so the buffer stays wall-clock accurate. `perApp` in `hello` is build >= 19041 plus a real
+    activation attempt. `build-native.js` builds both sidecars, `resources/audio-capture` ships via
+    extraResources, and CI's `release:win` already runs `build:native`. Exercised through its
+    real protocol. Limit: processes it can't query (services, some protected games) don't appear.)*
+12. **Electron bridge + consent** *(feat)*. Spawn/stop the helper, forward PCM by IPC,
+    origin-checked preload API, native approval dialog + stored approvals + forget option.
+    **Progress: ✅ Done** *(`electron/audio-capture.js` runs the helper only while the picker is open or a
+    source is armed, restarting with backoff and resuming capture after a crash. Every
+    `soundboard:nativeCapture:*` handler checks the sender is the main frame of `currentOrigin`, and
+    events and PCM are only sent while the page is on that origin. Any real navigation or renderer crash
+    stops capture. App keys reach the page as a hash, so exe paths (and the Windows user name) don't.
+    Armed keys must be in the helper's current list. Approvals: native `showMessageBox` naming the source
+    and server, default button "Don't allow", stored per origin + source in
+    `userData/livepad-capture-approvals.json`, with a 2s retry block after a refusal; File > Forget
+    Livepad capture approvals clears them and stops any recording. Tested in the real Electron main +
+    preload against a local page (17 checks, including wrong-origin refusal); the dialog itself
+    needs a person to click.)*
+13. **Livepad integration** *(feat)*. Native tap feeding `PcmRing`, grouped source picker,
+    waiting/reattach states + toasts, hidden per-app option where unsupported.
+    **Progress: ✅ Done** *(new `lib/livepad-native.ts` holds the bridge types and id helpers; a native source
+    id is `native:<key>`. `LivepadProvider.openNativeTap` builds a `LivepadTap` at 48 kHz and PCM goes into
+    the same `PcmRing`, keeping the buffer across a gap with no padding. New `waitingFor` state, a toast on
+    each change, and amber "Waiting for X" / "Livepad waiting" indicators. `Select` gained an optional
+    `group` heading for Apps / Playback devices / Recording devices; the web build shows recording
+    devices only, ungrouped. Where per-app isn't supported, apps are hidden and a note explains why. An
+    armed source that has gone stays in the picker as "(not running)". The self-capture note now compares a
+    playback device's name with the output and monitor labels. Typechecked; the real page UI was
+    not driven here because it needs a Discord login.)*
+14. **Docs + typecheck** *(chore)*.
+    **Progress: ✅ Done** *(this file, `electron/README.md`, the `audio-mixer.ts` diagram and the
+    `virtual-mic-capture` memory updated. `tsc --noEmit` clean.)*
+
+15. **Bound the helper's version-string read** *(security hardening, from the review below)*.
+    `displayName` in `electron/native/audio-capture/src/main.cpp` built a `std::wstring` from the
+    exe's `FileDescription` by reading to a terminator, so a malformed version resource could make
+    it read past the end of the text. The copy now stays inside the buffer we allocated, using the
+    smaller of the reported length and the room left, and stops at the first terminator. Don't use
+    `std::wstring(text, textLen)` alone: the reported length normally includes the terminator, and
+    it comes from the same untrusted resource.
+    **Progress: ✅ Done** *(built with `build:native`; the staged helper still lists correct app
+    names through its real protocol, with no embedded NUL. Not tested against a deliberately
+    malformed exe.)*
+
+**Security review (2026-11-10, static reading only, nothing exploited):** no HIGH or MEDIUM issue
+in the Livepad and native-capture changes. Checked and held: origin checks on every
+`soundboard:nativeCapture:*` handler and on outbound events and PCM; capture stopping on navigation
+or renderer crash; approval keys and dialog text coming only from the helper's own list and the
+main process; no page-supplied string reaching the helper's stdin; the shell-less spawn; exe paths
+staying out of the page; the helper's buffer handling; OPFS file names staying in their folder; and
+saves going through the existing `POST /api/sounds` checks. `LivepadPanel.tsx`,
+`LivepadRecordingIndicator.tsx` and the `ClipEditor`, `Dashboard`, `audio-mixer`, `audio-output` and
+`voice-fx` diffs were only searched for dangerous sinks, not read line by line.
+
+**Accepted limits from that review** (below the reporting bar, by design unless the owner reopens them):
+- **Silent re-arm:** once a source is approved, XSS on or a compromise of the approved server could
+  record it again with no native prompt.
+- **Source list before approval:** the configured server sees the names of apps with audio sessions
+  and device names as soon as the picker opens, before any approval.
+- **Process-tree capture:** approving a launcher also records its child processes, including ones
+  with other exe names, so the dialog name can understate what is captured.
+- **Unsalted key hash:** public app keys are unsalted truncated hashes, so a page could confirm a
+  guessed exe path offline. The impact is negligible.
+
+**Owner testing (2026-11-10):** real game capture, the approval dialog, forgetting approvals,
+waiting/reattach when an app closes, the self-capture note, and the capture editor changes
+all pass on Windows 10 build 19045.
+
+**Still open before shipping 1.5.0:**
+- **Playback device lost while armed is untested.** The owner's playback devices are all
+  virtual audio cables, so this couldn't be tried by disabling or unplugging one. The helper
+  treats a stream failure as lost and retries, but only app exit and return have been run.
+  Test it on a machine with a physical device that can be disabled.
+- **The installer hasn't been run.** A local `electron-builder --win --publish never` build
+  ships `resources/audio-capture/audio-capture.exe`, and the unpacked packaged app passed the
+  bridge checks (helper start, PCM, origin refusal, helper stops on reload and quit). Installing
+  would replace the owner's current app, whose saved server is production, so wait until the
+  1.5.0 web app is deployed.
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions

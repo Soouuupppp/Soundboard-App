@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type DragEvent as ReactDragEvent } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown, Youtube, Gamepad2, Tag, Pencil, Plus, GripVertical, ListOrdered, LayoutGrid, Bookmark, Search, Check, Sliders, ArrowUp, ArrowDown } from "lucide-react";
+import { Play, Trash2, Upload, Keyboard, Globe, Lock, Volume2, Settings, X, Square, Mic, ChevronDown, Youtube, Gamepad2, Tag, Pencil, Plus, GripVertical, ListOrdered, LayoutGrid, Bookmark, Search, Check, Sliders, ArrowUp, ArrowDown, Radio } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { type AudioOutput, type AiConfig } from "@/lib/audio-output";
 import {
@@ -28,6 +28,8 @@ import { VrBindPicker } from "@/components/VrBindPicker";
 import { VrBindChips } from "@/components/VrBindChips";
 import { SoundEffectsPanel } from "@/components/SoundEffectsModal";
 import { AiMainSection } from "@/components/AiVoicePanel";
+import { LivepadPanel } from "@/components/LivepadPanel";
+import { useLivepadBinds } from "@/components/LivepadProvider";
 import { Popover } from "@/components/Popover";
 import { analytics } from "@/lib/analytics";
 import { TagChips, TagEditor } from "@/components/Tags";
@@ -93,6 +95,9 @@ const AI_PTT_BIND = "__aiPtt__";
 // (audio.replayLastConversion), routed through the same matchers (one-shot).
 const AI_REPLAY_BIND = "__aiReplay__";
 
+// Sentinel entryId for the Livepad capture hotkey. Captures only, never plays.
+const LIVEPAD_CAPTURE_BIND = "__livepadCapture__";
+
 export function Dashboard({
   limits,
   canUpload,
@@ -128,7 +133,7 @@ export function Dashboard({
   const { controllerProfile, setControllerProfile, vrConnected, hasDesktop } = useVr();
 
   // --- Board section: Saved (full library) vs Board (the playable subset) ---
-  const [boardTab, setBoardTab] = useState<"board" | "saved">("board");
+  const [boardTab, setBoardTab] = useState<"board" | "saved" | "livepad">("board");
   const [reordering, setReordering] = useState(false);
   const [savedTagFilter, setSavedTagFilter] = useState<string[]>([]);
   // Saved tab: limit to the user's own uploads (exclude saved references to
@@ -239,6 +244,13 @@ export function Dashboard({
     capturingAiReplay,
     capturingAiReplayVr,
   } = useVoiceChanger();
+  const {
+    keybind: livepadKeybind,
+    controllerBind: livepadControllerBind,
+    capturingKey: capturingLivepad,
+    capturingVr: capturingLivepadVr,
+    triggerCapture: triggerLivepadCapture,
+  } = useLivepadBinds();
 
   // All tag names in the system — feeds the per-card tag autocomplete.
   const [allTags, setAllTags] = useState<string[]>([]);
@@ -444,6 +456,18 @@ export function Dashboard({
         });
       }
     }
+    if (livepadKeybind) {
+      const { mods, keys } = parseKeyCombo(livepadKeybind);
+      if (keys.length > 0) {
+        binds.push({
+          raw: canonicalKeyCombo(mods, keys),
+          mods,
+          tokens: new Set(keys),
+          entryId: LIVEPAD_CAPTURE_BIND,
+          soundId: "",
+        });
+      }
+    }
     // AI replay hotkey — one-shot, routed via its own sentinel.
     if (aiReplayKeybind) {
       const { mods, keys } = parseKeyCombo(aiReplayKeybind);
@@ -458,7 +482,7 @@ export function Dashboard({
       }
     }
     return binds;
-  }, [entries, keybindsEnabled, keybindEnabled, cancelAllKeybind, aiPttKeybind, aiReplayKeybind]);
+  }, [entries, keybindsEnabled, keybindEnabled, cancelAllKeybind, aiPttKeybind, aiReplayKeybind, livepadKeybind]);
 
   // Canonical combo string -> entry, for Electron global-hook lookups + registration.
   const keybindByCombo = useMemo(() => {
@@ -478,7 +502,7 @@ export function Dashboard({
       if (!token || isModToken(token)) return; // modifiers tracked via flags only
       if (ev.repeat) return; // ignore auto-repeat
       heldKeysRef.current.add(token);
-      if (capturingFor || capturingCancelAll || capturingAiPtt || capturingAiReplay) return; // capture handles its own keys
+      if (capturingFor || capturingCancelAll || capturingAiPtt || capturingAiReplay || capturingLivepad) return; // capture handles its own keys
       const mods = modsFromEvent(ev);
       const candidates = keyBinds.filter((b) => sameMods(b.mods, mods));
       const best = pickLargest(heldKeysRef.current, token, candidates);
@@ -489,6 +513,7 @@ export function Dashboard({
           // Hold: start on the completing key, stop when that key releases.
           if (aiPttKeyRef.current === null) { aiPttKeyRef.current = token; startAiPtt(); }
         } else if (best.entryId === AI_REPLAY_BIND) replayLastConversion();
+        else if (best.entryId === LIVEPAD_CAPTURE_BIND) triggerLivepadCapture();
         else playEntry(best.entryId, best.soundId);
       }
     }
@@ -511,7 +536,7 @@ export function Dashboard({
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", clearHeld);
     };
-  }, [keyBinds, capturingFor, capturingCancelAll, capturingAiPtt, capturingAiReplay, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion]);
+  }, [keyBinds, capturingFor, capturingCancelAll, capturingAiPtt, capturingAiReplay, capturingLivepad, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture]);
 
   // Capture a chord for the cancel-all keybind: hold keys together, release to
   // confirm (mirrors the per-clip capture in SoundCard). Escape cancels.
@@ -565,6 +590,7 @@ export function Dashboard({
         // hold even while unfocused). startPtt is idempotent so a repeat is safe.
         else if (hit.entryId === AI_PTT_BIND) startAiPtt();
         else if (hit.entryId === AI_REPLAY_BIND) replayLastConversion();
+        else if (hit.entryId === LIVEPAD_CAPTURE_BIND) triggerLivepadCapture();
         else playEntry(hit.entryId, hit.soundId);
       }
     }
@@ -582,7 +608,7 @@ export function Dashboard({
       window.removeEventListener("soundboard:globalKey", onGlobal as EventListener);
       window.removeEventListener("soundboard:globalKeyUp", onGlobalUp as EventListener);
     };
-  }, [keybindByCombo, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion]);
+  }, [keybindByCombo, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture]);
 
   // Tell the Electron host (if any) which keybinds to register globally.
   useEffect(() => {
@@ -625,9 +651,11 @@ export function Dashboard({
       // AI replay controller bind (one-shot).
       const rep = parseVrBind(getProfileBind(aiReplayControllerBind, controllerProfile));
       if (rep) binds.push({ id: AI_REPLAY_BIND, bind: rep });
+      const lp = parseVrBind(getProfileBind(livepadControllerBind, controllerProfile));
+      if (lp) binds.push({ id: LIVEPAD_CAPTURE_BIND, bind: lp });
     }
     vrMatcherRef.current!.setBinds(binds);
-  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, aiPttControllerBind, aiReplayControllerBind, controllerProfile, holdMsByEntry, cancelAllHoldMs]);
+  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, aiPttControllerBind, aiReplayControllerBind, livepadControllerBind, controllerProfile, holdMsByEntry, cancelAllHoldMs]);
 
   // Feed press/release edges to the matcher; play the most-specific bind that
   // completes. Skipped while the bind editor is open (and the matcher is reset
@@ -635,12 +663,13 @@ export function Dashboard({
   useEffect(() => {
     function onVrInput(ev: Event) {
       const detail = (ev as CustomEvent<{ token: string; pressed: boolean }>).detail;
-      if (!detail?.token || capturingVrFor || capturingCancelAllVr || capturingAiPttVr || capturingAiReplayVr) return;
+      if (!detail?.token || capturingVrFor || capturingCancelAllVr || capturingAiPttVr || capturingAiReplayVr || capturingLivepadVr) return;
       const edge: VrEdge = detail.pressed ? "down" : "up";
       const hitId = vrMatcherRef.current!.feed(detail.token, edge, performance.now());
       if (hitId === CANCEL_ALL_BIND) cancelAll();
       else if (hitId === AI_PTT_BIND) { vrPttActiveRef.current = true; startAiPtt(); }
       else if (hitId === AI_REPLAY_BIND) replayLastConversion();
+      else if (hitId === LIVEPAD_CAPTURE_BIND) triggerLivepadCapture();
       else if (hitId) {
         const soundId = vrSoundByEntry.get(hitId);
         if (soundId) playEntry(hitId, soundId);
@@ -654,11 +683,11 @@ export function Dashboard({
     }
     window.addEventListener("soundboard:vrInput", onVrInput as EventListener);
     return () => window.removeEventListener("soundboard:vrInput", onVrInput as EventListener);
-  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr, vrSoundByEntry, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion]);
+  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr, capturingLivepadVr, vrSoundByEntry, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture]);
 
   useEffect(() => {
     vrMatcherRef.current!.reset();
-  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr]);
+  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr, capturingLivepadVr]);
 
   // (SteamVR status + hasDesktop now come from VrProvider via useVr.)
 
@@ -1115,6 +1144,12 @@ export function Dashboard({
               active={boardTab === "saved"}
               onClick={() => setBoardTab("saved")}
             />
+            <AddTabButton
+              icon={<Radio size={18} />}
+              label="Livepad"
+              active={boardTab === "livepad"}
+              onClick={() => setBoardTab("livepad")}
+            />
             {hasDesktop && (
               <span
                 className={`chip ${vrConnected ? "text-emerald-300" : "text-muted"}`}
@@ -1164,6 +1199,19 @@ export function Dashboard({
             )}
           </div>
         </div>
+
+        {boardTab === "livepad" && (
+          <LivepadPanel
+            canUpload={canUpload}
+            allTags={allTags}
+            maxFileSize={limits.maxFileSize}
+            onSaved={(soundId) => {
+              markNewSaved(soundId);
+              void refresh();
+              void refreshTags();
+            }}
+          />
+        )}
 
         {/* --- Board tab: the playable subset, draggable to reorder --- */}
         {boardTab === "board" && (

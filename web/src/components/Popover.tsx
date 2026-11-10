@@ -52,7 +52,9 @@ export function Popover({
       // document.body — outside this ref's subtree). Without this, picking a
       // Select option reads as an outside click and closes the popover on
       // mousedown, before the option's click→commit can apply.
-      if (ref.current?.contains(t) || panelRef.current?.contains(t) || t?.closest?.(".popover")) return;
+      // [data-keep-popover] marks a modal opened from inside a popover: closing the
+      // popover would unmount the modal mid-click.
+      if (ref.current?.contains(t) || panelRef.current?.contains(t) || t?.closest?.(".popover, [data-keep-popover]")) return;
       onClose();
     };
     const onKey = (e: KeyboardEvent) => {

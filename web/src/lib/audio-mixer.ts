@@ -20,6 +20,9 @@
 //   micBus ─► monitorMicGate(monitor-mic toggle) ────────────────────►
 //   Preview clip ───────────────────────────────────────────────────►   (previews connect to monitorBus ONLY — never the cable/output)
 //
+//   Livepad source ─► capture worklet ─► GainNode(0) ─► ctx.destination   (a separate tap: joins no bus and is never audible; the zero gain only keeps the worklet pulled, its PCM goes to the main thread)
+//   Livepad native source (desktop: app or playback device) ─► audio-capture.exe ─► Electron IPC ─► PcmRing   (never enters this graph; see LivepadProvider)
+//
 // soundboardMonitorGate is 0 when the monitor device == the output device (the
 // common default/default case) so a board play isn't heard twice on one device,
 // and 1 when they differ so you still monitor the soundboard on a SEPARATE device.
@@ -51,6 +54,7 @@ import {
   createEffect,
   chainNeedsWorklet,
   ensureWorkletModules,
+  ensureWorkletModule,
 } from "./voice-fx";
 
 export type MixerInputState = { deviceId: string; enabled: boolean; volume: number };
@@ -95,6 +99,13 @@ export type InjectedClip = {
   gain: GainNode;
   stop: () => void;
 };
+
+export type LivepadTap = {
+  sampleRate: number;
+  stop: () => void;
+};
+
+const LIVEPAD_WORKLET_URL = "/worklets/livepad-capture-processor.js";
 
 const mlog = (...args: unknown[]) =>
   console.log("%c[sb-mixer]", "color:#22c55e;font-weight:bold", ...args);
@@ -181,6 +192,8 @@ export class MicMixer {
   private monitorMicOn = false;
   // Serialize source reconciliation so overlapping calls can't double-open one.
   private syncChain: Promise<unknown> = Promise.resolve();
+  // Livepad records one source at a time.
+  private livepadTap: LivepadTap | null = null;
 
   // Monitor-latency watchdog (see MONITOR_* constants above). The interval
   // detects long wall-clock gaps (sleep/throttle); the statechange listener
@@ -558,8 +571,9 @@ export class MicMixer {
   }
 
   // Open a capture device, preferring an exact deviceId match but falling back to
-  // a relaxed (ideal) constraint when the driver rejects `exact`.
-  private async openDeviceStream(deviceId: string): Promise<MediaStream> {
+  // a relaxed (ideal) constraint when the driver rejects `exact`. `exactOnly` skips
+  // that fallback, for callers where getting a different device would be wrong.
+  private async openDeviceStream(deviceId: string, exactOnly = false): Promise<MediaStream> {
     const base = { echoCancellation: false, noiseSuppression: false, autoGainControl: false } as const;
     try {
       return await navigator.mediaDevices.getUserMedia({
@@ -567,7 +581,7 @@ export class MicMixer {
       });
     } catch (e) {
       const name = (e as Error)?.name;
-      if (name !== "OverconstrainedError" && name !== "NotFoundError") throw e;
+      if (exactOnly || (name !== "OverconstrainedError" && name !== "NotFoundError")) throw e;
       mwarn(
         "exact deviceId rejected for",
         deviceId.slice(0, 8),
@@ -650,6 +664,68 @@ export class MicMixer {
         mwarn("could not open input", d.deviceId.slice(0, 8), (e as Error)?.name, (e as Error)?.message);
       }
     }
+  }
+
+  // Open a capture line for Livepad and stream its mono PCM to `onChunk`. Opens
+  // its own MediaStream, independent of the Virtual Mic inputs, and touches no bus.
+  // `onChunk` must copy the samples: the buffer goes back to the worklet afterwards.
+  // `onEnded` fires if the device disappears, not on stop().
+  async startLivepadTap(
+    deviceId: string,
+    onChunk: (pcm: Int16Array) => void,
+    onEnded: () => void,
+  ): Promise<LivepadTap> {
+    const ctx = this.ctx;
+    if (!ctx) throw new Error("The audio engine isn't running.");
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    await ensureWorkletModule(ctx, LIVEPAD_WORKLET_URL);
+    // Exact only: the relaxed fallback could quietly record the user's default mic
+    // when they believe they're recording a game or chat line.
+    const stream = await this.openDeviceStream(deviceId, true);
+    if (this.ctx !== ctx) {
+      stream.getTracks().forEach((t) => t.stop());
+      throw new Error("The audio engine stopped.");
+    }
+    this.livepadTap?.stop();
+
+    const src = ctx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(ctx, "livepad-capture-processor", {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+      channelCountMode: "explicit",
+      channelInterpretation: "speakers",
+    });
+    const silent = ctx.createGain();
+    silent.gain.value = 0;
+
+    node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
+      onChunk(new Int16Array(e.data));
+      node.port.postMessage(e.data, [e.data]);
+    };
+    const track = stream.getAudioTracks()[0];
+    track?.addEventListener("ended", onEnded);
+
+    src.connect(node).connect(silent).connect(ctx.destination);
+
+    let stopped = false;
+    const tap: LivepadTap = {
+      sampleRate: ctx.sampleRate,
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        track?.removeEventListener("ended", onEnded);
+        node.port.onmessage = null;
+        node.port.postMessage("stop"); // otherwise the processor stays alive after disconnect
+        stream.getTracks().forEach((t) => t.stop());
+        try { src.disconnect(); } catch { /* ignore */ }
+        try { node.disconnect(); } catch { /* ignore */ }
+        try { silent.disconnect(); } catch { /* ignore */ }
+        if (this.livepadTap === tap) this.livepadTap = null;
+      },
+    };
+    this.livepadTap = tap;
+    return tap;
   }
 
   setInputVolume(deviceId: string, volume: number) {
@@ -779,6 +855,8 @@ export class MicMixer {
     }
     this.onCtxStateChange = null;
     this.lastCtxState = null;
+
+    this.livepadTap?.stop();
 
     for (const node of this.inputs.values()) {
       node.stream.getTracks().forEach((t) => t.stop());

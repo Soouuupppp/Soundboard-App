@@ -14,6 +14,7 @@ import { AudioProvider } from "@/components/AudioProvider";
 import { ProfileProvider } from "@/components/ProfileProvider";
 import { VoiceChangerProvider } from "@/components/VoiceChangerProvider";
 import { VrProvider } from "@/components/VrProvider";
+import { LivepadProvider } from "@/components/LivepadProvider";
 import { NoticeBanners, type MotdSeverity } from "@/components/NoticeBanners";
 import { TosGate } from "@/components/TosGate";
 import { getAppSettings } from "@/lib/app-settings";
@@ -208,7 +209,11 @@ gtag('config', ${JSON.stringify(GA_ID)}${gaUserId ? `, { user_id: ${JSON.stringi
             <AudioProvider>
               <VoiceChangerProvider>
                 <VrProvider>
-                  <ToastProvider>{shell}</ToastProvider>
+                  <ToastProvider>
+                    <LivepadProvider key={session?.user?.id} userId={session?.user?.id ?? ""}>
+                      {shell}
+                    </LivepadProvider>
+                  </ToastProvider>
                 </VrProvider>
               </VoiceChangerProvider>
             </AudioProvider>

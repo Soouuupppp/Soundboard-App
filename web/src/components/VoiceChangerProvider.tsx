@@ -37,7 +37,7 @@ type VoiceChangerCtx = {
 
 // A device-local string bind (localStorage key) with state + setter + a one-time
 // load. Used for both the PTT and Replay keyboard/controller binds.
-function useLocalBind(key: string): [string | null, (v: string | null) => void] {
+export function useLocalBind(key: string): [string | null, (v: string | null) => void] {
   const [val, setVal] = useState<string | null>(null);
   useEffect(() => {
     try {
@@ -57,7 +57,7 @@ function useLocalBind(key: string): [string | null, (v: string | null) => void] 
 
 // Capture a keyboard chord into `setCombo` while `capturing` is true (largest
 // chord held, confirmed on full release). Escape cancels. Shared by PTT + Replay.
-function useChordCapture(
+export function useChordCapture(
   capturing: boolean,
   setCapturing: (v: boolean) => void,
   setCombo: (combo: string) => void,

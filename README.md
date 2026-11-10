@@ -2,7 +2,7 @@
 
 > 🎉 **Public & free instance available at [soundboard.soouuupppp.com](https://soundboard.soouuupppp.com)** — log in with Discord and start building your board, no setup required.
 
-Discord-authenticated soundboard dashboard. Upload mp3s (or import straight from YouTube), trim them in a built-in waveform clip editor, tag and organize them in a **Saved** library, promote a curated subset onto a playable **Board**, assign keyboard **and Valve Index VR controller** binds, and share clips publicly for others to browse and add to their own library. **Virtual Mic mode** mixes your mics and the soundboard into a virtual cable so clips come through as your mic in games and calls. Ships with a Windows Electron wrapper that registers OS-level global shortcuts (and listens to VR controllers via a native OpenVR sidecar) so binds work even when the browser isn't focused.
+Discord-authenticated soundboard dashboard. Upload mp3s (or import straight from YouTube), trim them in a built-in waveform clip editor, tag and organize them in a **Saved** library, promote a curated subset onto a playable **Board**, assign keyboard **and Valve Index VR controller** binds, and share clips publicly for others to browse and add to their own library. **Virtual Mic mode** mixes your mics and the soundboard into a virtual cable so clips come through as your mic in games and calls. **Livepad** keeps a rolling buffer of one audio source and snapshots the last few seconds into a playable, editable card. Ships with a Windows Electron wrapper that registers OS-level global shortcuts (and listens to VR controllers via a native OpenVR sidecar) so binds work even when the browser isn't focused.
 
 **Author:** Soouuupppp · [soouuupppp.com](https://soouuupppp.com) · [soouuuppppgames@gmail.com](mailto:soouuuppppgames@gmail.com) · [github.com/Soouuupppp](https://github.com/Soouuupppp)
 
@@ -93,10 +93,19 @@ Set `NEXT_PUBLIC_GA_MEASUREMENT_ID` (a GA4 id) to enable Google Analytics; leave
 Toggle it on the dashboard to route sounds into a call or game as if they were your mic.
 
 - **Sources → virtual mic.** Every capture device Windows reports — mics, virtual cables (VB-Audio, VoiceMeeter), GoXLR mix buses — plus the soundboard get summed into one **output device**. Pick that device's recording side as your mic in-game and the mix comes through.
-- **Want an app's audio in the mic?** Send it to a virtual cable or GoXLR bus in Windows; it then shows up here as a capture device. That's the only routing path — there's no system loopback or per-app capture (a deliberate choice; see notes below).
+- **Want an app's audio in the mic?** Send it to a virtual cable or GoXLR bus in Windows; it then shows up here as a capture device. That's the only routing path for Virtual Mic — it has no system loopback or per-app capture (a deliberate choice; see notes below).
 - **Monitor.** Choose one device to hear locally and tick which live lines play on it. Your own mic stays off the monitor by default so you don't hear yourself echoed back.
 
 It's all in the browser (Web Audio API + `setSinkId`), so it works on the website too — no Electron required. Mixing into a virtual cable does need cables/GoXLR set up on Windows, though.
+
+## Livepad
+
+A third dashboard tab for grabbing audio that just happened.
+
+- **Source.** Pick one recording device or cable. The desktop app can also record an individual app or a playback device, and asks for approval the first time you use each one.
+- **Capture.** Turn it on and it keeps a rolling buffer, up to 120 seconds, only while armed. Press the on-screen button, a keybind or a VR bind to snapshot the last 1–120 seconds into a temp card.
+- **Use it.** Cards play like Board clips. You can cut, reverse, change speed and bake in effects, then save a clip to your Saved library through the normal upload rules.
+- **Temp files.** Captures stay in the browser's private storage under a size limit you set. They are deleted on sign-out and when the desktop app closes. Files left by a closed browser tab or a crash are cleared on the next launch.
 
 ## Storage layout
 

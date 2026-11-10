@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Play, Pause, Check, X, Volume2, Scissors, RotateCcw } from "lucide-react";
 import WaveSurfer from "wavesurfer.js";
 import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js";
@@ -8,6 +8,9 @@ import { encodeMp3Segments, keepSegments, mergeRanges } from "@/lib/audio-edit";
 import { useToast } from "@/components/Toast";
 
 type Range = { start: number; end: number };
+
+// The cut + volume state, for callers that render the export themselves.
+export type ClipEdit = { segments: Range[]; volume: number };
 
 // Pre-upload editor: a wavesurfer waveform with the Regions plugin for a
 // multi-segment **delete** model — you mark spans to remove and the export is
@@ -23,6 +26,12 @@ export function ClipEditor({
   onConfirmBlocked,
   onConfirm,
   onCancel,
+  onDirtyChange,
+  toolbarExtra,
+  children,
+  onConfirmEdit,
+  secondaryAction,
+  externalPreview,
 }: {
   buffer: AudioBuffer;
   objectUrl: string;
@@ -33,8 +42,30 @@ export function ClipEditor({
   // Fired when the user clicks the confirm button while it's blocked by
   // confirmDisabled — lets the parent reveal the missing required field.
   onConfirmBlocked?: () => void;
-  onConfirm: (blob: Blob) => void;
+  onConfirm?: (blob: Blob) => void;
   onCancel: () => void;
+  /** Called when cuts or volume start or stop differing from the original. */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Extra controls shown right after the Delete span button. */
+  toolbarExtra?: ReactNode;
+  // Extra controls, rendered between the volume slider and the action row.
+  children?: ReactNode;
+  // Replaces the mp3 export: the caller gets the edit and renders it itself.
+  onConfirmEdit?: (edit: ClipEdit) => void;
+  // A second action beside confirm, handed the same edit.
+  secondaryAction?: {
+    label: string;
+    disabled?: boolean;
+    title?: string;
+    onBlocked?: () => void;
+    onClick: (edit: ClipEdit) => void;
+  };
+  // Replaces the built-in preview, for callers whose result differs from the cuts.
+  externalPreview?: {
+    playing: boolean;
+    onToggle: (edit: ClipEdit) => void;
+    onStop: () => void;
+  };
 }) {
   const dur = buffer.duration;
   const toast = useToast();
@@ -63,6 +94,10 @@ export function ClipEditor({
   cutsRef.current = cuts;
   const volRef = useRef(1);
   volRef.current = vol;
+  const clipDirty = cuts.length > 0 || vol !== 1;
+  useEffect(() => onDirtyChange?.(clipDirty), [clipDirty, onDirtyChange]);
+  const externalPreviewRef = useRef(externalPreview);
+  externalPreviewRef.current = externalPreview;
   // Web Audio preview: the kept segments are concatenated and played through our
   // own AudioContext (sample-accurate, identical to the export) instead of seeking
   // the media element, whose mp3 seeks snap to frame boundaries and drift.
@@ -179,6 +214,13 @@ export function ClipEditor({
   }
 
   function startPreview() {
+    if (externalPreviewRef.current) {
+      externalPreviewRef.current.onToggle({
+        segments: keepSegments(cutsRef.current, dur),
+        volume: volRef.current,
+      });
+      return;
+    }
     if (sourceRef.current) { stopPreview(); return; } // toggle: already playing
 
     const segs = keepSegments(cutsRef.current, dur);
@@ -241,6 +283,7 @@ export function ClipEditor({
   // can't keep playing stale segments.
   useEffect(() => {
     stopPreview();
+    externalPreviewRef.current?.onStop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cuts]);
 
@@ -261,8 +304,13 @@ export function ClipEditor({
     function onKey(ev: KeyboardEvent) {
       const target = ev.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      // Keys pressed inside a dropdown belong to that dropdown.
+      if (target?.closest?.(".popover, [data-keep-popover]")) return;
       const k = ev.key;
       if (k === " " || k === "Spacebar") {
+        // Only a fresh, plain Space previews. A held key or a hotkey combo that is
+        // still down when the editor opens must not start playback by itself.
+        if (ev.repeat || ev.ctrlKey || ev.altKey || ev.shiftKey || ev.metaKey) return;
         ev.preventDefault();
         ev.stopPropagation();
         startPreview();
@@ -285,13 +333,18 @@ export function ClipEditor({
   const keptDur = keep.reduce((n, s) => n + (s.end - s.start), 0);
   const working = busy || encoding;
   const nothingLeft = keptDur < 0.05;
+  const previewPlaying = externalPreview ? externalPreview.playing : playing;
 
   async function confirm() {
     if (nothingLeft) return;
+    if (onConfirmEdit) {
+      onConfirmEdit({ segments: keep, volume: vol });
+      return;
+    }
     setEncoding(true);
     await new Promise((r) => setTimeout(r, 0)); // let the spinner paint
     try {
-      onConfirm(encodeMp3Segments({ buffer, segments: keep, volume: vol }));
+      onConfirm?.(encodeMp3Segments({ buffer, segments: keep, volume: vol }));
     } catch {
       toast.error("Couldn't process the clip — try a shorter selection or re-importing.");
     } finally {
@@ -364,11 +417,13 @@ export function ClipEditor({
         <span className="text-xs text-muted w-8 text-right">{Math.round(vol * 100)}</span>
       </div>
 
+      {children}
+
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <button type="button" className="btn-ghost text-sm" onClick={startPreview} disabled={working || !ready}>
-            {playing ? <Pause size={15} className="mr-1" /> : <Play size={15} className="mr-1" />}
-            {playing ? "Pause" : "Preview"}
+            {previewPlaying ? <Pause size={15} className="mr-1" /> : <Play size={15} className="mr-1" />}
+            {previewPlaying ? "Pause" : "Preview"}
           </button>
           <button
             type="button"
@@ -379,6 +434,7 @@ export function ClipEditor({
           >
             <Scissors size={14} className="mr-1" /> Delete span
           </button>
+          {toolbarExtra}
           {selectedCut != null && (
             <button
               type="button"
@@ -409,6 +465,19 @@ export function ClipEditor({
           <button type="button" className="btn-ghost text-sm" onClick={onCancel} disabled={working}>
             <X size={15} className="mr-1" /> Cancel
           </button>
+          {secondaryAction && (
+            <span onClick={() => { if (secondaryAction.disabled && !working) secondaryAction.onBlocked?.(); }}>
+              <button
+                type="button"
+                className="btn-ghost text-sm"
+                title={secondaryAction.title}
+                disabled={working || !ready || nothingLeft || secondaryAction.disabled}
+                onClick={() => secondaryAction.onClick({ segments: keep, volume: vol })}
+              >
+                {secondaryAction.label}
+              </button>
+            </span>
+          )}
           {/* Wrapper catches clicks while the button is disabled by confirmDisabled
               (a disabled .btn has pointer-events:none) so the parent can reveal
               which required field is missing. */}
