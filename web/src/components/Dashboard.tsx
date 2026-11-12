@@ -22,6 +22,7 @@ import {
 } from "@/lib/voice-ai";
 import { useAudio } from "@/components/AudioProvider";
 import { useProfiles } from "@/components/ProfileProvider";
+import { StreamDeckBridge } from "@/components/StreamDeckBridge";
 import { useVoiceChanger } from "@/components/VoiceChangerProvider";
 import { useVr } from "@/components/VrProvider";
 import { VrBindPicker } from "@/components/VrBindPicker";
@@ -115,7 +116,7 @@ export function Dashboard({
   // Active profile (ver/1.4.1): board placements are per-profile, so every board
   // GET/PATCH carries the active profile id. A ref lets the plain mutation helpers
   // read the current id without being rebound on each switch.
-  const { activeProfileId } = useProfiles();
+  const { activeProfileId, profiles, setActiveProfile } = useProfiles();
   const activeProfileIdRef = useRef<string | null>(activeProfileId);
   activeProfileIdRef.current = activeProfileId;
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -362,6 +363,14 @@ export function Dashboard({
     lastPlayRef.current.set(entryId, now);
     audioPlay(soundId, volumes[entryId] ?? 1, entryId, preview);
   }, [audioPlay, volumes]);
+
+  // What the Stream Deck plugin can target: every Saved entry (the plugin plays by
+  // sound id, so a button keeps working across profiles) and the profile list.
+  const streamDeckSounds = useMemo(
+    () => entries.map((e) => ({ entryId: e.entry.id, soundId: e.sound.id, name: e.entry.label ?? e.sound.name, onBoard: e.entry.onBoard })),
+    [entries],
+  );
+  const streamDeckProfiles = useMemo(() => profiles.map((p) => ({ id: p.id, name: p.name })), [profiles]);
 
   // --- Keybind enable state (persisted in localStorage, this device only) ---
   // `keybindsEnabled` is the master switch; `keybindEnabled[entryId]` is the
@@ -983,6 +992,20 @@ export function Dashboard({
 
   return (
     <div className="space-y-8">
+      <StreamDeckBridge
+        sounds={streamDeckSounds}
+        profiles={streamDeckProfiles}
+        activeProfileId={activeProfileId}
+        setActiveProfile={setActiveProfile}
+        playingSoundIds={audio.playingSoundIds}
+        aiPttRecording={audio.pttRecording.size > 0}
+        playEntry={playEntry}
+        cancelAll={cancelAll}
+        startAiPtt={startAiPtt}
+        stopAiPtt={stopAiPtt}
+        replayLastConversion={replayLastConversion}
+        triggerLivepadCapture={triggerLivepadCapture}
+      />
       {/* The audio Control Panel moved into the header (Settings · Voice changer ·
           Sound Effects popovers in HeaderControls). The AI push-to-talk + AI-replay
           controller bind editors now render from VrProvider so they open from the

@@ -59,6 +59,33 @@ prompt, so only approve sources on a server you trust. Approving an app also rec
 processes it starts, even ones with a different name. App names shown in the picker and dialog
 come from each program's own version information.
 
+## Stream Deck plugin
+
+`../streamdeck` is our own Elgato Stream Deck plugin (Windows only, keypad buttons only).
+It talks to this app over a local named pipe, so it only works with the desktop app,
+not the browser version. Buttons: **Play sound**, **Cancel all**, **AI push-to-talk**
+(hold), **AI replay**, **Livepad capture** and **Switch profile**. They work while the
+dashboard is open; otherwise the key shows Stream Deck's alert.
+
+Install it with **File → Install Stream Deck plugin…** (opens the bundled
+`.streamDeckPlugin`, which the Stream Deck app installs), or download
+`com.soouuupppp.soundboard.streamDeckPlugin` from the GitHub release. Then drag the
+actions from the **Soundboard** category onto keys; Play sound and Switch profile list
+your sounds and profiles live while the app's dashboard is open. **Settings → Stream
+Deck** in the app shows whether the plugin is connected.
+
+`pnpm build:streamdeck` builds and packs the plugin into `resources/streamdeck`
+(also run by `dist`/`dist:win`/`dist:portable`/`release:win`). In dev, the File menu
+item opens that file. The pipe and its discovery file
+(`%APPDATA%\Soundboard\streamdeck-bridge.json`, a per-launch token readable only by
+your Windows user) are created at app start and the file is deleted on quit.
+
+**No-plugin fallback:** Stream Deck's built-in **Hotkey** action can press a key the
+app already listens for. Bind a sound to an unused key such as **F13–F24** in the app,
+then set a Hotkey button to send that key. This is tap-only (no hold-to-talk), the
+button can't show the sound name, and it doesn't fire while you're holding a modifier
+key, because keybinds need an exact modifier match.
+
 ## Build a Windows .exe to share
 
 Set your public server URL first so it's baked into the binary — your friends
@@ -79,8 +106,8 @@ SOUNDBOARD_URL=https://soundboard.example.com pnpm --filter electron dist:win
 
 Outputs to `electron/dist/`:
 
-- `Soundboard-Setup-1.5.0-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
-- `Soundboard-1.5.0-x64-portable.exe` — single-file executable, no install.
+- `Soundboard-Setup-1.5.1-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
+- `Soundboard-1.5.1-x64-portable.exe` — single-file executable, no install.
 
 Send one of these to your friends. They open it, log in with Discord, done.
 Power users can still change the URL later via **File → Change server URL…**
@@ -150,6 +177,10 @@ electron-builder's [code signing docs](https://www.electron.build/code-signing).
   `vr-bridge.exe`, forwards each button edge over IPC → `soundboard:vrInput` /
   `soundboard:vrStatus` `CustomEvent`s, and the dashboard's matcher fires the
   bound clip.
+- Stream Deck: `streamdeck-bridge.js` serves a named pipe for the plugin. After a
+  token handshake, presses go to the dashboard through `window.soundboard.streamDeck`
+  (only from the configured server's main frame), and the dashboard publishes its
+  sound and profile lists back, which main re-validates before passing them on.
 
 ## Notes / caveats
 

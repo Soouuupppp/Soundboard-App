@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Play sound</title>
+    <meta charset="utf-8" />
+    <!-- sdpi-components v4.0.1, vendored (no remote scripts in the settings panel). -->
+    <script src="sdpi-components.js"></script>
+    <link rel="stylesheet" href="inspector.css" />
+  </head>
+  <body>
+    <sdpi-item label="Sound">
+      <!-- The list comes live from the app (plugin answers "getSounds"); hot-reload
+           lets the plugin push a new list while this panel is open. label-setting
+           keeps the sound's name in the button settings for when the app is closed. -->
+      <sdpi-select
+        setting="soundId"
+        label-setting="soundName"
+        datasource="getSounds"
+        hot-reload
+        loading="Loading sounds…"
+        placeholder="Choose a sound"
+      ></sdpi-select>
+    </sdpi-item>
+    <p id="status" class="status">Checking for Soundboard…</p>
+    <p class="note">
+      Any sound in your Saved library works, whichever profile is active. It plays at the volume set on
+      its card. <a href="#" id="help">Help</a>
+    </p>
+    <script src="inspector.js"></script>
+  </body>
+</html>

@@ -12,6 +12,7 @@ const fs = require("fs");
 const hotkeys = require("./hotkeys");
 const vrControllers = require("./vr-controllers");
 const audioCapture = require("./audio-capture");
+const streamDeck = require("./streamdeck-bridge");
 const crypto = require("crypto");
 const { autoUpdater } = require("electron-updater");
 
@@ -500,6 +501,98 @@ function registerNativeCaptureIpc() {
   });
 }
 
+// --- Stream Deck bridge -------------------------------------------------------
+// The plugin talks to streamdeck-bridge.js over a named pipe; presses are handed to
+// the dashboard only while it is attached AND the page is still the configured
+// server. Everything the page publishes is re-validated in the bridge.
+
+const STREAMDECK_PRESS_TIMEOUT_MS = 1500;
+let sdAttached = false;
+let sdSeq = 0;
+const sdPending = new Map(); // id -> { resolve, timer }
+
+function sdSendStatus(connected) {
+  if (pageIsTrusted()) mainWindow.webContents.send("soundboard:streamDeck:status", { connected });
+}
+
+function sdDetach() {
+  sdAttached = false;
+  streamDeck.setAvailable(false);
+  for (const [id, p] of sdPending) {
+    clearTimeout(p.timer);
+    p.resolve({ ok: false, error: "unavailable" });
+    sdPending.delete(id);
+  }
+}
+
+function handleStreamDeckPress(press) {
+  if (!sdAttached || !pageIsTrusted()) return Promise.resolve({ ok: false, error: "unavailable" });
+  const id = ++sdSeq;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      sdPending.delete(id);
+      resolve({ ok: false, error: "unavailable" });
+    }, STREAMDECK_PRESS_TIMEOUT_MS);
+    sdPending.set(id, { resolve, timer });
+    mainWindow.webContents.send("soundboard:streamDeck:press", { id, ...press });
+  });
+}
+
+// The packed plugin ships in resources/streamdeck (extraResources); dev runs use the
+// output of `pnpm build:streamdeck`. Opening it hands it to the Stream Deck app.
+const STREAMDECK_PLUGIN_FILE = "com.soouuupppp.soundboard.streamDeckPlugin";
+
+async function installStreamDeckPlugin() {
+  const file = app.isPackaged
+    ? path.join(process.resourcesPath, "streamdeck", STREAMDECK_PLUGIN_FILE)
+    : path.join(__dirname, "resources", "streamdeck", STREAMDECK_PLUGIN_FILE);
+  if (!fs.existsSync(file)) {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "The Stream Deck plugin isn't included in this build.",
+      detail: "Download Soundboard's .streamDeckPlugin file from the GitHub release page instead.",
+    });
+    return;
+  }
+  const err = await shell.openPath(file);
+  if (err) {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "Couldn't open the Stream Deck plugin.",
+      detail: `Is the Elgato Stream Deck app installed?\n\n${err}`,
+    });
+  }
+}
+
+function registerStreamDeckIpc() {
+  ipcMain.handle("soundboard:streamDeck:attach", (evt) => {
+    if (!senderIsTrusted(evt)) return { ok: false };
+    sdAttached = true;
+    streamDeck.setAvailable(true);
+    return { ok: true, connected: streamDeck.authedCount() > 0 };
+  });
+  ipcMain.handle("soundboard:streamDeck:detach", (evt) => {
+    if (!senderIsTrusted(evt)) return;
+    sdDetach();
+  });
+  ipcMain.handle("soundboard:streamDeck:status", (evt) => {
+    if (!senderIsTrusted(evt)) return { connected: false };
+    return { connected: streamDeck.authedCount() > 0 };
+  });
+  ipcMain.on("soundboard:streamDeck:state", (evt, state) => {
+    if (!senderIsTrusted(evt) || !sdAttached) return;
+    streamDeck.setState(state);
+  });
+  ipcMain.on("soundboard:streamDeck:result", (evt, r) => {
+    if (!senderIsTrusted(evt) || !r || typeof r !== "object") return;
+    const p = sdPending.get(r.id);
+    if (!p) return;
+    clearTimeout(p.timer);
+    sdPending.delete(r.id);
+    p.resolve({ ok: r.ok === true, error: r.error });
+  });
+}
+
 // Hosts allowed to navigate inside the window even when they aren't the
 // soundboard origin — needed so OAuth (Discord) completes in-app and the
 // session cookie lands on the right origin.
@@ -639,9 +732,15 @@ function createWindow(url) {
   // Any real navigation or renderer crash ends native capture. Armed state doesn't
   // survive a reload anyway, and PCM must never reach a page it wasn't approved for.
   mainWindow.webContents.on("did-start-navigation", (details) => {
-    if (details.isMainFrame && !details.isSameDocument) stopNativeCapture();
+    if (details.isMainFrame && !details.isSameDocument) {
+      stopNativeCapture();
+      sdDetach();
+    }
   });
-  mainWindow.webContents.on("render-process-gone", () => stopNativeCapture());
+  mainWindow.webContents.on("render-process-gone", () => {
+    stopNativeCapture();
+    sdDetach();
+  });
 
   mainWindow.loadURL(url);
 
@@ -719,6 +818,10 @@ function buildMenu() {
         {
           label: "Forget Livepad capture approvals…",
           click: () => { forgetNativeApprovals(); },
+        },
+        {
+          label: "Install Stream Deck plugin…",
+          click: () => { installStreamDeckPlugin(); },
         },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
@@ -809,6 +912,12 @@ app.whenReady().then(async () => {
   });
 
   registerNativeCaptureIpc();
+  registerStreamDeckIpc();
+  streamDeck.start({
+    appDataDir: app.getPath("appData"),
+    onPress: handleStreamDeckPress,
+    onClientsChanged: (n) => sdSendStatus(n > 0),
+  });
 
   ipcMain.handle("soundboard:registerKeybinds", (_evt, combos) => {
     if (!Array.isArray(combos)) return { ok: false, error: "not an array" };
@@ -835,6 +944,7 @@ app.on("will-quit", () => {
   hotkeys.stop();
   vrControllers.stop();
   audioCapture.stop();
+  streamDeck.stop();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

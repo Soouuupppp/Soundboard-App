@@ -12,12 +12,13 @@
 // protects the virtual mic) — flagged inline.
 
 import { useEffect, useRef, useState } from "react";
-import { Volume2, Headphones, Mic, KeyRound } from "lucide-react";
+import { Volume2, Headphones, Mic, KeyRound, Grid3x3 } from "lucide-react";
 import type { AudioOutput } from "@/lib/audio-output";
 import { readAiKeys, writeAiKeys, PROVIDER_LABEL, type AiKeys, type PaidProvider } from "@/lib/voice-ai-paid";
 import { Select } from "@/components/Select";
 import { Toggle } from "@/components/Toggle";
 import { PeakMeter } from "@/components/LevelMeter";
+import { getStreamDeckBridge } from "@/lib/streamdeck";
 
 // A 0–200% volume slider row (the three sub-bus gains). Bus gains run 0..2.
 function VolumeRow({
@@ -130,6 +131,8 @@ export function SettingsPanel({ audio }: { audio: AudioOutput }) {
           to bypass the free quota. Used by the paid AI engines in the AI popover. */}
       <AiKeysSection />
 
+      <StreamDeckStatus />
+
       {/* Live output meter. */}
       {audio.supportsOutputMeter && (
         <PeakMeter getPeak={audio.getOutputPeak} active={audio.anyPlaying || audio.virtualMicMode} />
@@ -142,6 +145,30 @@ export function SettingsPanel({ audio }: { audio: AudioOutput }) {
 // never uploaded except as the per-request x-ai-key header. State updates
 // immediately; the localStorage write is debounced (~300ms) with the latest value
 // flushed on unmount so an interrupted edit isn't lost.
+// Desktop app only: whether the Stream Deck plugin is connected to this app. Main
+// pushes changes over the same trusted IPC as the presses.
+function StreamDeckStatus() {
+  const [connected, setConnected] = useState<boolean | null>(null);
+  useEffect(() => {
+    const bridge = getStreamDeckBridge();
+    if (!bridge) return;
+    let live = true;
+    bridge.getStatus().then((s) => live && setConnected(!!s?.connected)).catch(() => {});
+    const off = bridge.onStatus((s) => setConnected(!!s?.connected));
+    return () => {
+      live = false;
+      off();
+    };
+  }, []);
+  if (connected === null) return null;
+  return (
+    <p className="flex items-center gap-1.5 text-xs text-muted">
+      <Grid3x3 size={13} className={connected ? "text-emerald-400" : "text-muted"} />
+      Stream Deck: {connected ? "plugin connected" : "plugin not connected (File > Install Stream Deck plugin…)"}
+    </p>
+  );
+}
+
 function AiKeysSection() {
   const [keys, setKeys] = useState<AiKeys>(() => readAiKeys());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);

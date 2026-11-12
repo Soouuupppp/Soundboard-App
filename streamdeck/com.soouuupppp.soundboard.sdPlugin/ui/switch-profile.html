@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Switch profile</title>
+    <meta charset="utf-8" />
+    <!-- sdpi-components v4.0.1, vendored (no remote scripts in the settings panel). -->
+    <script src="sdpi-components.js"></script>
+    <link rel="stylesheet" href="inspector.css" />
+  </head>
+  <body>
+    <sdpi-item label="Profile">
+      <sdpi-select
+        setting="profileId"
+        label-setting="profileName"
+        datasource="getProfiles"
+        hot-reload
+        loading="Loading profiles…"
+        placeholder="Choose a profile"
+      ></sdpi-select>
+    </sdpi-item>
+    <p id="status" class="status">Checking for Soundboard…</p>
+    <p class="note">The button lights up while this profile is active. <a href="#" id="help">Help</a></p>
+    <script src="inspector.js"></script>
+  </body>
+</html>

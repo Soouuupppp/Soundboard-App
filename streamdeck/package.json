@@ -1,0 +1,32 @@
+{
+  "name": "soundboard-streamdeck",
+  "private": true,
+  "version": "1.5.1",
+  "description": "Elgato Stream Deck plugin for the Soundboard desktop app (talks to it over a local named pipe).",
+  "author": {
+    "name": "Soouuupppp",
+    "url": "https://soouuupppp.com"
+  },
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "typecheck": "tsc --noEmit",
+    "validate": "streamdeck validate com.soouuupppp.soundboard.sdPlugin",
+    "pack:plugin": "rollup -c && streamdeck pack com.soouuupppp.soundboard.sdPlugin --output ../electron/resources/streamdeck --force --no-update-check"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "^3.0.4"
+  },
+  "devDependencies": {
+    "@elgato/cli": "^1.10.4",
+    "@rollup/plugin-commonjs": "^29.0.2",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-terser": "^1.0.0",
+    "@rollup/plugin-typescript": "^12.1.0",
+    "@types/node": "~24.1.0",
+    "rollup": "^4.0.2",
+    "tslib": "^2.6.2",
+    "typescript": "^5.9.3"
+  }
+}

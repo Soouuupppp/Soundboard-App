@@ -2,7 +2,7 @@
   "name": "soundboard-electron",
   "productName": "Soundboard",
   "private": true,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Desktop wrapper for the Soundboard web app with OS-level global hotkeys.",
   "author": {
     "name": "Soouuupppp",
@@ -22,10 +22,11 @@
     "start": "electron .",
     "bake": "node scripts/bake-url.js",
     "build:native": "node scripts/build-native.js",
-    "dist": "pnpm bake && pnpm build:native && electron-builder",
-    "dist:win": "pnpm bake && pnpm build:native && electron-builder --win",
-    "dist:portable": "pnpm bake && pnpm build:native && electron-builder --win portable",
-    "release:win": "pnpm bake && pnpm build:native && electron-builder --win --publish always"
+    "build:streamdeck": "pnpm --filter soundboard-streamdeck run pack:plugin",
+    "dist": "pnpm bake && pnpm build:native && pnpm build:streamdeck && electron-builder",
+    "dist:win": "pnpm bake && pnpm build:native && pnpm build:streamdeck && electron-builder --win",
+    "dist:portable": "pnpm bake && pnpm build:native && pnpm build:streamdeck && electron-builder --win portable",
+    "release:win": "pnpm bake && pnpm build:native && pnpm build:streamdeck && electron-builder --win --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
@@ -45,6 +46,7 @@
       "hotkeys.js",
       "vr-controllers.js",
       "audio-capture.js",
+      "streamdeck-bridge.js",
       "preload.js",
       "prompt-preload.js",
       "package.json",
@@ -53,7 +55,8 @@
     ],
     "extraResources": [
       { "from": "resources/vr", "to": "vr", "filter": ["**/*"] },
-      { "from": "resources/audio-capture", "to": "audio-capture", "filter": ["**/*"] }
+      { "from": "resources/audio-capture", "to": "audio-capture", "filter": ["**/*"] },
+      { "from": "resources/streamdeck", "to": "streamdeck", "filter": ["*.streamDeckPlugin"] }
     ],
     "directories": {
       "buildResources": "assets",

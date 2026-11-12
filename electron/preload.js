@@ -34,6 +34,40 @@ contextBridge.exposeInMainWorld("soundboard", {
       };
     },
   },
+  // Stream Deck plugin presses (via main's named-pipe bridge). attach() returns a
+  // detach function; main answers presses with "unavailable" while detached.
+  streamDeck: {
+    attach: (onPress) => {
+      streamDeckPressHandler = onPress;
+      // invoke() messages reach main in order, so attach/detach/attach stays ordered.
+      ipcRenderer.invoke("soundboard:streamDeck:attach");
+      return () => {
+        if (streamDeckPressHandler !== onPress) return;
+        streamDeckPressHandler = null;
+        ipcRenderer.invoke("soundboard:streamDeck:detach");
+      };
+    },
+    publishState: (state) => ipcRenderer.send("soundboard:streamDeck:state", state),
+    result: (id, ok, error) => ipcRenderer.send("soundboard:streamDeck:result", { id, ok, error }),
+    // Plugin connection status, for the Settings popover. Returns an unsubscribe.
+    getStatus: () => ipcRenderer.invoke("soundboard:streamDeck:status"),
+    onStatus: (fn) => {
+      streamDeckStatusHandler = fn;
+      return () => {
+        if (streamDeckStatusHandler === fn) streamDeckStatusHandler = null;
+      };
+    },
+  },
+});
+
+let streamDeckPressHandler = null;
+let streamDeckStatusHandler = null;
+ipcRenderer.on("soundboard:streamDeck:press", (_evt, press) => {
+  if (streamDeckPressHandler) streamDeckPressHandler(press);
+  else ipcRenderer.send("soundboard:streamDeck:result", { id: press.id, ok: false, error: "unavailable" });
+});
+ipcRenderer.on("soundboard:streamDeck:status", (_evt, status) => {
+  if (streamDeckStatusHandler) streamDeckStatusHandler(status);
 });
 
 // Delivered through callbacks, not window events, so captured audio is only visible

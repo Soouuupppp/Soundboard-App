@@ -83,6 +83,16 @@ jobs:
         # node_modules/.bin is on PATH (more reliable than `pnpm exec` on Windows).
         run: pnpm release:win
 
+      # The packed Stream Deck plugin (built by release:win's build:streamdeck) is
+      # also attached to the release, for people who'd rather not use the File menu.
+      - name: Attach Stream Deck plugin
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          gh release upload "$TAG" electron/resources/streamdeck/com.soouuupppp.soundboard.streamDeckPlugin --clobber
+
   publish:
     needs: [check, build]
     runs-on: ubuntu-latest
