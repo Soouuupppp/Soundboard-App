@@ -41,7 +41,7 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   workspaces.
 
 Versions across all four `package.json` files are kept in lockstep
-(currently **1.5.1**), plus the Stream Deck manifest's `"Version"` (`1.5.1.0`).
+(currently **1.5.2**), plus the Stream Deck manifest's `"Version"` (`1.5.2.0`).
 
 ## Stack
 
@@ -3856,6 +3856,32 @@ back on the gate, uploads land in `data_public/0000000000/`, `/admin` opens, the
 (also in the desktop app), Sign out is hidden and `/api/auth/session` is 404; with it unset,
 Discord login works and no banner shows. New settings panels: a fresh Switch profile key opens
 in Cycle; a Play Livepad capture key opens at Position 1.
+
+### Tasks — 1.5.2 (Avatar soundboard over OSC — experimental)
+
+Version bumped to **1.5.2** across all four `package.json` + the Stream Deck manifest +
+docs. An **experimental** release: a small **Unity avatar package** that puts a soundboard
+floating in front of the player, which sends **OSC** events the desktop app picks up to
+trigger sounds. **Scope is not settled yet** — the owner will follow up with details, so
+nothing below is locked except the overall idea.
+
+**What is known (owner, 2026-11-13):**
+- A Unity avatar package (a new part of the repo) with an in-world soundboard panel
+  floating in front of the player.
+- Pressing it sends OSC messages; the **Electron desktop app** listens for them and
+  triggers playback, much like the existing global hotkeys, VR controller binds and the
+  Stream Deck bridge.
+
+**Open questions for the follow-up** (to be answered before `/plan-release`): target
+platform (presumably VRChat avatar OSC, to confirm), what the panel shows and which sounds
+it maps to (board slots, specific sounds, profile), which actions beyond play (cancel all,
+AI push-to-talk, Livepad…), OSC port/address scheme and direction (app → avatar feedback
+or one-way), how the listener is secured and enabled, where the Unity package lives in the
+monorepo and how it is distributed, and whether it is desktop-only like the Stream Deck.
+
+1. **Define scope with the owner** — collect the follow-up details and turn them into
+   locked tasks in this section.
+   **Progress: Not started**
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions
