@@ -133,6 +133,16 @@ export type LivepadBindsApi = {
   setChimeEnabled: (on: boolean) => void;
   // What a keyboard or controller bind fires: captures, never arms and never plays.
   triggerCapture: () => void;
+  // "Play latest capture" bind (1.5.1): plays the newest card, armed or not.
+  playLatestKeybind: string | null;
+  setPlayLatestKeybind: (combo: string | null) => void;
+  playLatestControllerBind: string | null;
+  setPlayLatestControllerBind: (bind: string | null) => void;
+  capturingPlayLatestKey: boolean;
+  setCapturingPlayLatestKey: (v: boolean) => void;
+  capturingPlayLatestVr: boolean;
+  setCapturingPlayLatestVr: (v: boolean) => void;
+  triggerPlayLatest: () => void;
 };
 
 const LivepadContext = createContext<LivepadApi | null>(null);
@@ -342,6 +352,18 @@ export function LivepadProvider({ userId, children }: { userId: string; children
     });
   }, [capture, playReadyChime]);
 
+  const [playLatestKeybind, setPlayLatestKeybind] = useLocalBind("soundboard:livepadPlayLatestKeybind");
+  const [playLatestControllerBind, setPlayLatestControllerBind] = useLocalBind(
+    "soundboard:livepadPlayLatestControllerBind",
+  );
+  const [capturingPlayLatestKey, setCapturingPlayLatestKey] = useState(false);
+  const [capturingPlayLatestVr, setCapturingPlayLatestVr] = useState(false);
+  useChordCapture(capturingPlayLatestKey, setCapturingPlayLatestKey, setPlayLatestKeybind);
+  // Read through a ref so triggerPlayLatest stays stable and the binds context
+  // (which Dashboard consumes) doesn't change on every capture.
+  const capturesRef = useRef<LivepadCapture[]>([]);
+  capturesRef.current = captures;
+
   const getCaptureUrl = useCallback(async (c: LivepadCapture) => {
     const cached = urlsRef.current.get(c.id);
     if (cached?.fileName === c.fileName) return cached.url;
@@ -364,6 +386,24 @@ export function LivepadProvider({ userId, children }: { userId: string; children
     },
     [getCaptureUrl, playCaptureUrl, reportStoreError],
   );
+
+  // Newest card through the normal play path (playCaptureUrl restarts a card
+  // that's already playing). No chime: the clip itself is the feedback.
+  // Same double-delivery guard as capture(): checked first so a focused press can't
+  // restart the clip a few ms in (an audible click) or toast twice. The Stream Deck
+  // calls playCapture directly and isn't affected.
+  const lastPlayLatestAtRef = useRef(-Infinity);
+  const triggerPlayLatest = useCallback(() => {
+    const now = performance.now();
+    if (now - lastPlayLatestAtRef.current < CAPTURE_COALESCE_MS) return;
+    lastPlayLatestAtRef.current = now;
+    const latest = capturesRef.current[0];
+    if (!latest) {
+      toast.info("No Livepad captures yet");
+      return;
+    }
+    void playCapture(latest);
+  }, [playCapture, toast]);
 
   const stopCapture = useCallback(
     (id: string) => cancelSound(livepadPlaybackKey(id)),
@@ -830,8 +870,34 @@ export function LivepadProvider({ userId, children }: { userId: string; children
       chimeEnabled,
       setChimeEnabled,
       triggerCapture,
+      playLatestKeybind,
+      setPlayLatestKeybind,
+      playLatestControllerBind,
+      setPlayLatestControllerBind,
+      capturingPlayLatestKey,
+      setCapturingPlayLatestKey,
+      capturingPlayLatestVr,
+      setCapturingPlayLatestVr,
+      triggerPlayLatest,
     }),
-    [keybind, setKeybind, controllerBind, setControllerBind, capturingKey, capturingVr, chimeEnabled, setChimeEnabled, triggerCapture],
+    [
+      keybind,
+      setKeybind,
+      controllerBind,
+      setControllerBind,
+      capturingKey,
+      capturingVr,
+      chimeEnabled,
+      setChimeEnabled,
+      triggerCapture,
+      playLatestKeybind,
+      setPlayLatestKeybind,
+      playLatestControllerBind,
+      setPlayLatestControllerBind,
+      capturingPlayLatestKey,
+      capturingPlayLatestVr,
+      triggerPlayLatest,
+    ],
   );
 
   return (
@@ -848,6 +914,19 @@ export function LivepadProvider({ userId, children }: { userId: string; children
             onConfirm={(serialized) => {
               setCapturingVr(false);
               setControllerBind(setProfileBind(controllerBind, controllerProfile, serialized));
+            }}
+          />
+        )}
+        {capturingPlayLatestVr && (
+          <VrBindPicker
+            initial={getProfileBind(playLatestControllerBind, controllerProfile)}
+            initialHolds={null}
+            vrConnected={vrConnected}
+            profile={controllerProfile}
+            onCancel={() => setCapturingPlayLatestVr(false)}
+            onConfirm={(serialized) => {
+              setCapturingPlayLatestVr(false);
+              setPlayLatestControllerBind(setProfileBind(playLatestControllerBind, controllerProfile, serialized));
             }}
           />
         )}

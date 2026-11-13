@@ -32,11 +32,16 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
   - **`electron/native/audio-capture/`** — a C++/WASAPI helper
     (`audio-capture.exe`) for Livepad's per-app and playback-device capture.
     Built the same way, staged into `electron/resources/audio-capture`.
+- **`streamdeck/`** — `soundboard-streamdeck`, our Elgato Stream Deck plugin
+  (TypeScript, `@elgato/streamdeck` SDK, Rollup). Talks to the desktop app's named
+  pipe; packed by `pnpm --filter electron build:streamdeck` into
+  `electron/resources/streamdeck/com.soouuupppp.soundboard.streamDeckPlugin`.
+  Windows-only, keypad actions only.
 - Root `package.json` is just convenience scripts that delegate into the
   workspaces.
 
-Versions across all three `package.json` files are kept in lockstep
-(currently **1.5.0**).
+Versions across all four `package.json` files are kept in lockstep
+(currently **1.5.1**), plus the Stream Deck manifest's `"Version"` (`1.5.1.0`).
 
 ## Stack
 
@@ -102,6 +107,13 @@ pnpm up / pnpm down # docker compose up --build / down
 - **Upload permission** resolves **user `canUploadOverride` → role `canUpload`**.
   Users who can't upload can still browse + save public clips.
 - Put a Discord ID in `DISCORD_ADMIN_IDS` to auto-promote on first login.
+- **Auth off (local testing, 1.5.1):** `AUTH_DISABLED=true` (runtime env) skips Discord
+  entirely. `lib/auth.ts` is the only switch: it doesn't build `NextAuth`, `auth()` returns a
+  session for one seeded **`system`** user (`lib/system-user.ts`, discordId `0000000000` so
+  uploads land in `data_public/0000000000/`, `admin` role only if it has none, default
+  profile), `/api/auth/*` returns 404, and sign-in/out just redirect. Quotas and the TOS gate
+  work as for any user. Every page shows a red non-dismissible "Auth is OFF" banner and the
+  server logs a warning at start. Nothing reads the session except through `auth()`.
 
 ### Sounds, the Saved library, and the Board
 - A `sound` is owned by one user and stored on disk at
@@ -350,6 +362,11 @@ both **device-local** (no DB/schema change):
   machine is disclosed in-UI; the CSP `connect-src` is deliberately widened to the
   HF Spaces hosts in `middleware.ts`. Full survey + tradeoffs in
   `docs/voice-changer-research.md`.
+- **Stored per profile, not per mic (1.5.1):** the mic's chain + AI config live in the
+  profile's `voiceFx` under `PRIMARY_MIC_KEY` ("primary"), and are mapped onto whichever mic
+  is selected at runtime, so a new device id (cleared site data, another mic, the dev app's
+  own `userData`) no longer loses them. Old deviceId-keyed maps are read as before. The navbar
+  shows **AI voice** / **Effects** chips (`VoiceChangerIndicators`) while either is active.
 - **Shared state lifted out of `Dashboard`** so binds/popovers work from any page:
   `components/VrProvider.tsx` owns `controllerProfile` / `vrConnected` / `hasDesktop`
   + the AI VR pickers; `components/VoiceChangerProvider.tsx` owns the AI-PTT/replay
@@ -360,7 +377,9 @@ both **device-local** (no DB/schema change):
 ### Electron desktop wrapper
 - `main.js` opens a `BrowserWindow` at the configured server URL (baked at build
   time via `baked.json`, env `SOUNDBOARD_URL`, or prompted on first launch and
-  saved to `userData/settings.json`; change later via File → Change server URL…).
+  saved to `userData/settings.json`; change later via File → Change server URL…). A source run
+  with `SOUNDBOARD_URL` set uses its own `%APPDATA%\Soundboard-dev` userData, so it never reads
+  or overwrites the installed app's saved URL, approvals or storage.
 - `preload.js` exposes `window.soundboard.registerKeybinds(combos)`; the
   dashboard calls it with the board's combos. `hotkeys.js` (backed by
   `uiohook-napi`) **observes** key events without capturing them, so the key
@@ -459,6 +478,45 @@ playback devices through the native helper.
   and quotas are the server's usual ones. Lands in Saved only. The editor also checks
   the user's max file size, before rendering (estimate) and after encoding (real size).
 
+### Stream Deck (desktop app, 1.5.1)
+Our own plugin (`streamdeck/`, UUID `com.soouuupppp.soundboard`) drives the desktop app over a
+local bridge. Path: Stream Deck app → plugin (`src/bridge.ts`) → named pipe → Electron main
+(`streamdeck-bridge.js`) → IPC → `components/StreamDeckBridge.tsx` in `Dashboard`.
+- **Bridge:** `\\.\pipe\soundboard-streamdeck-<user hash>` + discovery file
+  `%APPDATA%\Soundboard\streamdeck-bridge.json` (`{v, pipe, token}`, fixed folder so dev and
+  packaged agree, deleted on quit). NDJSON: `hello` (token) → `press {id, action, edge, soundId?,
+  profileId?, slot?, captureId?}` / `result {id, ok, error?}` / pushed `state {available, sounds,
+  profiles, activeProfileId, playing, aiPtt, captures, playingCaptures}` (debounced 100 ms). The
+  protocol lives in four files kept in sync: `lib/streamdeck.ts`, `StreamDeckBridge.tsx`,
+  `electron/streamdeck-bridge.js`, `streamdeck/src/bridge.ts`. See Security notes.
+- **Actions (keypad only):** Play sound (by `soundId`, any Saved sound whatever the profile, via
+  `playEntry` so the entry volume + 60 ms guard apply), Cancel all, AI push-to-talk (down starts,
+  up stops; a dropped connection or dashboard unmount stops a hold), AI replay, Livepad capture,
+  Switch profile (per-key **mode**: *cycle* → `profileCycle`, the app picks the next profile by
+  `position` and wraps; *specific* → one profile), **Play latest capture** (newest Livepad card)
+  and **Play Livepad capture** (*position N*, 1 = newest, the key follows the list; or a
+  *specific* capture until it's gone). Playing a capture again restarts it. Buttons **ignore the
+  master keybinds switch** and work only while the dashboard is mounted; otherwise the key shows
+  `showAlert`. **AI voice on/off** (1.5.1) flips AI voice for the selected mic like the popover
+  switch and is lit while it's on (`aiToggle` / state `aiEnabled`). sdpi's `default` attribute is display-only, so the plugin resolves a key's missing
+  `mode` on first appear and saves it (a key with a saved profile/capture → *specific*, else the
+  new-key default); keys from before modes keep their behavior.
+- **Settings panels:** `ui/*.html` with **vendored sdpi-components v4** (`ui/sdpi-components.js`);
+  `<sdpi-select datasource="getSounds"|"getProfiles"|"getCaptures" hot-reload label-setting=…>`, answered by the
+  plugin with `streamDeck.ui.sendToPropertyInspector({event, items})`.
+- **Keys:** generated SVG (`src/keys.ts`) with the name drawn in; `setTitle` is never called, so
+  a title the user typed wins. Highlighted while playing / recording / active profile, dimmed when
+  offline.
+- **Install:** File → Install Stream Deck plugin… (bundled via extraResources) or the file
+  attached to each GitHub release. Settings popover shows whether the plugin is connected.
+  **Updates:** Stream Deck only auto-updates Marketplace plugins, so ours follows the app. ~3 s
+  after launch, if `%APPDATA%\Elgato\StreamDeck\Plugins\com.soouuupppp.soundboard.sdPlugin`
+  holds an older version than the app (lockstep), a native dialog offers the bundled one
+  (Update / Not now / Skip this version, the skip stored in `settings.json`). Not installed or
+  same version = no prompt, so dev builds of one version never trigger it.
+- **No Marketplace, no browser support, no dials** (1.5.1 scope). The stock Hotkey action with
+  F13–F24 is the documented tap-only fallback (`electron/README.md`).
+
 ### User-facing notifications
 - `components/Toast.tsx` — `ToastProvider` + `useToast` (mounted in the root
   layout), with a `fromResponse` helper (reads a failed Response's `{error}`,
@@ -481,7 +539,8 @@ conversion) · `fx-presets.ts` (shared device-local FX preset library) ·
 chord model) · `vr-bind.ts` (controller step/sequence model + matcher) ·
 `validation.ts` (Zod schemas) · `livepad.ts` (rolling buffer, WAV encode, capture
 render pipeline) · `livepad-store.ts` (OPFS temp files + session locks) ·
-`livepad-native.ts` (desktop per-app/playback-device bridge types + helpers) · `utils.ts`
+`livepad-native.ts` (desktop per-app/playback-device bridge types + helpers) ·
+`streamdeck.ts` (desktop Stream Deck bridge types + accessor) · `utils.ts`
 (`formatBytes`, etc.).
 
 ## Third-party AI voice providers
@@ -532,6 +591,21 @@ never sell user data, and the TOS links Google's privacy policy.
   page passes only a lookup value, so names and approval keys come from the helper's own list. The
   helper treats other programs' version resources as untrusted input. Known consent limits are
   listed under the 1.5.0 security review in the task section.
+- **Stream Deck bridge** (`electron/streamdeck-bridge.js`) is a **named pipe, not a localhost
+  port**, so web pages can't reach it. libuv pipes accept remote clients by default, so every
+  connection must send the per-launch 32-byte token from `%APPDATA%\Soundboard\streamdeck-bridge.json`
+  (readable only by that Windows user) within 2 s, compared in constant time; never pass
+  `readableAll`/`writableAll`. Lines are capped at 64 KB and connections at 4. The page side uses
+  `senderIsTrusted` on every handler, presses reach it only while it is attached and
+  `pageIsTrusted()`, and main re-validates and caps the state the page publishes. The plugin only
+  connects to a pipe with our prefix (a tampered discovery file can't send the token elsewhere)
+  and XML-escapes app-supplied names before drawing them into key images. Livepad state is capped
+  the same way (≤ 200 captures, ids `[A-Za-z0-9_-]{1,64}`, names ≤ 120, `durationSec` 0–240), and a
+  `livepadPlay` press must carry exactly one of an integer `slot` 1–120 or a valid `captureId`.
+- **`AUTH_DISABLED=true` hands admin to anyone who can reach the server.** It's for local
+  testing only; the only guards are the startup warning and the red banner on every page.
+  CSRF/Origin checks and the CSP are unchanged by it, and the system user's upload folder still
+  passes `lib/storage.ts`'s numeric-id check.
 
 ## Project status
 
@@ -674,7 +748,7 @@ Electron release CI moved off EOL Node 20 to 22.23.4. No app-code or schema
 changes; verified locally (container TLS, packaged Electron 44 app + global
 hotkeys).
 
-**1.5.0 (Livepad) implemented and owner-tested from source, not yet shipped:** pick a capture device, arm
+**1.5.0 shipped** (Livepad): pick a capture device, arm
 it, and snapshot the last 1–120 seconds into temp WAV cards on a new dashboard tab.
 Cards play like Board clips, can be edited (cuts, reverse, tape speed, baked FX) and
 saved to the library through the normal upload path. Triggers are an on-screen button,
@@ -682,6 +756,20 @@ keyboard/global hotkey and VR bind. Temp files live in OPFS with a size limit an
 removed on close, sign-out or the next launch's sweep. The desktop app can also record
 individual apps and playback devices through a bundled native helper, with a native
 approval dialog per source. No schema change, no CSP change.
+
+**1.5.1 shipped** (Stream Deck): our own
+Stream Deck plugin (`streamdeck/`) with nine keypad actions — Play sound, Cancel all, AI
+push-to-talk (hold), AI replay, AI voice on/off, Livepad capture, Switch profile (cycle or
+specific), Play latest capture, Play Livepad capture — talking to the desktop
+app over a token-checked named pipe. Live sound/profile/capture lists in the button settings,
+generated key images, a File-menu installer, a launch-time prompt when the installed plugin is
+older than the app, and the packed plugin attached to releases. Also a Livepad "Play latest
+capture" keyboard/VR bind, the mic's voice-changer + AI config stored per profile instead of per
+mic deviceId (so it no longer looks lost after a restart or mic change), **AI voice** / **Effects**
+navbar chips, a separate `Soundboard-dev` userData for source runs, and an `AUTH_DISABLED` env
+switch for local testing. Tasks 1–7 owner-tested on a Stream Deck MK.2, tasks 8–15 owner-reported
+working in the dev app against a local stack (2026-11-13); the plugin update prompt needs a
+packaged build and is untested. No schema change, no CSP change, no web API change.
 
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
@@ -3234,6 +3322,540 @@ all pass on Windows 10 build 19045.
   bridge checks (helper start, PCM, origin refusal, helper stops on reload and quit). Installing
   would replace the owner's current app, whose saved server is production, so wait until the
   1.5.0 web app is deployed.
+
+### Tasks — 1.5.1 (Stream Deck support)
+
+Version bumped to **1.5.1** across all three `package.json` + docs. Owner
+decisions below are **locked** (settled in `/prep-release` + `/plan-release`,
+2026-11-12).
+
+**Stream Deck support** ships as our own Elgato Stream Deck plugin that talks to
+the desktop app over a local bridge. Buttons can play a sound, cancel all, hold for
+AI push-to-talk, replay the last AI conversion, take a Livepad capture, and switch
+profile. The sound list in the plugin's settings panel comes live from the app.
+
+**Research summary (why a plugin):** the Stream Deck app can't reach a custom
+"hook" without a plugin. The stock **Hotkey** action does reach our existing
+global keyboard hook (uiohook doesn't filter injected keys, and F13–F24 are
+accepted by both the hook and bind capture), but it is most likely tap-only (no
+hold-to-talk), can't show sound names, and fails while the user holds a modifier
+because `hotkeys.js` requires an exact modifier match. A `soundboard://` link is
+press-only and starts a process per press. Direct USB control
+(`@elgato-stream-deck/node`) can't run beside Elgato's own app, so users would lose
+their other buttons. A plugin gets real key-down/key-up events, a settings panel
+with a live sound picker, titles and feedback.
+
+**Cross-cutting locked decisions:**
+- **Approach:** own plugin + local bridge to Electron. The stock Hotkey action is
+  only **documented** as a no-install fallback (tap-only), with no code changes.
+- **Desktop app only.** The browser version gets nothing in 1.5.1 (a page reaching
+  a local socket needs a wider CSP and Chrome's local-network prompt). The plugin
+  manifest lists **Windows only** (min Windows 10), matching the app.
+- **Distribution:** a self-hosted `.streamDeckPlugin` file, bundled with the
+  desktop app (installed from a File menu item) and attached to each GitHub
+  release. **No Marketplace in 1.5.1**, but follow the Marketplace guidelines from
+  day one: plugin name "Soundboard" (no "Stream Deck"/"Plugin" in it), plugin UUID
+  **`com.soouuupppp.soundboard`** (permanent, never change), action UUIDs prefixed
+  with it, 2–30 actions, `showAlert` on failure, settings saved on change with no
+  Save button, monochrome action icons.
+- **Actions (6):** Play sound · Cancel all · AI push-to-talk (hold) · AI replay ·
+  Livepad capture · Switch profile. **Out of scope:** Stream Deck + dials/touch
+  strip (no test hardware), "Board slot N" buttons that follow the profile,
+  Marketplace publishing, the browser version, any per-button volume.
+- **A Play button targets a sound** (by `soundId`), not a board slot. It plays
+  whenever that sound is in the user's **Saved** library, whatever the active
+  profile or board, at that Saved entry's volume, through the normal board routing
+  (output/virtual mic + monitor, per-clip sound effects applied). A sound that is
+  no longer in Saved → `showAlert`.
+- **Stream Deck buttons ignore the master keybinds switch** (they aren't
+  keybinds and can't be pressed by typing). They are also not blocked while a bind
+  capture is open.
+- **Works only while the dashboard is open**, like today's global hotkeys (the
+  trigger functions live in `Dashboard.tsx`). Otherwise, or when the app isn't
+  running, a press shows `showAlert`.
+- **Press behavior:** everything fires on key-down, except AI push-to-talk:
+  key-down starts recording, key-up stops it. If the bridge drops or the
+  dashboard unmounts mid-hold, the app stops the recording itself.
+- **No schema change, no CSP change, no web API change.** Button settings live in
+  the Stream Deck app (per button); nothing new is stored server-side.
+
+**Bridge design (locked):**
+- **Transport:** a Windows **named pipe** served by Electron's main process
+  (`net.createServer`), not a localhost port, so web pages can't reach it.
+  libuv creates pipes with default security and **doesn't reject remote clients**,
+  so a token handshake is mandatory. Don't pass `readableAll`/`writableAll`.
+- **Discovery + token:** at launch, main generates a random 32-byte token and writes
+  `{ v: 1, pipe, token }` to `%APPDATA%\Soundboard\streamdeck-bridge.json`
+  (`app.getPath("appData")` + a **fixed** `Soundboard` folder, so dev and packaged
+  builds agree). The pipe name includes a short hash of the Windows user name, so
+  two users on one PC don't collide. Delete the file on quit. The plugin reads it
+  from `process.env.APPDATA` on every connect attempt.
+- **Protocol:** newline-delimited JSON, max 64 KB per line (overflow or bad JSON →
+  close the connection), at most 4 clients. The first message must be
+  `{"t":"hello","v":1,"token":"…"}` within 2 s, compared with
+  `crypto.timingSafeEqual`, otherwise close. After that:
+  - plugin → app: `{"t":"press","id":<n>,"action":"play"|"cancelAll"|"aiPtt"|"aiReplay"|"livepad"|"profile","edge":"down"|"up","soundId"?,"profileId"?}`
+  - app → plugin: `{"t":"result","id":<n>,"ok":bool,"error"?:"offline"|"not-found"|"unavailable"}`
+    and `{"t":"state", …}` pushed on connect and on every change (debounced ~100 ms):
+    `available` (dashboard mounted), `sounds: [{soundId, name, onBoard}]`,
+    `profiles: [{id, name}]`, `activeProfileId`, `playing: [soundId]`, `aiPtt`
+    (recording now).
+- **Renderer link (preload + main):** `window.soundboard.streamDeck = { attach(onPress) → detach, publishState(state), result(id, ok, error) }`.
+  Presses reach the page through a **callback** (like `nativeCapture`), not a window
+  event. Every renderer→main handler checks `senderIsTrusted(evt)` (preload also
+  runs on Discord's pages), and main only forwards presses while `pageIsTrusted()`.
+  Main **re-validates and caps** the published state (≤ 2000 sounds, names ≤ 120
+  chars, ids ≤ 64 chars) before sending it to the plugin, because the page is
+  semi-trusted. On navigation, renderer crash or `detach`, main sets
+  `available: false` and answers presses with `unavailable`.
+- **Plugin side:** the plugin escapes every app-supplied string before putting it
+  in a generated SVG key image. It reconnects with backoff (1 s → 10 s).
+
+**How the sound list reaches the button settings (locked):** each settings panel
+(property inspector) is a local HTML page using **sdpi-components v4, vendored**
+into the plugin folder (no remote script). The Play action's `<sdpi-select
+setting="soundId" datasource="getSounds" hot-reload>` asks the plugin for items; the
+plugin answers from its latest bridge `state` with
+`streamDeck.ui.sendToPropertyInspector({ event: "getSounds", items })`, grouped as
+**On board** / **Saved** (`{label, children: [{value: soundId, label: name}]}`),
+and pushes again whenever the state changes while the panel is open. Offline, it
+returns a disabled "Open Soundboard to load your sounds" item plus the button's
+current choice, so the saved value isn't lost. The plugin also stores a cached
+`soundName` in the button settings so the key title survives the app being closed.
+Switch profile works the same way with `datasource="getProfiles"`.
+
+1. **Electron bridge server** *(feat, do first)*. New `electron/streamdeck-bridge.js`
+   owns the pipe server, discovery file, token handshake, framing, client caps and the
+   latest sanitized state. `main.js` starts it after `app.whenReady`, stops it on quit
+   (deletes the discovery file), adds the `soundboard:streamDeck:*` IPC handlers with
+   `senderIsTrusted`, forwards presses only while `pageIsTrusted()`, and sends
+   `available: false` on navigation (`did-start-navigation` main-frame,
+   not same-document) and `render-process-gone`. `preload.js` exposes
+   `window.soundboard.streamDeck` (callback delivery). Add the file to
+   `electron/package.json` `build.files`.
+   **Progress: ✅ Done** *(new `electron/streamdeck-bridge.js`: pipe
+   `\\.\pipe\soundboard-streamdeck-<12-hex sha256 of the lowercased user name>`, no
+   `readableAll`/`writableAll`; discovery file written only after `listen` succeeds and
+   removed on quit only if it still holds our token (so a second instance that lost the
+   pipe with `EADDRINUSE` can't delete the first one's). Hello is checked by comparing
+   sha256 digests with `timingSafeEqual` (equal lengths whatever the input). 64 KB line
+   cap (also on an unterminated buffer), bad JSON closes, a 5th connection is closed at
+   once. State is re-validated (ids `[A-Za-z0-9_-]{1,64}`, names control-stripped and
+   ≤120, ≤2000 sounds, ≤100 profiles) and broadcast debounced 100 ms; while unavailable
+   the lists are sent empty. A client that drops mid push-to-talk gets a synthetic
+   `aiPtt` up. `main.js`: `soundboard:streamDeck:attach/detach/status` (invoke) and
+   `state/result` (send), all behind `senderIsTrusted`; presses go to the page only while
+   attached and `pageIsTrusted()`, with a 1.5 s answer timeout; navigation and
+   `render-process-gone` detach. `preload.js` exposes `window.soundboard.streamDeck`
+   (`attach`→detach, `publishState`, `result`, plus `getStatus`/`onStatus` for task 6);
+   a press arriving with no handler is answered `unavailable`.)*
+2. **Dashboard side of the bridge** *(feat)*. New `web/src/components/StreamDeckBridge.tsx`
+   (a render-nothing component mounted inside `Dashboard`, like the existing hotkey
+   effects). On mount it calls `attach`; on unmount `detach` (main then marks
+   unavailable). It publishes state from `entries` (`entry.label ?? sound.name`,
+   `onBoard`), `useProfiles()` (`profiles`, `activeProfileId`), `audio.playingSoundIds`
+   and the PTT recording state. On press: **play** → find the Saved entry by
+   `soundId` → `playEntry(entry.id, soundId)` (keeps the 60 ms duplicate guard and the
+   entry volume), else `not-found`; **cancelAll** → `cancelAll()`; **aiPtt** down →
+   `startAiPtt()`, up → `stopAiPtt()` (tracked so detach stops a hold);
+   **aiReplay** → `replayLastConversion()`; **livepad** → `triggerLivepadCapture()`
+   (its toasts/chime unchanged); **profile** → `setActiveProfile(id)` if it exists,
+   else `not-found`. Pass the needed callbacks in as props so nothing is duplicated.
+   **Progress: ✅ Done** *(new `lib/streamdeck.ts` (press/state types +
+   `getStreamDeckBridge()`) and `components/StreamDeckBridge.tsx`, mounted at the top of
+   the `Dashboard` return. It attaches once per mount and reads the latest props through
+   a ref, so re-renders don't re-attach. State is a memo of Saved entries
+   (`label ?? name`, `onBoard`), `{id,name}` profiles (the config blobs aren't sent),
+   the active id, `playingSoundIds` and `pttRecording.size > 0`, published on change.
+   Up edges are acknowledged and ignored except for PTT; a PTT hold is tracked so
+   unmount stops it, and a second down while held is ignored. Typechecked only (needs a
+   signed-in dashboard).)*
+3. **Plugin package + actions** *(feat)*. New pnpm workspace package
+   **`streamdeck/`** (`soundboard-streamdeck`, private, version in lockstep), added to
+   `pnpm-workspace.yaml`. Scaffold per Elgato's TypeScript layout (`@elgato/streamdeck`
+   SDK, `@elgato/cli`, Rollup): `src/plugin.ts`, `src/bridge.ts` (discovery file
+   reader, pipe client, handshake, reconnect, state cache, request ids + 2 s
+   timeout), `src/actions/*.ts` for the six actions, and
+   `com.soouuupppp.soundboard.sdPlugin/` with `manifest.json` (SDKVersion and
+   `Nodejs.Version` per the current SDK docs, `Software.MinimumVersion` to match,
+   `OS: windows`, controllers `Keypad` only, category "Soundboard"), `imgs/`, `ui/`.
+   Play sends on key-down; AI PTT sends down and up; a failed or offline press →
+   `showAlert`. Check `@elgato/cli`'s Node requirement against CI's Node 22.23.4
+   and record the choice.
+   **Progress: ✅ Done** *(`@elgato/streamdeck` ^3.0.4 + `@elgato/cli` ^1.10.4 (template
+   from that CLI: `SDKVersion` 3, `Nodejs.Version` "24", `Software.MinimumVersion` "7.1").
+   **Node choice:** the CLI needs Node ≥ 20.1 and the SDK ≥ 20.5.1, so CI's pinned
+   22.23.4 is kept; the plugin itself runs on the Node 24 that Stream Deck embeds, which
+   CI never needs. TypeScript ^5.9.3 like the rest of the repo; the CLI's
+   `watch`/`streamdeck restart` script is left out on purpose. `src/bridge.ts` re-reads
+   the discovery file on every attempt and only connects to a pipe starting with
+   `\\.\pipe\soundboard-streamdeck-` with no further path separators, so a tampered
+   file can't send the token to a UNC path. Incoming state is parsed and capped again.
+   Actions live in `src/actions/` (`play-sound.ts`, `switch-profile.ts`, and
+   `simple.ts` for Cancel all / AI push-to-talk / AI replay / Livepad capture) on a
+   shared `base.ts`; AI PTT sends down and up (no alert on release). Logger at `info`,
+   not the template's `trace`, so names aren't logged. The plugin icon must be PNG for
+   `streamdeck validate` (generated 288/576 px); action and category icons are
+   monochrome SVG. Typecheck, Rollup build and `streamdeck validate` pass.)*
+4. **Button settings panels with live lists** *(feat)*. One property inspector HTML
+   per configurable action (Play sound, Switch profile) using the vendored
+   sdpi-components v4, the `getSounds` / `getProfiles` data sources (grouped,
+   hot-reload) described above, a connection status line ("Connected to Soundboard"
+   / "Open the Soundboard desktop app") and a help link. Settings save on change (no
+   Save button). The plugin keeps `soundName` / `profileName` cached in settings when
+   the selection changes. Actions without options get no settings panel.
+   **Progress: ✅ Done** *(`ui/play-sound.html` + `ui/switch-profile.html` load the vendored
+   `ui/sdpi-components.js` (v4.0.1, MIT header kept) and a shared `ui/inspector.js`
+   (status line + Help, which asks the plugin to `openUrl` the Soundboard-App releases
+   page, since a link would navigate the panel itself). Each `<sdpi-select>` uses
+   `datasource` + `hot-reload` + `label-setting`, so sdpi stores `soundName` /
+   `profileName` with the choice; the plugin also refreshes those cached names when the
+   app reports a rename. Sounds are grouped **On board** (board order) / **Saved**
+   (alphabetical); a choice that's no longer in Saved stays listed in its own group, and
+   offline the list is a disabled "Open Soundboard…" item plus the current choice. The
+   plugin re-pushes a list only when its content changed, so a sound starting or
+   stopping doesn't redraw the dropdown. Not run in the Stream Deck app (owner test).)*
+5. **Key feedback** *(feat)*. Play keys: title = current sound name (from state,
+   else the cached name; never overriding a title the user typed), a generated SVG
+   that highlights while the sound is in `playing`, and a dimmed/offline look when the
+   bridge is down or `available` is false. AI PTT key: highlighted while recording.
+   Switch profile key: title = profile name, highlighted when it's the active profile.
+   Cancel all / AI replay / Livepad: static icons, `showOk` on success is optional,
+   `showAlert` on failure. Update only visible instances (`this.actions`) on state
+   change.
+   **Progress: ✅ Done** *(`src/keys.ts` renders 144 px SVG keys (base64 data URL): glyph,
+   up to three wrapped lines of the name, accent fill when active, dimmed with a red
+   badge when offline. **Title handling:** the name is drawn into the image and
+   `setTitle` is never called, so a title the user typed (reported by
+   `titleParametersDidChange`) simply wins: the image then drops its own text. Every
+   string goes through `escapeXml`; checked by rendering a name containing
+   `<script>&"'` in a browser. Play is also dimmed when its sound has left Saved;
+   Cancel all lights while anything plays; the others are static. Images are cached per
+   key and only re-sent when they change; only visible keys (`this.actions`) redraw.)*
+6. **Packaging, install and CI** *(chore)*. A `build:streamdeck` script builds and
+   packs the plugin (`streamdeck pack`) into `electron/resources/streamdeck/`, wired
+   into `dist`, `dist:win`, `dist:portable` and `release:win` like `build:native`;
+   ship it via `extraResources`. File menu: **"Install Stream Deck plugin…"** →
+   `shell.openPath` on the bundled file (a message box if it's missing). In
+   `.github/workflows/electron-release.yml`, upload the `.streamDeckPlugin` to the
+   draft release (`gh release upload … --clobber`). A short "Stream Deck" line in the
+   web Settings popover, shown only when `hasDesktop`, says whether the plugin is
+   connected (main tells the page through the same trusted IPC).
+   **Progress: ✅ Done** *(`streamdeck/package.json` `pack:plugin` = Rollup build +
+   `streamdeck pack … --output ../electron/resources/streamdeck --force
+   --no-update-check` (no network in CI's pack step). Electron `build:streamdeck` runs it
+   and `dist`/`dist:win`/`dist:portable`/`release:win` call it after `build:native`;
+   extraResources ships only `*.streamDeckPlugin`. File > **Install Stream Deck plugin…**
+   opens the bundled file (dev: `electron/resources/streamdeck`), with a message box when
+   it's missing or `shell.openPath` fails. CI adds an "Attach Stream Deck plugin" step
+   after `release:win` (`gh release upload "$TAG" … --clobber`, bash shell). **Node:**
+   CI stays on 22.23.4 (the CLI needs ≥ 20.1). Settings popover gains a `StreamDeckStatus`
+   line shown when `window.soundboard.streamDeck` exists (so older desktop builds, which
+   lack the bridge, don't show it), fed by `getStatus` + `onStatus`; main pushes
+   `soundboard:streamDeck:status` when the number of authenticated plugin connections
+   goes between 0 and >0. `electron/resources/streamdeck/` and the plugin's `bin/` and
+   `logs/` are gitignored. Pack ran locally; installers not built.)*
+7. **Docs + typecheck** *(chore)*. Add a **Stream Deck** section under Key concepts,
+   a `streamdeck/` entry in Monorepo layout, `electron/README.md` setup (install the
+   plugin, plus the tap-only Hotkey fallback with F13–F24), the version lockstep line
+   and the `prep-release` / `post-release` skills updated to **four** `package.json`
+   files, and a security note for the bridge. `tsc --noEmit` clean for `web` and the
+   plugin; `streamdeck validate` passes. No lint (repo convention).
+   **Progress: ✅ Done** *(Stream Deck section under Key concepts, `streamdeck/` in Monorepo
+   layout, the lockstep line now says four `package.json` files plus the manifest's
+   `Version`, `lib/streamdeck.ts` in the `lib/` map, a bridge entry in Security notes, a
+   1.5.1 Project status line, and an `electron/README.md` "Stream Deck plugin" section
+   (install, `build:streamdeck`, the tap-only Hotkey + F13–F24 fallback) plus a "How it
+   works" bullet. `prep-release` / `post-release` skills now list `streamdeck/package.json`
+   and the manifest `Version`. `tsc --noEmit` clean for web and the plugin; `streamdeck
+   validate` passes.)*
+
+**Owner testing of tasks 1–7 (2026-11-13):** the owner ran the plugin from source against the
+local stack on a Stream Deck MK.2 (firmware 1.02.000) under Stream Deck 7.6.1 on Windows 10
+build 19045, went through the test guide, and reported everything working. Before that, the
+bridge passed 16 scripted checks against a real Electron run (wrong token, missing hello,
+oversized lines, client cap, `unavailable` without a dashboard, discovery file removed on
+quit). **Found while testing:** the plugin needs Stream Deck **7.1+** (SDK 3 / Node 24); 7.0.x
+refuses it with a misleading "requires Stream Deck 0.0" message, and 7.0.3's own updater
+fails on 7.6.1's newer signing certificate, so those users must install the new version
+manually from elgato.com (7.6.1 installs and runs on Windows 10 though Elgato lists Windows
+11). Elgato ships a built-in plugin also called "Soundboard" (its action is "Play Audio");
+the owner chose to keep our name. Not confirmed: the second-Windows-user check, and
+installing from a built installer (the packed plugin came from `electron/resources/streamdeck`
+via the dev app's File menu).
+
+8. **Env toggle to turn auth off (single "system" user, for local testing)** *(feat,
+   independent of tasks 1–7)*. A new env var **`AUTH_DISABLED`** (`"true"` = off; anything
+   else, or unset, = normal Discord auth). When off there is no login at all: every request
+   runs as one seeded **system** user that can do everything an admin can.
+   **Owner decisions (locked 2026-11-13):**
+   - **Allowed in any build, with a loud warning, no hard refusal.** Works under `next dev`
+     and in production builds/containers alike. Instead of refusing to boot, the server logs
+     a prominent warning at startup and every page shows a **non-dismissible red "Auth is
+     OFF — everyone who can reach this server is the admin" banner** (in the `NoticeBanners`
+     stack, above the MOTD and shown in the Electron app too). The operator is responsible
+     for not exposing it.
+   - **System user = admin role, normal quotas.** It gets the seeded `admin` role (so
+     `/admin` and every admin route work, uploads allowed), but file size / storage / AI /
+     profile limits resolve normally (user override → role → env), so quota behaviour can be
+     tested. Overrides set on it in `/admin` apply as for any user.
+   - **TOS gate still shows.** The system user starts with no accepted version, so the gate
+     appears on first load and after a `TOS_VERSION` bump, exactly as for a real user, so it
+     can be tested. Accept works as normal. **Reject can't sign out** (there's no session), so
+     with auth off it just reloads `/`, which lands back on the gate.
+   - **Discord UI hidden, Discord vars not needed.** The landing page redirects straight to
+     `/dashboard`, the "Login with Discord" button and the user menu's **Sign out** are
+     hidden, and `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_ADMIN_IDS` /
+     `AUTH_SECRET` are not required. Discord login is **not** available alongside it.
+   - **Runtime env, not a build ARG**, so one image can be started either way. Add it to
+     `docker-compose.yml` (`AUTH_DISABLED: ${AUTH_DISABLED:-false}`) and `.env.example`
+     (commented, with the warning).
+   **Approach (locked):**
+   - **One switch point: `web/src/lib/auth.ts`.** Export `AUTH_DISABLED` and, when it is on,
+     export a replacement `auth()` that returns a synthetic session for the system user in
+     the same shape the `session` callback builds today (`{ user: { id, name, image,
+     discordId, role } }`, `role` read from the DB so a role change in `/admin` shows up), plus
+     no-op-ish `signIn`/`signOut` (redirect to `/dashboard` / `/`). All ~36 callers
+     (`app/layout.tsx`, `app/page.tsx`, `app/dashboard`, `app/admin`, every `app/api/**`
+     route) keep calling `auth()` unchanged. Don't construct the Discord provider when off.
+     `lib/auth-handlers.ts` (`/api/auth/*`) answers **404** when off.
+   - **Seeding the system user (`lib/system-user.ts`, new):** `ensureSystemUser()` upserts a
+     `user` row with a **fixed id** (e.g. `"system"`), name "System", no image, and a
+     **fixed numeric `discordId` `"0000000000"`** — `lib/storage.ts` `userDir` requires
+     `^\d{5,30}$`, so uploads land in `data_public/0000000000/` with no change to path
+     safety. Assign the `admin` role when the row has no role (never overwrite a role changed
+     in `/admin`), and run `ensureDefaultProfile` for it. Call it lazily from the replacement
+     `auth()` (memoized per process), not from `migrate.ts`, so turning auth off needs no
+     migration step. **No schema change** (it's an ordinary `user` row; leaving it behind when
+     auth is turned back on is harmless — it has no `account` row, so nobody can log into it).
+   - **UI:** `app/layout.tsx` passes an `authDisabled` flag down: hide Sign out in
+     `UserMenu`, hide the logged-out login header, render the warning banner. `app/page.tsx`
+     redirects to `/dashboard` when off. `TosGate` Reject posts the layout's `signOut` action,
+     which with auth off just redirects to `/`.
+   - **Unchanged:** CSRF/Origin checks in `middleware.ts` (they don't depend on auth and
+     still protect state-changing requests), the CSP, rate limits (keyed by the system user's
+     id), analytics (`user_id` = the system user), Electron, Stream Deck.
+   - **Docs:** a short "Auth off (local testing)" note under Auth, roles, quotas, a line in
+     Security notes, the env var in the README/`.env.example`.
+   **Risks:** a real deployment started with `AUTH_DISABLED=true` hands admin to anyone who
+   can reach it — mitigated only by the banner + boot warning (owner's choice). Any future
+   code that reads the session some other way than `auth()` (e.g. `useSession`) would bypass
+   the switch; today nothing does (checked: no `SessionProvider`/`useSession` in `web/src`).
+   **Verification:** `tsc --noEmit`; with `AUTH_DISABLED=true` and no Discord vars, `pnpm dev`
+   opens straight into the TOS gate → dashboard, upload a clip (lands in
+   `data_public/0000000000/`), open `/admin`, see the banner, no Sign out; with the var unset,
+   Discord login works as before and no banner shows.
+   **Progress: ✅ Done** *(`lib/auth.ts` exports `AUTH_DISABLED` and builds the real `NextAuth(...)`
+   only when it is off, so no Discord provider / `AUTH_SECRET` is needed. When on: `auth()` is a
+   `systemAuth()` returning the usual session shape (`role` read from the DB each call),
+   `signIn` redirects to `/dashboard`, `signOut` to `/`, and `handlers` (`/api/auth/*`) answer 404;
+   a boxed `console.warn` fires once at module load. New `lib/system-user.ts` `ensureSystemUser()`
+   (memoized per process, reset on failure so a DB that isn't up yet retries) inserts id `system`,
+   name "System", discordId `0000000000` (`onConflictDoNothing`), gives it `admin` only when it has
+   no role, and runs `ensureDefaultProfile`. `app/layout.tsx` renders a new non-dismissible
+   `AuthOffBanner` (in `NoticeBanners.tsx`) above the MOTD and above the TOS gate, and passes
+   `signOutAction={null}` so `UserMenu` hides Sign out; the landing page already redirects since
+   a session always exists. `docker-compose.yml` + `.env.example` gained `AUTH_DISABLED`. No
+   schema change; middleware untouched. tsc clean; not run.)*
+
+**Tasks 9–11: from owner testing (added 2026-11-13).** Owner decisions **locked**. Build
+order: 9 (small), then 10 (web binds), then 11 (bridge protocol + two new actions), so the
+bridge state change lands once.
+
+9. **Switch profile key: "Cycle" mode** *(feat)*. The Stream Deck **Switch profile**
+   action gets a **mode setting** in its settings panel: **Cycle to next** or **Specific
+   profile** (today's pick-from-list behavior). It stays one action (same UUID
+   `com.soouuupppp.soundboard.profile`), so existing keys keep working.
+   **Locked:**
+   - **Mode is stored per key** (`mode: "cycle" | "specific"`). A key with no `mode` saved
+     is treated as **specific**, so keys set up before this change don't change behavior.
+     New keys default to **cycle** (the sdpi `default` on the mode control). The profile
+     `<sdpi-select>` is shown only in specific mode.
+   - **Cycle is done by the app**, not the plugin, because only the app knows the current
+     order: a new press `{action: "profileCycle", edge: "down"}` → `StreamDeckBridge.tsx`
+     switches to the profile after the active one in `position` order, wrapping from the
+     last to the first. With a single profile it's a successful no-op.
+   - **Key display in cycle mode:** the generated image shows the **active profile's
+     name** and is always highlighted (there's always an active profile); offline = the
+     usual dimmed look. Specific mode keeps today's display.
+   - Files: `lib/streamdeck.ts` (add `"profileCycle"` to `StreamDeckAction`),
+     `components/StreamDeckBridge.tsx`, `electron/streamdeck-bridge.js` (allow the new
+     action in press validation), `streamdeck/src/actions/switch-profile.ts`,
+     `streamdeck/src/bridge.ts` (press type), `ui/switch-profile.html` (mode radio /
+     select + show-hide the list), `src/keys.ts` if needed.
+   **Progress: ✅ Done** *(new press action `profileCycle` added to all four bridge files
+   (`lib/streamdeck.ts`, `StreamDeckBridge.tsx`, the `ACTIONS` set in `streamdeck-bridge.js`, which
+   accepts it with no payload, and the plugin's `BridgeAction`). The dashboard switches to the profile
+   after `activeProfileId`, wrapping; `Dashboard` now sorts the published profiles by `position`.
+   **Deviation:** sdpi-components' `default` is display-only (never saved), so a fresh key would have
+   shown "Cycle" while acting as "specific". The plugin therefore resolves a missing `mode` on
+   `willAppear` and writes it back once: a saved `profileId` (an old key) → `specific`, nothing
+   chosen (a new key) → `cycle`. Old keys behave as before. Cycle keys draw the active profile's
+   name, always lit. The settings panel gained a Mode radio; the plugin pushes `{event:"mode"}` on
+   panel open and on every settings change, and the panel shows the profile list only in specific
+   mode. tsc clean for web + plugin; `streamdeck validate` passes. Not run on hardware.)*
+
+10. **"Play latest Livepad capture" keyboard + VR bind** *(feat)*. Next to the existing
+    capture bind on the Livepad tab, a second bind row **Play latest capture** (keyboard
+    chord, also an Electron global hotkey, plus a VR controller bind).
+    **Locked:**
+    - **Plays `captures[0]`** (newest) through the existing `playCapture` path (Board-style
+      routing, per-card volume, `livepad:<id>` tracking so cancel-all stops it). Pressing
+      again while it plays **restarts** it, like Board keys and the card's play button.
+      No captures → a short toast ("No Livepad captures yet"). It works whether or not
+      Livepad is armed.
+    - **Device-local binds**, mirroring the capture bind: `soundboard:livepadPlayLatestKeybind`
+      and `soundboard:livepadPlayLatestControllerBind` (per-profile `{index,quest}` map),
+      owned by `LivepadProvider` next to the capture binds (exposed through
+      `useLivepadBinds()` so `Dashboard` still doesn't re-render on captures; the provider
+      reads `captures` through a ref). A new **`LIVEPAD_PLAY_LATEST_BIND`** sentinel routes it
+      through all three `Dashboard.tsx` matchers (in-app keyboard, Electron global hook, VR)
+      under the same master keybinds / controllers switches as the capture bind, and its
+      capture flags join the matcher guards. `LivepadProvider` renders the `VrBindPicker` for
+      it like it does for the capture bind.
+    - **No chime** (that's for captures, and the clip itself is the feedback).
+    - UI: reuse `CaptureBindRow` in `LivepadPanel.tsx` with a different label/tooltip.
+    **Progress: ✅ Done** *(`LivepadProvider` owns the device-local
+    `soundboard:livepadPlayLatestKeybind` / `soundboard:livepadPlayLatestControllerBind` (via
+    `useLocalBind`), a second `useChordCapture`, the capture flags, and its own `VrBindPicker`.
+    `triggerPlayLatest` reads a `capturesRef`, so it stays stable and the binds context doesn't
+    change when captures do. It plays `captures[0]` through `playCapture` (which restarts a playing
+    card) or toasts "No Livepad captures yet"; no chime, no armed check. A 200 ms coalesce (shared `CAPTURE_COALESCE_MS`) stops a focused press, which reaches both the in-app listener and the OS hook, from restarting it twice. All of it is exposed only on
+    `LivepadBindsApi` / `useLivepadBinds()`. `Dashboard` adds the `LIVEPAD_PLAY_LATEST_BIND` sentinel to
+    the keyboard binds, the in-app, global-hook and VR routing, the matcher guards and the VR reset
+    effect, under the same master switches. `CaptureBindRow` takes `kind: "capture" | "playLatest"`
+    (label/tooltips change; the chime switch shows only for capture) and the panel renders both rows.
+    tsc clean; not run.)*
+
+11. **Stream Deck: "Play latest capture" + "Play Livepad capture" actions** *(feat)*. Two
+    new keypad actions (Stream Deck only), bringing the plugin to 8 actions.
+    **Locked:**
+    - **Play latest capture** (`com.soouuupppp.soundboard.livepad-play-latest`): no
+      settings; plays the newest capture, same behavior as task 10's bind (restart if
+      playing). No captures → `showAlert`. Key shows the newest capture's name, dimmed
+      when there are none, highlighted while it plays.
+    - **Play Livepad capture** (`com.soouuupppp.soundboard.livepad-play`): a **mode
+      setting** with two options:
+      - **Position N** (default): plays the Nth capture in the current list, **1 = newest**
+        (the grid's order). Setting = a number 1–120 (`slot`). The key follows the list, so a
+        row of keys set to 1, 2, 3… always shows the latest captures and shifts as new ones
+        arrive. Key shows `#N` plus that capture's name; an **empty slot is dimmed** and a
+        press `showAlert`s.
+      - **Specific capture**: pick one capture from a live list in the settings panel
+        (`<sdpi-select datasource="getCaptures" hot-reload label-setting="captureName">`,
+        newest first, labelled name + duration). The key keeps that capture until it's
+        deleted, auto-removed by the size limit, or the session ends (temp captures are
+        deleted when the app closes), after which the key is **dimmed with the cached name**
+        and a press `showAlert`s. This is expected: Livepad captures are temporary.
+      - Pressing a key whose capture is already playing **restarts** it. Highlighted while
+        its capture plays.
+    - **Bridge protocol additions:** `state` gains `captures: [{id, name, durationSec}]`
+      (newest first) and `playingCaptures: [id]` (derived from the `livepad:<id>` keys in
+      `audio.playingSoundIds`). New presses: `{action: "livepadPlayLatest"}`,
+      `{action: "livepadPlay", slot?: number, captureId?: string}` (exactly one of the two).
+      The app answers `not-found` for an empty slot / missing capture. `StreamDeckBridge.tsx`
+      reads captures from `useLivepad()` (it renders nothing, so re-rendering it on capture
+      changes is cheap; `Dashboard` itself stays on `useLivepadBinds()`). Capture ids are
+      OPFS-store ids (uuid-like) and must pass the existing id check.
+    - **Main re-validates** the new state fields like the rest: ≤ 200 captures, names ≤ 120
+      chars control-stripped, ids `[A-Za-z0-9_-]{1,64}`, `durationSec` finite 0–240, `slot`
+      integer 1–120. The plugin caps them again and XML-escapes names into key images.
+    - Like the other actions these work only while the dashboard is mounted, ignore the master
+      keybinds switch, and fire on key-down.
+    - Files: `lib/streamdeck.ts`, `components/StreamDeckBridge.tsx`,
+      `electron/streamdeck-bridge.js`, `streamdeck/src/bridge.ts`, new
+      `streamdeck/src/actions/livepad-play.ts` (+ the latest action, likely in `simple.ts`
+      or the same file), `src/keys.ts`, `src/plugin.ts` (register), `manifest.json` (two
+      actions, monochrome SVG icons, the Play Livepad capture property inspector),
+      new `ui/livepad-play.html`. `streamdeck validate` must still pass. Update the Stream
+      Deck section in Key concepts (action list) and the owner test checklist.
+    **Progress: ✅ Done** *(Protocol in all four files: `livepadPlayLatest` + `livepadPlay`
+    presses (`slot` or `captureId`) and `captures` / `playingCaptures` in `state`. Main
+    (`streamdeck-bridge.js`) accepts `livepadPlay` only with exactly one of an integer `slot` 1–120 or a
+    valid id, and re-validates state: ≤ 200 captures, deduped ids, names control-stripped ≤ 120,
+    `durationSec` finite 0–240, `playingCaptures` ids only. `StreamDeckBridge.tsx` takes
+    `captures`/`playCapture` from `useLivepad()` itself (Dashboard's props are unchanged), derives
+    `playingCaptures` from the `livepad:<id>` keys (the editor's `livepad:preview` is dropped), and
+    answers `not-found` for an empty slot or a missing id. Plugin: `bridge.ts` parses and re-caps the new
+    fields; new `src/actions/livepad-play.ts` (`LivepadPlayLatest`, `LivepadPlay`), a `capturePlay` glyph
+    in `keys.ts`, both registered in `plugin.ts`, and two manifest entries sharing new
+    `imgs/actions/livepad-play` icons. `ui/livepad-play.html` has a mode radio, a position textfield and
+    the `getCaptures` list (labelled name + duration, a gone capture listed as "(gone)"). As in task 9,
+    sdpi's `default` isn't saved, so the plugin writes `mode` (and `slot: "1"`) back on first appear and
+    pushes `{event:"mode"}` to toggle the panel. An invalid typed position draws "Set a position" and
+    alerts. tsc clean for web + plugin; `streamdeck validate` passes. Not run on hardware.)*
+
+12. **Stream Deck plugin update prompt + separate dev userData** *(feat, owner request
+    2026-11-13)*. Stream Deck has no auto-update for self-hosted plugins, so the desktop app offers
+    its bundled plugin when an older one is installed. Also, a source run pointed at a local server
+    must not read the installed app's saved production URL.
+    **Progress: ✅ Done** *(`electron/main.js`: `offerStreamDeckPluginUpdate()` runs 3 s after the
+    window opens; it reads the installed plugin's `manifest.json` `Version` from Elgato's Plugins
+    folder, compares the first three parts with `app.getVersion()` (`compareVersions`), and only
+    prompts when the installed copy is older, the bundled file exists and that app version wasn't
+    skipped. Buttons: Update plugin (runs the existing `installStreamDeckPlugin`, now using a shared
+    `bundledStreamDeckPlugin()` path), Not now, Skip this version (`streamDeckPluginSkipVersion` in
+    `settings.json`). Separately, `!app.isPackaged && SOUNDBOARD_URL` sets `userData` to
+    `%APPDATA%\Soundboard-dev` before `ready`. `node --check` passes and `compareVersions` was
+    spot-checked; the dialog itself only shows in a packaged build with an older plugin installed,
+    so it's untested.)*
+
+**Tasks 13–15: AI voice toggle, persistence, nav chips (owner request 2026-11-13).** Owner
+decisions **locked** (asked and answered): the toggle is a **Stream Deck key only**; the fix for
+"AI settings don't persist" is to **key the mic's config to the profile, not the mic**; the
+navbar gets **separate AI and effects chips**.
+
+13. **Mic voice-changer config keyed to the profile, not the mic's deviceId** *(bug)*. The mic's
+    DSP chain + AI config were stored in the profile's `voiceFx` under the selected mic's
+    `deviceId`. Device ids change with the browser profile, cleared site data, the separate dev
+    `userData` or a different mic, so the config looked lost (AI off again) after a restart.
+    Store it once per profile under a fixed `primary` key; in memory it stays keyed by the live
+    deviceId (mixer + UI unchanged), translated on load, persist and mic change. Old
+    deviceId-keyed maps are adopted on read (current mic first, else the first configured entry).
+    No schema change.
+    **Progress: ✅ Done** *(`lib/audio-output.ts`: `PRIMARY_MIC_KEY` + `primaryOf()`; persists now
+    write `{primary: <mic's SourceFx>}` (nothing when no mic is selected) and keep a
+    `storedPrimaryRef`; loads (profile seed and the localStorage fallback) only set that ref and
+    bump `fxGen`; a rekey effect on `[inputDeviceId, fxGen]` puts the config on the selected mic,
+    applies its chain + AI mute to the mixer and clears the previous key. So a mic change now
+    carries the config over too. The first seed falls back to the persisted mic before the inputs
+    are in state. tsc clean; not run.)*
+14. **Stream Deck "AI voice on/off" key** *(feat)*. New keypad action
+    `com.soouuupppp.soundboard.ai-toggle` (no settings): press flips AI voice for the selected mic
+    (same as the popover switch, so the monitor auto-toggle applies), lit while AI is on, alert
+    when no input device is selected. Protocol: press `aiToggle`, state `aiEnabled` (boolean), in
+    all four bridge files; main re-validates.
+    **Progress: ✅ Done** *(`setAiVoiceEnabled(audio, on)` in `AiVoicePanel.tsx` does what the
+    popover switch does; `StreamDeckBridge.tsx` reads `useAudio()` itself for `aiEnabled` and answers
+    `aiToggle` with it (`unavailable` when no mic). `aiToggle` + `aiEnabled` added in
+    `lib/streamdeck.ts`, `streamdeck-bridge.js` (boolean only) and the plugin's `bridge.ts`. Plugin:
+    `AiToggle` in `simple.ts` with a new `sparkle` glyph, registered, manifest entry after AI replay
+    with `imgs/actions/ai-toggle` icons. tsc clean for web + plugin; `streamdeck validate` passes.)*
+15. **Navbar AI + effects chips** *(feat)*. Beside the Livepad indicator: an **AI voice** chip
+    while AI is enabled for the mic (pulses while recording or converting), and an **Effects**
+    chip while the mic has DSP effects and Virtual Mic mode is on (the chain only runs then).
+    **Progress: ✅ Done** *(new `components/VoiceChangerIndicators.tsx` (violet "AI voice" chip, icon
+    pulses while `pttRecording`/`aiBusy`; sky "Effects" chip), rendered after
+    `LivepadRecordingIndicator` in `AppHeader`. tsc clean; not run.)*
+
+**Owner test checklist (owner has a standard 15-key Stream Deck; all tasks are built headlessly first, then the owner tests everything at once):** install the
+packed plugin, pick sounds from the live list, play while a game has focus, hold PTT
+(records only while held), switch profile, quit the app mid-hold (recording stops),
+open the plugin with the app closed (offline look + alert), and check a second
+Windows user on the same PC can't connect. After tasks 9–11: a cycle-mode profile key
+wraps through profiles and an old profile key still targets its profile; a row of
+Position 1–5 keys shifts when a new capture lands (empty slots dimmed); a Specific
+capture key goes dimmed after that capture is deleted; Play latest restarts on re-press;
+the Play latest keyboard/VR bind works with the app unfocused. Plugin update prompt: with an
+older plugin installed, a packaged newer app offers the bundled one at launch; "Skip this
+version" isn't asked again. Tasks 13–15: turn AI voice on, quit and reopen (and switch mic) and
+it's still on with the same voice; the AI voice on/off key flips it and lights; the AI voice /
+Effects chips appear next to Livepad. After task 8: with
+`AUTH_DISABLED=true` and no Discord vars, `/` opens the TOS gate then the dashboard, Reject lands
+back on the gate, uploads land in `data_public/0000000000/`, `/admin` opens, the red banner shows
+(also in the desktop app), Sign out is hidden and `/api/auth/session` is 404; with it unset,
+Discord login works and no banner shows. New settings panels: a fresh Switch profile key opens
+in Cycle; a Play Livepad capture key opens at Position 1.
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions

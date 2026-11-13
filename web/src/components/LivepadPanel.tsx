@@ -187,7 +187,8 @@ export function LivepadPanel({
         )}
 
         <div className="flex items-center justify-between gap-x-4 gap-y-2 flex-wrap text-sm">
-          <CaptureBindRow />
+          <CaptureBindRow kind="capture" />
+          <CaptureBindRow kind="playLatest" />
           <div className="flex shrink-0 items-center gap-2">
             <span className="whitespace-nowrap text-xs text-muted">Temp {formatBytes(livepad.usedBytes)} of</span>
             <Select
@@ -249,20 +250,37 @@ export function LivepadPanel({
   );
 }
 
-// Keyboard + controller bind setup for the capture trigger, plus the chime switch.
-function CaptureBindRow() {
-  const binds = useLivepadBinds();
+// Keyboard + controller bind setup for one Livepad trigger: "capture" (plus the
+// chime switch) or "playLatest" (plays the newest card).
+function CaptureBindRow({ kind }: { kind: "capture" | "playLatest" }) {
+  const all = useLivepadBinds();
   const { controllerProfile, hasDesktop } = useVr();
+  const binds =
+    kind === "capture"
+      ? all
+      : {
+          keybind: all.playLatestKeybind,
+          setKeybind: all.setPlayLatestKeybind,
+          controllerBind: all.playLatestControllerBind,
+          setControllerBind: all.setPlayLatestControllerBind,
+          capturingKey: all.capturingPlayLatestKey,
+          setCapturingKey: all.setCapturingPlayLatestKey,
+          setCapturingVr: all.setCapturingPlayLatestVr,
+        };
+  const text =
+    kind === "capture"
+      ? { label: "Capture hotkey", what: "capturing", clear: "capture" }
+      : { label: "Play latest hotkey", what: "playing the newest capture", clear: "play-latest" };
   const profileBind = getProfileBind(binds.controllerBind, controllerProfile);
   return (
     <div className="flex items-center gap-x-4 gap-y-2 flex-wrap text-sm">
       <div className="flex items-center gap-1.5 flex-wrap rounded-lg border border-white/10 bg-white/[0.03] p-1">
-        <span className="text-xs text-muted px-1">Capture hotkey</span>
+        <span className="text-xs text-muted px-1">{text.label}</span>
         <button
           type="button"
           className={`btn-ghost text-xs !py-1 !px-2 ${binds.capturingKey ? "text-accent" : ""}`}
           onClick={() => binds.setCapturingKey(!binds.capturingKey)}
-          title="Set a keyboard hotkey for capturing"
+          title={`Set a keyboard hotkey for ${text.what}`}
         >
           <Keyboard size={14} className="mr-1" />
           {binds.capturingKey ? "Hold keys…" : binds.keybind || "Set keybind"}
@@ -272,7 +290,7 @@ function CaptureBindRow() {
             type="button"
             className="btn-ghost text-xs !py-1 !px-1.5"
             onClick={() => binds.setKeybind(null)}
-            aria-label="Clear capture keybind"
+            aria-label={`Clear ${text.clear} keybind`}
           >
             ×
           </button>
@@ -284,7 +302,7 @@ function CaptureBindRow() {
               type="button"
               className="btn-ghost text-xs !py-1 !px-2"
               onClick={() => binds.setCapturingVr(true)}
-              title="Set a controller bind for capturing"
+              title={`Set a controller bind for ${text.what}`}
             >
               <Gamepad2 size={14} className="mr-1" />
               {profileBind ? <VrBindChips value={profileBind} /> : "Set controller"}
@@ -294,7 +312,7 @@ function CaptureBindRow() {
                 type="button"
                 className="btn-ghost text-xs !py-1 !px-1.5"
                 onClick={() => binds.setControllerBind(setProfileBind(binds.controllerBind, controllerProfile, null))}
-                aria-label="Clear capture controller bind"
+                aria-label={`Clear ${text.clear} controller bind`}
               >
                 ×
               </button>
@@ -302,10 +320,12 @@ function CaptureBindRow() {
           </>
         )}
       </div>
-      <label className="flex items-center gap-2 text-xs text-muted select-none">
-        Chime
-        <Toggle size="sm" checked={binds.chimeEnabled} onChange={binds.setChimeEnabled} label="Toggle capture chime" />
-      </label>
+      {kind === "capture" && (
+        <label className="flex items-center gap-2 text-xs text-muted select-none">
+          Chime
+          <Toggle size="sm" checked={all.chimeEnabled} onChange={all.setChimeEnabled} label="Toggle capture chime" />
+        </label>
+      )}
     </div>
   );
 }

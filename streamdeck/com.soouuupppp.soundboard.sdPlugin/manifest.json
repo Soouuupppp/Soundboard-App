@@ -1,0 +1,175 @@
+{
+  "Name": "Soundboard",
+  "Version": "1.5.1.0",
+  "Author": "Soouuupppp",
+  "Description": "Play sounds, stop everything, hold for AI push-to-talk, replay the last AI clip, turn AI voice on or off, take and play Livepad captures and switch profile in the Soundboard desktop app.",
+  "URL": "https://github.com/Soouuupppp/Soundboard-App/releases/latest",
+  "UUID": "com.soouuupppp.soundboard",
+  "Category": "Soundboard",
+  "CategoryIcon": "imgs/plugin/category-icon",
+  "Icon": "imgs/plugin/marketplace",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "24",
+    "Debug": "disabled"
+  },
+  "Actions": [
+    {
+      "Name": "Play sound",
+      "UUID": "com.soouuupppp.soundboard.play",
+      "Icon": "imgs/actions/play/icon",
+      "Tooltip": "Plays a sound from your Saved library.",
+      "PropertyInspectorPath": "ui/play-sound.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/play/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Cancel all",
+      "UUID": "com.soouuupppp.soundboard.cancel-all",
+      "Icon": "imgs/actions/cancel-all/icon",
+      "Tooltip": "Stops every sound that is playing.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/cancel-all/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "AI push-to-talk",
+      "UUID": "com.soouuupppp.soundboard.ai-ptt",
+      "Icon": "imgs/actions/ai-ptt/icon",
+      "Tooltip": "Hold to record your voice, release to convert it with the AI voice.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/actions/ai-ptt/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "AI replay",
+      "UUID": "com.soouuupppp.soundboard.ai-replay",
+      "Icon": "imgs/actions/ai-replay/icon",
+      "Tooltip": "Plays the last AI voice conversion again.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/ai-replay/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "AI voice on/off",
+      "UUID": "com.soouuupppp.soundboard.ai-toggle",
+      "Icon": "imgs/actions/ai-toggle/icon",
+      "Tooltip": "Turns the AI voice changer on or off for your mic.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/ai-toggle/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Livepad capture",
+      "UUID": "com.soouuupppp.soundboard.livepad-capture",
+      "Icon": "imgs/actions/livepad-capture/icon",
+      "Tooltip": "Saves the last seconds of the armed Livepad source as a capture.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/livepad-capture/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Switch profile",
+      "UUID": "com.soouuupppp.soundboard.profile",
+      "Icon": "imgs/actions/profile/icon",
+      "Tooltip": "Cycles to the next Soundboard profile, or makes a chosen one active.",
+      "PropertyInspectorPath": "ui/switch-profile.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/profile/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Play latest capture",
+      "UUID": "com.soouuupppp.soundboard.livepad-play-latest",
+      "Icon": "imgs/actions/livepad-play/icon",
+      "Tooltip": "Plays the newest Livepad capture.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/livepad-play/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Play Livepad capture",
+      "UUID": "com.soouuupppp.soundboard.livepad-play",
+      "Icon": "imgs/actions/livepad-play/icon",
+      "Tooltip": "Plays a Livepad capture by position (1 = newest) or a chosen capture.",
+      "PropertyInspectorPath": "ui/livepad-play.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/livepad-play/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    }
+  ]
+}

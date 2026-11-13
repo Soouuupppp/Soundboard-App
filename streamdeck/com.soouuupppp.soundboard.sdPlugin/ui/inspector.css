@@ -1,0 +1,16 @@
+.status,
+.note {
+  margin: 8px 12px;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 9pt;
+  color: #9a9a9a;
+}
+.status.ok {
+  color: #7bd88f;
+}
+.status.warn {
+  color: #f0b45b;
+}
+.note a {
+  color: #8ab4ff;
+}

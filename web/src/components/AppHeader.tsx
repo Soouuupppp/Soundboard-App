@@ -19,6 +19,7 @@ import { UserMenu } from "@/components/UserMenu";
 import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { QuotaBar } from "@/components/QuotaBar";
 import { LivepadRecordingIndicator } from "@/components/LivepadRecordingIndicator";
+import { VoiceChangerIndicators } from "@/components/VoiceChangerIndicators";
 import logo from "@/app/logo.png";
 
 export function AppHeader({
@@ -30,7 +31,7 @@ export function AppHeader({
   name: string | null;
   image: string | null;
   isAdmin: boolean;
-  signOutAction: () => void;
+  signOutAction: (() => void) | null;
 }) {
   const [panel, setPanel] = useState<Panel>(null);
   const toggle = (p: Exclude<Panel, null>) => setPanel((cur) => (cur === p ? null : p));
@@ -54,6 +55,7 @@ export function AppHeader({
           quota bar spanning beneath). */}
       <div className="flex items-center gap-2">
         <LivepadRecordingIndicator />
+        <VoiceChangerIndicators />
         <ProfileSwitcher />
         <SettingsControl panel={panel} toggle={toggle} close={close} />
         <div className="flex flex-col items-start gap-1 min-w-[12rem] max-w-[16rem]">

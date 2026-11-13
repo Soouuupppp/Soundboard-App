@@ -12,11 +12,19 @@ const fs = require("fs");
 const hotkeys = require("./hotkeys");
 const vrControllers = require("./vr-controllers");
 const audioCapture = require("./audio-capture");
+const streamDeck = require("./streamdeck-bridge");
 const crypto = require("crypto");
 const { autoUpdater } = require("electron-updater");
 
 // --- Settings persistence ---------------------------------------------------
 // Stored in userData (per-OS app data dir) so each friend keeps their own URL.
+
+// A source run pointed at a server via SOUNDBOARD_URL gets its own userData, so it
+// never picks up (or overwrites) the installed app's saved server URL, capture
+// approvals or web storage. Must run before `ready`.
+if (!app.isPackaged && process.env.SOUNDBOARD_URL) {
+  app.setPath("userData", path.join(app.getPath("appData"), "Soundboard-dev"));
+}
 
 const SETTINGS_PATH = () => path.join(app.getPath("userData"), "settings.json");
 
@@ -500,6 +508,165 @@ function registerNativeCaptureIpc() {
   });
 }
 
+// --- Stream Deck bridge -------------------------------------------------------
+// The plugin talks to streamdeck-bridge.js over a named pipe; presses are handed to
+// the dashboard only while it is attached AND the page is still the configured
+// server. Everything the page publishes is re-validated in the bridge.
+
+const STREAMDECK_PRESS_TIMEOUT_MS = 1500;
+let sdAttached = false;
+let sdSeq = 0;
+const sdPending = new Map(); // id -> { resolve, timer }
+
+function sdSendStatus(connected) {
+  if (pageIsTrusted()) mainWindow.webContents.send("soundboard:streamDeck:status", { connected });
+}
+
+function sdDetach() {
+  sdAttached = false;
+  streamDeck.setAvailable(false);
+  for (const [id, p] of sdPending) {
+    clearTimeout(p.timer);
+    p.resolve({ ok: false, error: "unavailable" });
+    sdPending.delete(id);
+  }
+}
+
+function handleStreamDeckPress(press) {
+  if (!sdAttached || !pageIsTrusted()) return Promise.resolve({ ok: false, error: "unavailable" });
+  const id = ++sdSeq;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      sdPending.delete(id);
+      resolve({ ok: false, error: "unavailable" });
+    }, STREAMDECK_PRESS_TIMEOUT_MS);
+    sdPending.set(id, { resolve, timer });
+    mainWindow.webContents.send("soundboard:streamDeck:press", { id, ...press });
+  });
+}
+
+// The packed plugin ships in resources/streamdeck (extraResources); dev runs use the
+// output of `pnpm build:streamdeck`. Opening it hands it to the Stream Deck app.
+const STREAMDECK_PLUGIN_FILE = "com.soouuupppp.soundboard.streamDeckPlugin";
+
+function bundledStreamDeckPlugin() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "streamdeck", STREAMDECK_PLUGIN_FILE)
+    : path.join(__dirname, "resources", "streamdeck", STREAMDECK_PLUGIN_FILE);
+}
+
+async function installStreamDeckPlugin() {
+  const file = bundledStreamDeckPlugin();
+  if (!fs.existsSync(file)) {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "The Stream Deck plugin isn't included in this build.",
+      detail: "Download Soundboard's .streamDeckPlugin file from the GitHub release page instead.",
+    });
+    return;
+  }
+  const err = await shell.openPath(file);
+  if (err) {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "Couldn't open the Stream Deck plugin.",
+      detail: `Is the Elgato Stream Deck app installed?\n\n${err}`,
+    });
+  }
+}
+
+// --- Stream Deck plugin update prompt ----------------------------------------
+// Stream Deck only auto-updates Marketplace plugins, so ours follows the app: the
+// bundled plugin's version is the app's (versions are kept in lockstep; the plugin
+// adds a ".0"). At startup, if an older copy is installed, offer to install the
+// bundled one. Nothing is shown when the plugin isn't installed (no Stream Deck
+// user) or the bundled file is missing. "Skip this version" is remembered in
+// settings.json per app version. Same version number = no prompt, so dev builds of
+// one version never trigger it.
+const STREAMDECK_PLUGIN_UUID = "com.soouuupppp.soundboard";
+
+function installedStreamDeckPluginVersion() {
+  try {
+    const manifest = path.join(
+      app.getPath("appData"),
+      "Elgato",
+      "StreamDeck",
+      "Plugins",
+      `${STREAMDECK_PLUGIN_UUID}.sdPlugin`,
+      "manifest.json",
+    );
+    const v = JSON.parse(fs.readFileSync(manifest, "utf8")).Version;
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// Numeric compare of dotted versions on the first three parts ("1.5.1.0" vs "1.5.1").
+function compareVersions(a, b) {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+async function offerStreamDeckPluginUpdate() {
+  if (process.platform !== "win32") return;
+  const installed = installedStreamDeckPluginVersion();
+  if (!installed) return;
+  const appVersion = app.getVersion();
+  if (compareVersions(installed, appVersion) >= 0) return;
+  if (!fs.existsSync(bundledStreamDeckPlugin())) return;
+  const settings = readSettings();
+  if (settings.streamDeckPluginSkipVersion === appVersion) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "info",
+    buttons: ["Update plugin", "Not now", "Skip this version"],
+    defaultId: 0,
+    cancelId: 1,
+    message: "A newer Stream Deck plugin is included",
+    detail:
+      `Your Stream Deck has Soundboard plugin ${installed}; this app includes ${appVersion}. ` +
+      "Updating keeps your keys and their settings. The Stream Deck app may ask you to confirm.",
+  });
+  if (response === 0) await installStreamDeckPlugin();
+  else if (response === 2) writeSettings({ ...readSettings(), streamDeckPluginSkipVersion: appVersion });
+}
+
+function registerStreamDeckIpc() {
+  ipcMain.handle("soundboard:streamDeck:attach", (evt) => {
+    if (!senderIsTrusted(evt)) return { ok: false };
+    sdAttached = true;
+    streamDeck.setAvailable(true);
+    return { ok: true, connected: streamDeck.authedCount() > 0 };
+  });
+  ipcMain.handle("soundboard:streamDeck:detach", (evt) => {
+    if (!senderIsTrusted(evt)) return;
+    sdDetach();
+  });
+  ipcMain.handle("soundboard:streamDeck:status", (evt) => {
+    if (!senderIsTrusted(evt)) return { connected: false };
+    return { connected: streamDeck.authedCount() > 0 };
+  });
+  ipcMain.on("soundboard:streamDeck:state", (evt, state) => {
+    if (!senderIsTrusted(evt) || !sdAttached) return;
+    streamDeck.setState(state);
+  });
+  ipcMain.on("soundboard:streamDeck:result", (evt, r) => {
+    if (!senderIsTrusted(evt) || !r || typeof r !== "object") return;
+    const p = sdPending.get(r.id);
+    if (!p) return;
+    clearTimeout(p.timer);
+    sdPending.delete(r.id);
+    p.resolve({ ok: r.ok === true, error: r.error });
+  });
+}
+
 // Hosts allowed to navigate inside the window even when they aren't the
 // soundboard origin — needed so OAuth (Discord) completes in-app and the
 // session cookie lands on the right origin.
@@ -639,9 +806,15 @@ function createWindow(url) {
   // Any real navigation or renderer crash ends native capture. Armed state doesn't
   // survive a reload anyway, and PCM must never reach a page it wasn't approved for.
   mainWindow.webContents.on("did-start-navigation", (details) => {
-    if (details.isMainFrame && !details.isSameDocument) stopNativeCapture();
+    if (details.isMainFrame && !details.isSameDocument) {
+      stopNativeCapture();
+      sdDetach();
+    }
   });
-  mainWindow.webContents.on("render-process-gone", () => stopNativeCapture());
+  mainWindow.webContents.on("render-process-gone", () => {
+    stopNativeCapture();
+    sdDetach();
+  });
 
   mainWindow.loadURL(url);
 
@@ -720,6 +893,10 @@ function buildMenu() {
           label: "Forget Livepad capture approvals…",
           click: () => { forgetNativeApprovals(); },
         },
+        {
+          label: "Install Stream Deck plugin…",
+          click: () => { installStreamDeckPlugin(); },
+        },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
       ],
@@ -770,6 +947,10 @@ app.whenReady().then(async () => {
 
   // Defer a few seconds so the window is up before any update toast appears.
   setTimeout(checkForUpdatesInBackground, 4000);
+  // After the window has settled, so the prompt doesn't land on a blank window.
+  setTimeout(() => {
+    offerStreamDeckPluginUpdate().catch((e) => console.warn("[streamdeck] update prompt failed:", e?.message || e));
+  }, 3000);
 
   // Start the passthrough keyboard hook. Each match is forwarded to the
   // renderer the same way the old globalShortcut path did.
@@ -809,6 +990,12 @@ app.whenReady().then(async () => {
   });
 
   registerNativeCaptureIpc();
+  registerStreamDeckIpc();
+  streamDeck.start({
+    appDataDir: app.getPath("appData"),
+    onPress: handleStreamDeckPress,
+    onClientsChanged: (n) => sdSendStatus(n > 0),
+  });
 
   ipcMain.handle("soundboard:registerKeybinds", (_evt, combos) => {
     if (!Array.isArray(combos)) return { ok: false, error: "not an array" };
@@ -835,6 +1022,7 @@ app.on("will-quit", () => {
   hotkeys.stop();
   vrControllers.stop();
   audioCapture.stop();
+  streamDeck.stop();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

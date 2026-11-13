@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import Script from "next/script";
 import { headers } from "next/headers";
-import { auth, signIn, signOut } from "@/lib/auth";
+import { auth, signIn, signOut, AUTH_DISABLED } from "@/lib/auth";
 import { AnalyticsLifecycle } from "@/components/AnalyticsLifecycle";
 import { SiteHeader } from "@/components/SiteHeader";
 import { AppHeader } from "@/components/AppHeader";
@@ -15,7 +15,7 @@ import { ProfileProvider } from "@/components/ProfileProvider";
 import { VoiceChangerProvider } from "@/components/VoiceChangerProvider";
 import { VrProvider } from "@/components/VrProvider";
 import { LivepadProvider } from "@/components/LivepadProvider";
-import { NoticeBanners, type MotdSeverity } from "@/components/NoticeBanners";
+import { NoticeBanners, AuthOffBanner, type MotdSeverity } from "@/components/NoticeBanners";
 import { TosGate } from "@/components/TosGate";
 import { getAppSettings } from "@/lib/app-settings";
 import { TOS_VERSION } from "@/lib/tos";
@@ -133,7 +133,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             name={session.user.name ?? null}
             image={session.user.image ?? null}
             isAdmin={isAdmin}
-            signOutAction={doSignOut}
+            signOutAction={AUTH_DISABLED ? null : doSignOut}
           />
         ) : (
           // Logged-out: just logo + the Discord login button.
@@ -155,6 +155,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </div>
         )}
       </SiteHeader>
+      {AUTH_DISABLED && <AuthOffBanner />}
       {motd && <NoticeBanners motd={motd} />}
       <main className="max-w-[1800px] mx-auto px-4 py-10">{children}</main>
     </>
@@ -203,7 +204,12 @@ gtag('config', ${JSON.stringify(GA_ID)}${gaUserId ? `, { user_id: ${JSON.stringi
         {signedIn && !tosAccepted ? (
           // Block the whole app (every route) behind TOS acceptance. The heavy
           // audio/profile providers stay unmounted until they accept.
-          <TosGate signOutAction={doSignOut} />
+          <>
+            {AUTH_DISABLED && <AuthOffBanner />}
+            {/* With auth off, Reject's signOut just redirects to "/", which lands
+                back on this gate (there's no session to end). */}
+            <TosGate signOutAction={doSignOut} />
+          </>
         ) : signedIn ? (
           <ProfileProvider>
             <AudioProvider>

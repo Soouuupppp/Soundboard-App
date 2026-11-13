@@ -126,6 +126,23 @@ export type AiConfig = {
 export type SourceFx = { effects: EffectConfig[]; ai?: AiConfig };
 export type VoiceFxMap = Record<string, SourceFx>;
 
+// 1.5.1: the mic's voice-changer config (DSP chain + AI) is STORED once per profile
+// under this key, not under the mic's deviceId. Device ids change with the browser
+// profile, cleared site data or a different mic, which made the config (AI on/off
+// included) look lost after a restart. In memory the map stays keyed by the live
+// deviceId, because the mixer and the UI key sources that way; the translation
+// happens only on load, on persist and when the mic changes.
+export const PRIMARY_MIC_KEY = "primary";
+
+// The stored primary-mic config. Pre-1.5.1 maps were keyed by deviceId: prefer the
+// current mic's entry, else adopt the first configured one so a config saved under
+// a stale id isn't lost.
+function primaryOf(stored: VoiceFxMap, mic: string): SourceFx | undefined {
+  if (stored[PRIMARY_MIC_KEY]) return stored[PRIMARY_MIC_KEY];
+  if (mic && stored[mic]) return stored[mic];
+  return Object.entries(stored).find(([k, v]) => k !== SOUNDBOARD_KEY && (v?.ai || v?.effects?.length))?.[1];
+}
+
 // ver/1.4.1 Profiles: when a ProfileBacking is supplied, the voiceFx / soundFx
 // accessors are backed by the ACTIVE profile's server-side config instead of
 // localStorage (the accessor signatures are unchanged). The engine re-seeds the
@@ -314,6 +331,11 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
   const [voiceFx, setVoiceFxState] = useState<VoiceFxMap>({});
   const voiceFxRef = useRef<VoiceFxMap>(voiceFx);
   voiceFxRef.current = voiceFx;
+  // The stored (mic-independent) primary config + the selected mic, for the
+  // load/persist translation above. fxGen re-runs the rekey effect after a load.
+  const storedPrimaryRef = useRef<SourceFx | undefined>(undefined);
+  const inputDeviceIdRef = useRef("");
+  const [fxGen, setFxGen] = useState(0);
 
   // Per-clip Sound Effects (device-local). soundFxRef mirrors it so play()
   // (outside React) reads the current chain without a stale closure.
@@ -329,15 +351,28 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
   // Persist voiceFx / soundFx through the profile backing when present (server,
   // per active profile), else fall back to device-local localStorage. Read the
   // backing via the ref so these stay stable across profile/config changes.
+  // Both store only the selected mic's entry, under PRIMARY_MIC_KEY. With no mic
+  // selected nothing is written, so the stored config survives until one is.
+  const toStored = (v: VoiceFxMap): VoiceFxMap | null => {
+    const mic = inputDeviceIdRef.current;
+    if (!mic) return null;
+    const fx = v[mic];
+    storedPrimaryRef.current = fx;
+    return fx ? { [PRIMARY_MIC_KEY]: fx } : {};
+  };
   const persistVoiceFx = useCallback((v: VoiceFxMap) => {
+    const stored = toStored(v);
+    if (!stored) return;
     const b = backingRef.current;
-    if (b) b.persistVoiceFx(v);
-    else writeVoiceFx(v);
+    if (b) b.persistVoiceFx(stored);
+    else writeVoiceFx(stored);
   }, []);
   const persistVoiceFxDebounced = useCallback((v: VoiceFxMap) => {
+    const stored = toStored(v);
+    if (!stored) return;
     const b = backingRef.current;
-    if (b) b.persistVoiceFx(v); // the backing's server PATCH is already debounced
-    else writeVoiceFxDebounced(v);
+    if (b) b.persistVoiceFx(stored); // the backing's server PATCH is already debounced
+    else writeVoiceFxDebounced(stored);
   }, []);
   const persistSoundFx = useCallback((v: SoundFxMap) => {
     const b = backingRef.current;
@@ -404,7 +439,9 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
     // With a profile backing the fx maps come from the active profile's server
     // config (seeded by the effect below), not localStorage.
     if (!backingRef.current) {
-      setVoiceFxState(readVoiceFx());
+      const mic = Array.isArray(s.inputs) ? (s.inputs.find((i) => i.enabled)?.deviceId ?? "") : "";
+      storedPrimaryRef.current = primaryOf(readVoiceFx(), mic);
+      setFxGen((g) => g + 1);
       setSoundFxState(readSoundFx());
     }
   }, []);
@@ -416,23 +453,17 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
   useEffect(() => {
     const b = backingRef.current;
     if (!b) return;
-    const vf = b.config.voiceFx ?? {};
     const sf = b.config.soundFx ?? {};
-    setVoiceFxState(vf);
+    // The mic's chain/AI is applied by the rekey effect below (fxGen), which also
+    // clears whatever the previous profile set on the mic.
+    // On the first seed the selected mic may not be in state yet, so fall back to the
+    // persisted one (it picks the right entry out of a legacy deviceId-keyed map).
+    const storedMic = (read().inputs ?? []).find((i) => i.enabled)?.deviceId ?? "";
+    storedPrimaryRef.current = primaryOf(b.config.voiceFx ?? {}, inputDeviceIdRef.current || storedMic);
+    setFxGen((g) => g + 1);
     setSoundFxState(sf);
     const m = mixerRef.current;
-    if (m?.isReady()) {
-      // Apply this profile's chains to the live mic source(s); clear any source
-      // that this profile doesn't configure so the previous profile doesn't leak.
-      const keys = new Set<string>([...inputsRef.current.map((i) => i.deviceId), ...Object.keys(vf)]);
-      for (const key of keys) {
-        if (key === SOUNDBOARD_KEY) continue;
-        const fx = vf[key];
-        m.setSourceEffects(key, fx?.effects ?? []);
-        m.setSourceAiMuted(key, !!fx?.ai?.enabled);
-      }
-      for (const fx of Object.values(sf)) m.preloadEffects(fx);
-    }
+    if (m?.isReady()) for (const fx of Object.values(sf)) m.preloadEffects(fx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backing?.activeProfileId, backing?.loadGen]);
 
@@ -503,6 +534,25 @@ export function useAudioOutput(backing?: ProfileBacking): AudioOutput {
   // collapses `inputs` to just that device (the multi-source plumbing stays in the
   // mixer for a future UI). "" clears the mic entirely.
   const inputDeviceId = inputs.find((i) => i.enabled)?.deviceId ?? "";
+  inputDeviceIdRef.current = inputDeviceId;
+
+  // Put the stored primary config on whichever mic is selected (after a load, a
+  // profile switch or a mic change) and apply it to the mixer, clearing the key it
+  // was on before so a previous mic or profile doesn't keep its chain/AI mute.
+  useEffect(() => {
+    const prev = voiceFxRef.current;
+    const fx = storedPrimaryRef.current;
+    const live: VoiceFxMap = inputDeviceId && fx ? { [inputDeviceId]: fx } : {};
+    voiceFxRef.current = live;
+    setVoiceFxState(live);
+    const m = mixerRef.current;
+    if (!m) return;
+    for (const key of new Set([...Object.keys(prev), ...Object.keys(live), ...(inputDeviceId ? [inputDeviceId] : [])])) {
+      if (key === SOUNDBOARD_KEY) continue;
+      m.setSourceEffects(key, live[key]?.effects ?? []);
+      m.setSourceAiMuted(key, !!live[key]?.ai?.enabled);
+    }
+  }, [inputDeviceId, fxGen]);
   const setInputDeviceId = useCallback((id: string) => {
     setInputs(() => {
       const next: MixerInputState[] = id ? [{ deviceId: id, enabled: true, volume: 1 }] : [];

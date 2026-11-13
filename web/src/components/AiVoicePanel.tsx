@@ -197,6 +197,17 @@ export function AiVoicePanel({ audio }: { audio: AudioOutput }) {
   );
 }
 
+// Turn AI voice on/off for the selected mic, exactly like the popover switch (so
+// the raw-mic mute and the monitor auto-toggle apply). Used by the Stream Deck key.
+// False when no input device is selected (there's nothing to attach AI to).
+export function setAiVoiceEnabled(audio: AudioOutput, on: boolean): boolean {
+  const key = audio.inputDeviceId;
+  if (!key) return false;
+  const ai = audio.voiceFx[key]?.ai;
+  audio.setSourceAi(key, { ...(ai ?? { voiceId: AI_PRESETS[0].id }), enabled: on });
+  return true;
+}
+
 // The AI voice CONFIG section for the mic: enable (mutes the raw mic), pick an engine
 // (rvc_zero free / ElevenLabs / Respeecher), a voice + mode, the required privacy
 // disclosure, a usage meter, savable/sharable voice presets and provider attribution.
