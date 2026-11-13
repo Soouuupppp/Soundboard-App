@@ -7,7 +7,14 @@
 // master keybinds switch — they can't be pressed by typing.
 
 import { useEffect, useMemo, useRef } from "react";
+import { useLivepad } from "@/components/LivepadProvider";
+import { useAudio } from "@/components/AudioProvider";
+import { setAiVoiceEnabled } from "@/components/AiVoicePanel";
+import { livepadPlaybackKey } from "@/lib/livepad";
 import { getStreamDeckBridge, type StreamDeckPress, type StreamDeckState } from "@/lib/streamdeck";
+
+// livepad:<captureId> keys in playingSoundIds; the editor's "livepad:preview" is not a card.
+const LIVEPAD_PREFIX = livepadPlaybackKey("");
 
 type SavedSound = { entryId: string; soundId: string; name: string; onBoard: boolean };
 
@@ -38,9 +45,16 @@ export function StreamDeckBridge({
   replayLastConversion: () => void;
   triggerLivepadCapture: () => void;
 }) {
+  // Captures come straight from the Livepad context here, not through Dashboard's
+  // props: this component renders nothing, so re-rendering it on every capture
+  // change is cheap, while Dashboard stays on useLivepadBinds().
+  const { captures, playCapture } = useLivepad();
+  const audio = useAudio();
+  const aiEnabled = !!audio.voiceFx[audio.inputDeviceId]?.ai?.enabled;
+
   // Latest values for the press handler, so attaching happens once per mount.
-  const live = useRef({ sounds, profiles, setActiveProfile, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture });
-  live.current = { sounds, profiles, setActiveProfile, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture };
+  const live = useRef({ audio, aiEnabled, captures, playCapture, sounds, profiles, activeProfileId, setActiveProfile, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture });
+  live.current = { audio, aiEnabled, captures, playCapture, sounds, profiles, activeProfileId, setActiveProfile, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture };
   const pttHeldRef = useRef(false);
 
   useEffect(() => {
@@ -81,6 +95,34 @@ export function StreamDeckBridge({
           l.setActiveProfile(p.profileId!);
           return ok();
         }
+        case "profileCycle": {
+          // Next profile in `position` order (the list arrives sorted), wrapping
+          // last → first. One profile = nothing to switch to, still a success.
+          if (p.edge !== "down" || l.profiles.length < 2) return ok();
+          const i = l.profiles.findIndex((x) => x.id === l.activeProfileId);
+          l.setActiveProfile(l.profiles[(i + 1) % l.profiles.length].id);
+          return ok();
+        }
+        case "aiToggle":
+          if (p.edge !== "down") return ok();
+          // No mic selected → nothing to turn AI on for.
+          return setAiVoiceEnabled(l.audio, !l.aiEnabled) ? ok() : bridge.result(p.id, false, "unavailable");
+        case "livepadPlayLatest":
+        case "livepadPlay": {
+          if (p.edge !== "down") return ok();
+          // playCapture restarts a card that's already playing, like the grid's button.
+          const c =
+            p.action === "livepadPlayLatest"
+              ? l.captures[0]
+              : p.captureId
+                ? l.captures.find((x) => x.id === p.captureId)
+                : p.slot
+                  ? l.captures[p.slot - 1]
+                  : undefined;
+          if (!c) return bridge.result(p.id, false, "not-found");
+          void l.playCapture(c);
+          return ok();
+        }
         default:
           return bridge.result(p.id, false, "unavailable");
       }
@@ -103,8 +145,14 @@ export function StreamDeckBridge({
       activeProfileId,
       playing: [...playingSoundIds],
       aiPtt: aiPttRecording,
+      aiEnabled,
+      captures: captures.map((c) => ({ id: c.id, name: c.name, durationSec: c.durationSec })),
+      playingCaptures: [...playingSoundIds]
+        .filter((k) => k.startsWith(LIVEPAD_PREFIX))
+        .map((k) => k.slice(LIVEPAD_PREFIX.length))
+        .filter((id) => captures.some((c) => c.id === id)),
     }),
-    [sounds, profiles, activeProfileId, playingSoundIds, aiPttRecording],
+    [sounds, profiles, activeProfileId, playingSoundIds, aiPttRecording, aiEnabled, captures],
   );
 
   useEffect(() => {

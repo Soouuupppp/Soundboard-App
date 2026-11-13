@@ -8,6 +8,14 @@
     <link rel="stylesheet" href="inspector.css" />
   </head>
   <body>
+    <sdpi-item label="Mode">
+      <!-- default is display-only in sdpi; the plugin saves the real mode. -->
+      <sdpi-radio setting="mode" default="cycle" columns="1">
+        <option value="cycle">Cycle to next profile</option>
+        <option value="specific">Specific profile</option>
+      </sdpi-radio>
+    </sdpi-item>
+    <div id="profile-item" hidden>
     <sdpi-item label="Profile">
       <sdpi-select
         setting="profileId"
@@ -18,8 +26,23 @@
         placeholder="Choose a profile"
       ></sdpi-select>
     </sdpi-item>
+    </div>
     <p id="status" class="status">Checking for Soundboard…</p>
-    <p class="note">The button lights up while this profile is active. <a href="#" id="help">Help</a></p>
+    <p class="note" id="note-specific" hidden>The button lights up while this profile is active.</p>
+    <p class="note" id="note-cycle">Each press switches to the next profile, in the switcher's order. The button shows the active profile.</p>
+    <p class="note"><a href="#" id="help">Help</a></p>
     <script src="inspector.js"></script>
+    <script>
+      // The plugin tells us the key's mode (it also resolves keys saved before
+      // modes existed), so the profile list shows only for "Specific profile".
+      window.SDPIComponents.streamDeckClient.sendToPropertyInspector.subscribe((msg) => {
+        const p = msg && msg.payload;
+        if (!p || p.event !== "mode") return;
+        const specific = p.mode === "specific";
+        document.getElementById("profile-item").hidden = !specific;
+        document.getElementById("note-specific").hidden = !specific;
+        document.getElementById("note-cycle").hidden = specific;
+      });
+    </script>
   </body>
 </html>

@@ -183,6 +183,22 @@ function DesktopPromoBanner() {
 
 // Banner stack rendered below the nav for signed-in users only (the parent
 // layout gates on the session before rendering this).
+// AUTH_DISABLED=true warning. Non-dismissible and shown on every page (Electron
+// too) so a server left running with auth off can't go unnoticed.
+export function AuthOffBanner() {
+  return (
+    <div className="max-w-[1800px] mx-auto px-4 mt-3">
+      <div
+        role="alert"
+        className="flex items-center gap-2 rounded-lg border border-red-500/50 bg-red-500/20 px-3 py-2 text-sm font-semibold text-white"
+      >
+        <AlertTriangle size={16} className="text-red-300 shrink-0" />
+        Auth is OFF — everyone who can reach this server is the admin.
+      </div>
+    </div>
+  );
+}
+
 export function NoticeBanners({ motd }: { motd: Motd }) {
   return (
     <div className="max-w-[1800px] mx-auto px-4 mt-3 flex flex-col gap-2">

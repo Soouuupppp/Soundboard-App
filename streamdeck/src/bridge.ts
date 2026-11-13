@@ -7,12 +7,25 @@ import { readFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 
-export type BridgeAction = "play" | "cancelAll" | "aiPtt" | "aiReplay" | "livepad" | "profile";
+// Keep in sync with web/src/lib/streamdeck.ts and electron/streamdeck-bridge.js.
+export type BridgeAction =
+  | "play"
+  | "cancelAll"
+  | "aiPtt"
+  | "aiReplay"
+  | "livepad"
+  | "profile"
+  | "profileCycle"
+  | "livepadPlayLatest"
+  | "livepadPlay"
+  | "aiToggle";
 export type BridgeError = "offline" | "not-found" | "unavailable";
 export type PressResult = { ok: boolean; error?: BridgeError };
 
 export type BridgeSound = { soundId: string; name: string; onBoard: boolean };
 export type BridgeProfile = { id: string; name: string };
+export type BridgeCapture = { id: string; name: string; durationSec: number };
+export type PressExtra = { soundId?: string; profileId?: string; slot?: number; captureId?: string };
 
 export type BridgeState = {
   /** Authenticated to the app and received its state. */
@@ -24,6 +37,11 @@ export type BridgeState = {
   activeProfileId: string | null;
   playing: Set<string>;
   aiPtt: boolean;
+  /** AI voice is enabled for the selected mic. */
+  aiEnabled: boolean;
+  /** Livepad temp captures, newest first. */
+  captures: BridgeCapture[];
+  playingCaptures: Set<string>;
 };
 
 const PROTOCOL_VERSION = 1;
@@ -49,6 +67,9 @@ const offlineState = (): BridgeState => ({
   activeProfileId: null,
   playing: new Set(),
   aiPtt: false,
+  aiEnabled: false,
+  captures: [],
+  playingCaptures: new Set(),
 });
 
 class Bridge {
@@ -73,7 +94,7 @@ class Bridge {
     return () => this.listeners.delete(fn);
   }
 
-  press(action: BridgeAction, edge: "down" | "up", extra: { soundId?: string; profileId?: string } = {}): Promise<PressResult> {
+  press(action: BridgeAction, edge: "down" | "up", extra: PressExtra = {}): Promise<PressResult> {
     const socket = this.socket;
     if (!socket || !this.state.connected) return Promise.resolve({ ok: false, error: "offline" });
     const id = ++this.seq;
@@ -205,6 +226,17 @@ function parseState(m: Record<string, unknown>): BridgeState {
   s.activeProfileId = str(m.activeProfileId, 64) || null;
   if (Array.isArray(m.playing)) for (const id of m.playing.slice(0, 2000)) if (typeof id === "string") s.playing.add(id);
   s.aiPtt = m.aiPtt === true;
+  s.aiEnabled = m.aiEnabled === true;
+  if (Array.isArray(m.captures)) {
+    for (const x of m.captures.slice(0, 200)) {
+      const id = str(x?.id, 64);
+      const d = typeof x?.durationSec === "number" && Number.isFinite(x.durationSec) ? x.durationSec : NaN;
+      if (id && d >= 0 && d <= 240) s.captures.push({ id, name: str(x.name, 120), durationSec: d });
+    }
+  }
+  if (Array.isArray(m.playingCaptures)) {
+    for (const id of m.playingCaptures.slice(0, 200)) if (typeof id === "string") s.playingCaptures.add(id);
+  }
   return s;
 }
 

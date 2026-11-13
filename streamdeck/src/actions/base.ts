@@ -117,7 +117,13 @@ export abstract class SoundboardAction<T extends JsonObject> extends SingletonAc
     }
   }
 
-  private visibleInspectorIsMine(): Action<JsonObject> | undefined {
+  /** Message this action's open settings panel (no-op when another one is showing). */
+  protected async sendToOpenInspector(payload: JsonObject): Promise<void> {
+    if (!this.visibleInspectorIsMine()) return;
+    await streamDeck.ui.sendToPropertyInspector(payload);
+  }
+
+  protected visibleInspectorIsMine(): Action<JsonObject> | undefined {
     const a = streamDeck.ui.action;
     return a && a.manifestId === this.manifestId ? a : undefined;
   }

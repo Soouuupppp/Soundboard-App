@@ -64,15 +64,24 @@ come from each program's own version information.
 `../streamdeck` is our own Elgato Stream Deck plugin (Windows only, keypad buttons only).
 It talks to this app over a local named pipe, so it only works with the desktop app,
 not the browser version. Buttons: **Play sound**, **Cancel all**, **AI push-to-talk**
-(hold), **AI replay**, **Livepad capture** and **Switch profile**. They work while the
-dashboard is open; otherwise the key shows Stream Deck's alert.
+(hold), **AI replay**, **AI voice on/off**, **Livepad capture**, **Switch profile** (cycle to the next profile,
+or a chosen one), **Play latest capture** and **Play Livepad capture** (by position,
+1 = newest, or a chosen capture). They work while the dashboard is open; otherwise the
+key shows Stream Deck's alert. Livepad captures are temporary, so a key for a deleted
+capture dims.
 
 Install it with **File → Install Stream Deck plugin…** (opens the bundled
 `.streamDeckPlugin`, which the Stream Deck app installs), or download
 `com.soouuupppp.soundboard.streamDeckPlugin` from the GitHub release. Then drag the
-actions from the **Soundboard** category onto keys; Play sound and Switch profile list
-your sounds and profiles live while the app's dashboard is open. **Settings → Stream
+actions from the **Soundboard** category onto keys; Play sound, Switch profile and Play
+Livepad capture list your sounds, profiles and captures live while the app's dashboard
+is open. **Settings → Stream
 Deck** in the app shows whether the plugin is connected.
+
+Stream Deck only auto-updates Marketplace plugins, so ours follows the app: when the app
+has updated and the installed plugin is older, the app offers the bundled one a few
+seconds after launch (Update plugin / Not now / Skip this version). Keys and their
+settings carry over. You can also reinstall any time from the File menu.
 
 `pnpm build:streamdeck` builds and packs the plugin into `resources/streamdeck`
 (also run by `dist`/`dist:win`/`dist:portable`/`release:win`). In dev, the File menu

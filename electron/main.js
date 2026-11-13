@@ -19,6 +19,13 @@ const { autoUpdater } = require("electron-updater");
 // --- Settings persistence ---------------------------------------------------
 // Stored in userData (per-OS app data dir) so each friend keeps their own URL.
 
+// A source run pointed at a server via SOUNDBOARD_URL gets its own userData, so it
+// never picks up (or overwrites) the installed app's saved server URL, capture
+// approvals or web storage. Must run before `ready`.
+if (!app.isPackaged && process.env.SOUNDBOARD_URL) {
+  app.setPath("userData", path.join(app.getPath("appData"), "Soundboard-dev"));
+}
+
 const SETTINGS_PATH = () => path.join(app.getPath("userData"), "settings.json");
 
 function readSettings() {
@@ -542,10 +549,14 @@ function handleStreamDeckPress(press) {
 // output of `pnpm build:streamdeck`. Opening it hands it to the Stream Deck app.
 const STREAMDECK_PLUGIN_FILE = "com.soouuupppp.soundboard.streamDeckPlugin";
 
-async function installStreamDeckPlugin() {
-  const file = app.isPackaged
+function bundledStreamDeckPlugin() {
+  return app.isPackaged
     ? path.join(process.resourcesPath, "streamdeck", STREAMDECK_PLUGIN_FILE)
     : path.join(__dirname, "resources", "streamdeck", STREAMDECK_PLUGIN_FILE);
+}
+
+async function installStreamDeckPlugin() {
+  const file = bundledStreamDeckPlugin();
   if (!fs.existsSync(file)) {
     await dialog.showMessageBox({
       type: "error",
@@ -562,6 +573,69 @@ async function installStreamDeckPlugin() {
       detail: `Is the Elgato Stream Deck app installed?\n\n${err}`,
     });
   }
+}
+
+// --- Stream Deck plugin update prompt ----------------------------------------
+// Stream Deck only auto-updates Marketplace plugins, so ours follows the app: the
+// bundled plugin's version is the app's (versions are kept in lockstep; the plugin
+// adds a ".0"). At startup, if an older copy is installed, offer to install the
+// bundled one. Nothing is shown when the plugin isn't installed (no Stream Deck
+// user) or the bundled file is missing. "Skip this version" is remembered in
+// settings.json per app version. Same version number = no prompt, so dev builds of
+// one version never trigger it.
+const STREAMDECK_PLUGIN_UUID = "com.soouuupppp.soundboard";
+
+function installedStreamDeckPluginVersion() {
+  try {
+    const manifest = path.join(
+      app.getPath("appData"),
+      "Elgato",
+      "StreamDeck",
+      "Plugins",
+      `${STREAMDECK_PLUGIN_UUID}.sdPlugin`,
+      "manifest.json",
+    );
+    const v = JSON.parse(fs.readFileSync(manifest, "utf8")).Version;
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// Numeric compare of dotted versions on the first three parts ("1.5.1.0" vs "1.5.1").
+function compareVersions(a, b) {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+async function offerStreamDeckPluginUpdate() {
+  if (process.platform !== "win32") return;
+  const installed = installedStreamDeckPluginVersion();
+  if (!installed) return;
+  const appVersion = app.getVersion();
+  if (compareVersions(installed, appVersion) >= 0) return;
+  if (!fs.existsSync(bundledStreamDeckPlugin())) return;
+  const settings = readSettings();
+  if (settings.streamDeckPluginSkipVersion === appVersion) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "info",
+    buttons: ["Update plugin", "Not now", "Skip this version"],
+    defaultId: 0,
+    cancelId: 1,
+    message: "A newer Stream Deck plugin is included",
+    detail:
+      `Your Stream Deck has Soundboard plugin ${installed}; this app includes ${appVersion}. ` +
+      "Updating keeps your keys and their settings. The Stream Deck app may ask you to confirm.",
+  });
+  if (response === 0) await installStreamDeckPlugin();
+  else if (response === 2) writeSettings({ ...readSettings(), streamDeckPluginSkipVersion: appVersion });
 }
 
 function registerStreamDeckIpc() {
@@ -873,6 +947,10 @@ app.whenReady().then(async () => {
 
   // Defer a few seconds so the window is up before any update toast appears.
   setTimeout(checkForUpdatesInBackground, 4000);
+  // After the window has settled, so the prompt doesn't land on a blank window.
+  setTimeout(() => {
+    offerStreamDeckPluginUpdate().catch((e) => console.warn("[streamdeck] update prompt failed:", e?.message || e));
+  }, 3000);
 
   // Start the passthrough keyboard hook. Each match is forwarded to the
   // renderer the same way the old globalShortcut path did.

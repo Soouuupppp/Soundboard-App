@@ -27,10 +27,27 @@ const STATE_DEBOUNCE_MS = 100;
 // Caps on what the (semi-trusted, remote) page may publish through us.
 const MAX_SOUNDS = 2000;
 const MAX_PROFILES = 100;
+const MAX_CAPTURES = 200;
+const MAX_CAPTURE_SEC = 240;
+const MAX_SLOT = 120;
 const MAX_NAME = 120;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-const ACTIONS = new Set(["play", "cancelAll", "aiPtt", "aiReplay", "livepad", "profile"]);
+// Keep in sync with web/src/lib/streamdeck.ts and streamdeck/src/bridge.ts.
+// profileCycle carries no payload: the app picks the next profile itself.
+// livepadPlay carries exactly one of slot (1-based position) or captureId.
+const ACTIONS = new Set([
+  "play",
+  "cancelAll",
+  "aiPtt",
+  "aiReplay",
+  "livepad",
+  "profile",
+  "profileCycle",
+  "livepadPlayLatest",
+  "livepadPlay",
+  "aiToggle",
+]);
 const ERRORS = new Set(["offline", "not-found", "unavailable"]);
 
 let server = null;
@@ -44,7 +61,7 @@ let pageState = emptyPageState();
 let stateTimer = null;
 
 function emptyPageState() {
-  return { sounds: [], profiles: [], activeProfileId: null, playing: [], aiPtt: false };
+  return { sounds: [], profiles: [], activeProfileId: null, playing: [], aiPtt: false, aiEnabled: false, captures: [], playingCaptures: [] };
 }
 
 function pipeName() {
@@ -93,6 +110,21 @@ function sanitizeState(raw) {
     s.playing = raw.playing.slice(0, MAX_SOUNDS).map(cleanId).filter(Boolean);
   }
   s.aiPtt = raw.aiPtt === true;
+  s.aiEnabled = raw.aiEnabled === true;
+  if (Array.isArray(raw.captures)) {
+    const seen = new Set();
+    for (const x of raw.captures) {
+      if (s.captures.length >= MAX_CAPTURES) break;
+      const id = cleanId(x && x.id);
+      const d = x && x.durationSec;
+      if (!id || seen.has(id) || typeof d !== "number" || !Number.isFinite(d) || d < 0 || d > MAX_CAPTURE_SEC) continue;
+      seen.add(id);
+      s.captures.push({ id, name: cleanName(x.name) || "Capture", durationSec: d });
+    }
+  }
+  if (Array.isArray(raw.playingCaptures)) {
+    s.playingCaptures = raw.playingCaptures.slice(0, MAX_CAPTURES).map(cleanId).filter(Boolean);
+  }
   return s;
 }
 
@@ -142,6 +174,18 @@ function cleanPress(m) {
   if (m.action === "profile") {
     press.profileId = cleanId(m.profileId);
     if (!press.profileId) return null;
+  }
+  if (m.action === "livepadPlay") {
+    const hasSlot = m.slot !== undefined;
+    const hasId = m.captureId !== undefined;
+    if (hasSlot === hasId) return null; // exactly one
+    if (hasSlot) {
+      if (!Number.isInteger(m.slot) || m.slot < 1 || m.slot > MAX_SLOT) return null;
+      press.slot = m.slot;
+    } else {
+      press.captureId = cleanId(m.captureId);
+      if (!press.captureId) return null;
+    }
   }
   return press;
 }

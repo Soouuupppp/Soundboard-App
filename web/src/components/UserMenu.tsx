@@ -16,7 +16,8 @@ export function UserMenu({
   name: string | null;
   image: string | null;
   isAdmin: boolean;
-  signOutAction: () => void;
+  // null when AUTH_DISABLED (there's no session to end) → Sign out is hidden.
+  signOutAction: (() => void) | null;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -73,6 +74,7 @@ export function UserMenu({
               <Shield size={14} /> Admin
             </Link>
           )}
+          {signOutAction && (
           <form action={signOutAction}>
             <button
               type="submit"
@@ -82,6 +84,7 @@ export function UserMenu({
               <LogOut size={14} /> Sign out
             </button>
           </form>
+          )}
         </div>
       )}
     </div>

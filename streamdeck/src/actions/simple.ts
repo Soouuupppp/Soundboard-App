@@ -1,5 +1,5 @@
-// The four actions without options: Cancel all, AI push-to-talk (hold), AI replay
-// and Livepad capture.
+// The actions without options: Cancel all, AI push-to-talk (hold), AI replay,
+// AI voice on/off and Livepad capture.
 
 import { action, type KeyDownEvent, type KeyUpEvent } from "@elgato/streamdeck";
 
@@ -42,6 +42,17 @@ export class AiReplay extends SoundboardAction<NoSettings> {
   }
   protected look(): KeyLook {
     return { glyph: "replay", label: "AI replay" };
+  }
+}
+
+/** Turns AI voice on/off for the selected mic; lit while it's on. */
+@action({ UUID: "com.soouuupppp.soundboard.ai-toggle" })
+export class AiToggle extends SoundboardAction<NoSettings> {
+  override async onKeyDown(ev: KeyDownEvent<NoSettings>): Promise<void> {
+    await this.report(ev.action, bridge.press("aiToggle", "down"));
+  }
+  protected look(_s: NoSettings, state: BridgeState): KeyLook {
+    return { glyph: "sparkle", label: state.aiEnabled ? "AI voice on" : "AI voice off", active: state.aiEnabled, accent: "#7c3aed" };
   }
 }
 

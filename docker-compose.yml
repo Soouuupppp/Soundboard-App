@@ -53,6 +53,10 @@ services:
       # Container listens on this port; must match the right-hand side of the ports mapping below.
       PORT: 5050
       DATABASE_URL: ${DATABASE_URL}
+      # ver/1.5.1: "true" turns login OFF — every request runs as one seeded admin
+      # "system" user (local testing). Runtime, not a build ARG. NEVER on a server
+      # others can reach: anyone who can open it is the admin.
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
       AUTH_SECRET: ${AUTH_SECRET}
       AUTH_URL: ${AUTH_URL}
       NEXTAUTH_URL: ${NEXTAUTH_URL}

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Play Livepad capture</title>
+    <meta charset="utf-8" />
+    <!-- sdpi-components v4.0.1, vendored (no remote scripts in the settings panel). -->
+    <script src="sdpi-components.js"></script>
+    <link rel="stylesheet" href="inspector.css" />
+  </head>
+  <body>
+    <sdpi-item label="Plays">
+      <!-- default is display-only in sdpi; the plugin saves the real mode. -->
+      <sdpi-radio setting="mode" default="position" columns="1">
+        <option value="position">Capture at a position</option>
+        <option value="specific">A specific capture</option>
+      </sdpi-radio>
+    </sdpi-item>
+    <div id="position-item">
+      <sdpi-item label="Position">
+        <sdpi-textfield setting="slot" default="1" maxlength="3" pattern="[0-9]{1,3}" placeholder="1"></sdpi-textfield>
+      </sdpi-item>
+      <p class="note">1 is the newest capture, 2 the one before it, and so on (up to 120). The key follows the list as new captures arrive.</p>
+    </div>
+    <div id="specific-item" hidden>
+      <sdpi-item label="Capture">
+        <!-- Live list from the app (plugin answers "getCaptures"), newest first. -->
+        <sdpi-select
+          setting="captureId"
+          label-setting="captureName"
+          datasource="getCaptures"
+          hot-reload
+          loading="Loading captures…"
+          placeholder="Choose a capture"
+        ></sdpi-select>
+      </sdpi-item>
+      <p class="note">Livepad captures are temporary: once this one is deleted, or the app closes, the key dims.</p>
+    </div>
+    <p id="status" class="status">Checking for Soundboard…</p>
+    <p class="note"><a href="#" id="help">Help</a></p>
+    <script src="inspector.js"></script>
+    <script>
+      window.SDPIComponents.streamDeckClient.sendToPropertyInspector.subscribe((msg) => {
+        const p = msg && msg.payload;
+        if (!p || p.event !== "mode") return;
+        const specific = p.mode === "specific";
+        document.getElementById("position-item").hidden = specific;
+        document.getElementById("specific-item").hidden = !specific;
+      });
+    </script>
+  </body>
+</html>

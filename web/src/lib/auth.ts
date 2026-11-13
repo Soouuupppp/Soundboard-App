@@ -1,16 +1,41 @@
-import NextAuth from "next-auth";
+import NextAuth, { type Session } from "next-auth";
+import { redirect } from "next/navigation";
 import Discord from "next-auth/providers/discord";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users, accounts, sessions, verificationTokens, roles } from "@/db/schema";
+import { ensureSystemUser, SYSTEM_USER_ID, SYSTEM_USER_NAME, SYSTEM_DISCORD_ID } from "@/lib/system-user";
+
+// AUTH_DISABLED=true turns login off entirely (local testing): every request runs
+// as one seeded "system" admin user. Runtime env, so one image starts either way.
+// This file is the ONLY switch point — every caller keeps using auth()/signIn/
+// signOut/handlers unchanged. Nothing reads the session any other way (no
+// SessionProvider/useSession), so this covers the whole app.
+export const AUTH_DISABLED = process.env.AUTH_DISABLED === "true";
+
+if (AUTH_DISABLED) {
+  console.warn(
+    [
+      "",
+      "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+      "!! AUTH_DISABLED=true — authentication is OFF.                        !!",
+      "!! Everyone who can reach this server is the admin \"system\" user.    !!",
+      "!! Use this for local testing only. Never expose this server.         !!",
+      "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+      "",
+    ].join("\n"),
+  );
+}
 
 const adminIds = (process.env.DISCORD_ADMIN_IDS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+// The real Auth.js instance — not constructed at all when auth is off, so the
+// Discord vars and AUTH_SECRET aren't needed.
+const nextAuth = AUTH_DISABLED ? null : NextAuth({
   adapter: DrizzleAdapter(db, {
     usersTable: users,
     accountsTable: accounts,
@@ -98,6 +123,46 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
 });
+
+// Same shape the `session` callback builds; role read from the DB on every call
+// so a role change made in /admin shows up immediately.
+async function systemAuth(): Promise<Session> {
+  await ensureSystemUser();
+  const [row] = await db
+    .select({ roleId: users.roleId, name: users.name, image: users.image })
+    .from(users)
+    .where(eq(users.id, SYSTEM_USER_ID))
+    .limit(1);
+  let roleName: string | null = null;
+  if (row?.roleId) {
+    const [r] = await db.select({ name: roles.name }).from(roles).where(eq(roles.id, row.roleId)).limit(1);
+    roleName = r?.name ?? null;
+  }
+  return {
+    expires: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString(),
+    user: {
+      id: SYSTEM_USER_ID,
+      name: row?.name ?? SYSTEM_USER_NAME,
+      image: row?.image ?? null,
+      discordId: SYSTEM_DISCORD_ID,
+      role: roleName,
+    },
+  };
+}
+
+const notFound = () => new Response("Not found", { status: 404 });
+
+export const handlers = nextAuth?.handlers ?? { GET: notFound, POST: notFound };
+export const auth: () => Promise<Session | null> = nextAuth ? nextAuth.auth : systemAuth;
+// With auth off there's no session to create or end: "sign in" lands on the
+// dashboard and "sign out" (incl. TOS Reject) just goes back to "/", which
+// redirects to the dashboard / TOS gate again.
+export const signIn: (provider?: string, opts?: { redirectTo?: string }) => Promise<unknown> = nextAuth
+  ? nextAuth.signIn
+  : async () => redirect("/dashboard");
+export const signOut: (opts?: { redirectTo?: string }) => Promise<unknown> = nextAuth
+  ? nextAuth.signOut
+  : async () => redirect("/");
 
 export function isAdminSession(s: { user?: { role?: string | null } } | null) {
   return s?.user?.role === "admin";

@@ -98,6 +98,7 @@ const AI_REPLAY_BIND = "__aiReplay__";
 
 // Sentinel entryId for the Livepad capture hotkey. Captures only, never plays.
 const LIVEPAD_CAPTURE_BIND = "__livepadCapture__";
+const LIVEPAD_PLAY_LATEST_BIND = "__livepadPlayLatest__";
 
 export function Dashboard({
   limits,
@@ -251,6 +252,11 @@ export function Dashboard({
     capturingKey: capturingLivepad,
     capturingVr: capturingLivepadVr,
     triggerCapture: triggerLivepadCapture,
+    playLatestKeybind: livepadPlayLatestKeybind,
+    playLatestControllerBind: livepadPlayLatestControllerBind,
+    capturingPlayLatestKey: capturingLivepadPlayLatest,
+    capturingPlayLatestVr: capturingLivepadPlayLatestVr,
+    triggerPlayLatest: triggerLivepadPlayLatest,
   } = useLivepadBinds();
 
   // All tag names in the system — feeds the per-card tag autocomplete.
@@ -370,7 +376,11 @@ export function Dashboard({
     () => entries.map((e) => ({ entryId: e.entry.id, soundId: e.sound.id, name: e.entry.label ?? e.sound.name, onBoard: e.entry.onBoard })),
     [entries],
   );
-  const streamDeckProfiles = useMemo(() => profiles.map((p) => ({ id: p.id, name: p.name })), [profiles]);
+  // Sorted by position so the Stream Deck "cycle" key follows the switcher's order.
+  const streamDeckProfiles = useMemo(
+    () => profiles.slice().sort((a, b) => a.position - b.position).map((p) => ({ id: p.id, name: p.name })),
+    [profiles],
+  );
 
   // --- Keybind enable state (persisted in localStorage, this device only) ---
   // `keybindsEnabled` is the master switch; `keybindEnabled[entryId]` is the
@@ -477,6 +487,18 @@ export function Dashboard({
         });
       }
     }
+    if (livepadPlayLatestKeybind) {
+      const { mods, keys } = parseKeyCombo(livepadPlayLatestKeybind);
+      if (keys.length > 0) {
+        binds.push({
+          raw: canonicalKeyCombo(mods, keys),
+          mods,
+          tokens: new Set(keys),
+          entryId: LIVEPAD_PLAY_LATEST_BIND,
+          soundId: "",
+        });
+      }
+    }
     // AI replay hotkey — one-shot, routed via its own sentinel.
     if (aiReplayKeybind) {
       const { mods, keys } = parseKeyCombo(aiReplayKeybind);
@@ -491,7 +513,7 @@ export function Dashboard({
       }
     }
     return binds;
-  }, [entries, keybindsEnabled, keybindEnabled, cancelAllKeybind, aiPttKeybind, aiReplayKeybind, livepadKeybind]);
+  }, [entries, keybindsEnabled, keybindEnabled, cancelAllKeybind, aiPttKeybind, aiReplayKeybind, livepadKeybind, livepadPlayLatestKeybind]);
 
   // Canonical combo string -> entry, for Electron global-hook lookups + registration.
   const keybindByCombo = useMemo(() => {
@@ -511,7 +533,7 @@ export function Dashboard({
       if (!token || isModToken(token)) return; // modifiers tracked via flags only
       if (ev.repeat) return; // ignore auto-repeat
       heldKeysRef.current.add(token);
-      if (capturingFor || capturingCancelAll || capturingAiPtt || capturingAiReplay || capturingLivepad) return; // capture handles its own keys
+      if (capturingFor || capturingCancelAll || capturingAiPtt || capturingAiReplay || capturingLivepad || capturingLivepadPlayLatest) return; // capture handles its own keys
       const mods = modsFromEvent(ev);
       const candidates = keyBinds.filter((b) => sameMods(b.mods, mods));
       const best = pickLargest(heldKeysRef.current, token, candidates);
@@ -523,6 +545,7 @@ export function Dashboard({
           if (aiPttKeyRef.current === null) { aiPttKeyRef.current = token; startAiPtt(); }
         } else if (best.entryId === AI_REPLAY_BIND) replayLastConversion();
         else if (best.entryId === LIVEPAD_CAPTURE_BIND) triggerLivepadCapture();
+        else if (best.entryId === LIVEPAD_PLAY_LATEST_BIND) triggerLivepadPlayLatest();
         else playEntry(best.entryId, best.soundId);
       }
     }
@@ -545,7 +568,7 @@ export function Dashboard({
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", clearHeld);
     };
-  }, [keyBinds, capturingFor, capturingCancelAll, capturingAiPtt, capturingAiReplay, capturingLivepad, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture]);
+  }, [keyBinds, capturingFor, capturingCancelAll, capturingAiPtt, capturingAiReplay, capturingLivepad, capturingLivepadPlayLatest, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture, triggerLivepadPlayLatest]);
 
   // Capture a chord for the cancel-all keybind: hold keys together, release to
   // confirm (mirrors the per-clip capture in SoundCard). Escape cancels.
@@ -600,6 +623,7 @@ export function Dashboard({
         else if (hit.entryId === AI_PTT_BIND) startAiPtt();
         else if (hit.entryId === AI_REPLAY_BIND) replayLastConversion();
         else if (hit.entryId === LIVEPAD_CAPTURE_BIND) triggerLivepadCapture();
+        else if (hit.entryId === LIVEPAD_PLAY_LATEST_BIND) triggerLivepadPlayLatest();
         else playEntry(hit.entryId, hit.soundId);
       }
     }
@@ -617,7 +641,7 @@ export function Dashboard({
       window.removeEventListener("soundboard:globalKey", onGlobal as EventListener);
       window.removeEventListener("soundboard:globalKeyUp", onGlobalUp as EventListener);
     };
-  }, [keybindByCombo, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture]);
+  }, [keybindByCombo, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture, triggerLivepadPlayLatest]);
 
   // Tell the Electron host (if any) which keybinds to register globally.
   useEffect(() => {
@@ -662,9 +686,11 @@ export function Dashboard({
       if (rep) binds.push({ id: AI_REPLAY_BIND, bind: rep });
       const lp = parseVrBind(getProfileBind(livepadControllerBind, controllerProfile));
       if (lp) binds.push({ id: LIVEPAD_CAPTURE_BIND, bind: lp });
+      const lpl = parseVrBind(getProfileBind(livepadPlayLatestControllerBind, controllerProfile));
+      if (lpl) binds.push({ id: LIVEPAD_PLAY_LATEST_BIND, bind: lpl });
     }
     vrMatcherRef.current!.setBinds(binds);
-  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, aiPttControllerBind, aiReplayControllerBind, livepadControllerBind, controllerProfile, holdMsByEntry, cancelAllHoldMs]);
+  }, [entries, controllersEnabled, controllerEnabled, cancelAllControllerBind, aiPttControllerBind, aiReplayControllerBind, livepadControllerBind, livepadPlayLatestControllerBind, controllerProfile, holdMsByEntry, cancelAllHoldMs]);
 
   // Feed press/release edges to the matcher; play the most-specific bind that
   // completes. Skipped while the bind editor is open (and the matcher is reset
@@ -672,13 +698,14 @@ export function Dashboard({
   useEffect(() => {
     function onVrInput(ev: Event) {
       const detail = (ev as CustomEvent<{ token: string; pressed: boolean }>).detail;
-      if (!detail?.token || capturingVrFor || capturingCancelAllVr || capturingAiPttVr || capturingAiReplayVr || capturingLivepadVr) return;
+      if (!detail?.token || capturingVrFor || capturingCancelAllVr || capturingAiPttVr || capturingAiReplayVr || capturingLivepadVr || capturingLivepadPlayLatestVr) return;
       const edge: VrEdge = detail.pressed ? "down" : "up";
       const hitId = vrMatcherRef.current!.feed(detail.token, edge, performance.now());
       if (hitId === CANCEL_ALL_BIND) cancelAll();
       else if (hitId === AI_PTT_BIND) { vrPttActiveRef.current = true; startAiPtt(); }
       else if (hitId === AI_REPLAY_BIND) replayLastConversion();
       else if (hitId === LIVEPAD_CAPTURE_BIND) triggerLivepadCapture();
+      else if (hitId === LIVEPAD_PLAY_LATEST_BIND) triggerLivepadPlayLatest();
       else if (hitId) {
         const soundId = vrSoundByEntry.get(hitId);
         if (soundId) playEntry(hitId, soundId);
@@ -692,11 +719,11 @@ export function Dashboard({
     }
     window.addEventListener("soundboard:vrInput", onVrInput as EventListener);
     return () => window.removeEventListener("soundboard:vrInput", onVrInput as EventListener);
-  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr, capturingLivepadVr, vrSoundByEntry, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture]);
+  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr, capturingLivepadVr, capturingLivepadPlayLatestVr, vrSoundByEntry, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture, triggerLivepadPlayLatest]);
 
   useEffect(() => {
     vrMatcherRef.current!.reset();
-  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr, capturingLivepadVr]);
+  }, [capturingVrFor, capturingCancelAllVr, capturingAiPttVr, capturingAiReplayVr, capturingLivepadVr, capturingLivepadPlayLatestVr]);
 
   // (SteamVR status + hasDesktop now come from VrProvider via useVr.)
 

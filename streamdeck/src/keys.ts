@@ -1,7 +1,7 @@
 // Generated SVG key images. Sound and profile names come from the (remote, semi-
 // trusted) web app, so every string is XML-escaped before it goes into the markup.
 
-export type Glyph = "play" | "stop" | "mic" | "replay" | "capture" | "profile";
+export type Glyph = "play" | "stop" | "mic" | "replay" | "capture" | "capturePlay" | "profile" | "sparkle";
 
 export type KeyLook = {
   glyph: Glyph;
@@ -38,6 +38,13 @@ const GLYPHS: Record<Glyph, (c: string) => string> = {
   capture: (c) =>
     `<circle cx="24" cy="24" r="17" fill="none" stroke="${c}" stroke-width="4"/>` +
     `<circle cx="24" cy="24" r="9" fill="${c}"/>`,
+  // Livepad capture ring with a play triangle inside: plays a capture.
+  capturePlay: (c) =>
+    `<circle cx="24" cy="24" r="19" fill="none" stroke="${c}" stroke-width="4"/>` +
+    `<path d="M19 14 L34 24 L19 34 Z" fill="${c}"/>`,
+  // Four-point star: AI voice on/off.
+  sparkle: (c) =>
+    `<path d="M24 4 C26 16 32 22 44 24 C32 26 26 32 24 44 C22 32 16 26 4 24 C16 22 22 16 24 4 Z" fill="${c}"/>`,
   profile: (c) =>
     `<circle cx="24" cy="15" r="9" fill="${c}"/>` +
     `<path d="M8 42 a16 14 0 0 1 32 0 Z" fill="${c}"/>`,
