@@ -51,3 +51,9 @@ electron/resources/audio-capture/
 electron/resources/streamdeck/
 streamdeck/*.sdPlugin/bin/
 streamdeck/*.sdPlugin/logs/
+
+# Local MCP servers (machine-specific paths)
+.mcp.json
+
+# Local machine paths that docs reference as {{path:<key>}} (see Paths.md note in AGENTS.md)
+Paths.md

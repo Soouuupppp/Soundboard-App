@@ -1,0 +1,447 @@
+// Dev-only builder for the Soundboard avatar panel. Lives under Test/ so it is not
+// exported in the .unitypackage; the shipped assets and prefabs are its output.
+// Rerun "Tools/Soundboard Panel (dev)/Rebuild assets" after changing anything here.
+// VRCFury's model classes are internal, so its components are set up by reflection.
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using UnityEditor;
+using UnityEditor.Animations;
+using UnityEngine;
+using VRC.Dynamics;
+using VRC.SDK3.Avatars.ScriptableObjects;
+using VRC.SDK3.Dynamics.Constraint.Components;
+using VRC.SDK3.Dynamics.Contact.Components;
+using VRC.SDK3.Dynamics.PhysBone.Components;
+using ExprParam = VRC.SDK3.Avatars.ScriptableObjects.VRCExpressionParameters.Parameter;
+using ExprType = VRC.SDK3.Avatars.ScriptableObjects.VRCExpressionParameters.ValueType;
+
+namespace SoundboardPanel.Dev
+{
+    public static class SoundboardPanelBuilder
+    {
+        public const string Root = "Assets/SoundboardPanel";
+        public const string Prefix = "Soundboard/v1/";
+        public static readonly (int rows, int cols)[] Sizes = { (1, 5), (3, 3), (3, 5) };
+
+        // Object paths (relative to the prefab root) used by the FX clips.
+        const string PanelPath = "Panel";
+        const string ArmPath = "Panel/Lag/Arm";
+        const string MeshPath = "Panel/Lag/Arm/Board/Mesh";
+
+        // Where the board sits relative to the chest: in front, a little low, tilted up toward the face.
+        static readonly Vector3 BoardOffset = new Vector3(0, -0.06f, 0.30f);
+        static readonly Vector3 BoardEuler = new Vector3(-30, 180, 0);
+
+        public static string Tag(int rows, int cols) => rows + "x" + cols;
+        public static string ParamsPath(string tag, bool syncActive) =>
+            $"{Root}/Avatar/SoundboardPanel_{tag}_Params_{(syncActive ? "SyncedActive" : "LocalActive")}.asset";
+        public static string ControllerPath(string tag) => $"{Root}/Avatar/SoundboardPanel_{tag}_FX.controller";
+        public static string MenuPath => $"{Root}/Avatar/SoundboardPanel_Menu.asset";
+
+        [MenuItem("Tools/Soundboard Panel (dev)/Rebuild assets")]
+        public static void GenerateAssets()
+        {
+            if (!AssetDatabase.IsValidFolder($"{Root}/Avatar")) AssetDatabase.CreateFolder(Root, "Avatar");
+            BuildMenu();
+            foreach (var (r, c) in Sizes)
+            {
+                var tag = Tag(r, c);
+                BuildParams(tag, r * c, true);
+                BuildParams(tag, r * c, false);
+                BuildController(tag, r * c);
+            }
+            AssetDatabase.SaveAssets();
+        }
+
+        // ---------------------------------------------------------------- assets
+
+        static void BuildParams(string tag, int n, bool syncActive)
+        {
+            var list = new List<ExprParam>();
+            ExprParam P(string name, ExprType t, bool synced, bool saved) =>
+                new ExprParam { name = Prefix + name, valueType = t, networkSynced = synced, saved = saved, defaultValue = 0 };
+            list.Add(P("Enabled", ExprType.Bool, true, true));
+            list.Add(P("Mode", ExprType.Int, true, true));
+            list.Add(P("Page", ExprType.Int, false, false));
+            for (int i = 1; i <= n; i++) list.Add(P("Key/" + i, ExprType.Bool, false, false));
+            for (int i = 1; i <= n; i++) list.Add(P("Active/" + i, ExprType.Bool, syncActive, false));
+            for (int i = 1; i <= n; i++) list.Add(P("Playing/" + i, ExprType.Bool, true, false));
+            var path = ParamsPath(tag, syncActive);
+            var asset = AssetDatabase.LoadAssetAtPath<VRCExpressionParameters>(path);
+            if (asset == null)
+            {
+                asset = ScriptableObject.CreateInstance<VRCExpressionParameters>();
+                AssetDatabase.CreateAsset(asset, path);
+            }
+            asset.parameters = list.ToArray();
+            EditorUtility.SetDirty(asset);
+        }
+
+        static void BuildMenu()
+        {
+            var menu = AssetDatabase.LoadAssetAtPath<VRCExpressionsMenu>(MenuPath);
+            if (menu == null)
+            {
+                menu = ScriptableObject.CreateInstance<VRCExpressionsMenu>();
+                AssetDatabase.CreateAsset(menu, MenuPath);
+            }
+            VRCExpressionsMenu.Control Toggle(string label, string prm, float value) => new VRCExpressionsMenu.Control
+            {
+                name = label,
+                type = VRCExpressionsMenu.Control.ControlType.Toggle,
+                parameter = new VRCExpressionsMenu.Control.Parameter { name = Prefix + prm },
+                value = value,
+                subParameters = new VRCExpressionsMenu.Control.Parameter[0],
+                labels = new VRCExpressionsMenu.Control.Label[0],
+            };
+            menu.controls = new List<VRCExpressionsMenu.Control>
+            {
+                Toggle("Enabled", "Enabled", 1),
+                Toggle("Follow", "Mode", 0),
+                Toggle("Placed in space", "Mode", 1),
+                Toggle("Pickable", "Mode", 2),
+            };
+            EditorUtility.SetDirty(menu);
+        }
+
+        static void BuildController(string tag, int n)
+        {
+            var path = ControllerPath(tag);
+            if (AssetDatabase.LoadMainAssetAtPath(path) != null) AssetDatabase.DeleteAsset(path);
+            var ctrl = AnimatorController.CreateAnimatorControllerAtPath(path);
+            ctrl.RemoveLayer(0);
+
+            void Param(string name, AnimatorControllerParameterType t, float def = 0) => ctrl.AddParameter(new AnimatorControllerParameter
+            {
+                name = Prefix + name, type = t, defaultFloat = def, defaultBool = def > 0.5f, defaultInt = (int)def,
+            });
+            // Bool/int expression params are declared Float here: VRChat converts, and Direct blend
+            // tree weights need floats. _One is local (not an expression param) and always 1.
+            Param("_One", AnimatorControllerParameterType.Float, 1);
+            Param("Enabled", AnimatorControllerParameterType.Bool);
+            Param("Mode", AnimatorControllerParameterType.Int);
+            Param("Page", AnimatorControllerParameterType.Float);
+            for (int i = 1; i <= n; i++)
+            {
+                Param("Key/" + i, AnimatorControllerParameterType.Float);
+                Param("Active/" + i, AnimatorControllerParameterType.Float);
+                Param("Playing/" + i, AnimatorControllerParameterType.Float);
+            }
+
+            AnimationClip Clip(string name)
+            {
+                var c = new AnimationClip { name = name };
+                AssetDatabase.AddObjectToAsset(c, ctrl);
+                return c;
+            }
+            void Set(AnimationClip c, string objPath, Type type, string prop, float v) =>
+                AnimationUtility.SetEditorCurve(c, EditorCurveBinding.FloatCurve(objPath, type, prop), AnimationCurve.Constant(0, 0, v));
+            void Mat(AnimationClip c, string prop, float v) => Set(c, MeshPath, typeof(MeshRenderer), "material." + prop, v);
+            AnimatorStateMachine Machine(string name)
+            {
+                var sm = new AnimatorStateMachine { name = name, hideFlags = HideFlags.HideInHierarchy };
+                AssetDatabase.AddObjectToAsset(sm, ctrl);
+                ctrl.AddLayer(new AnimatorControllerLayer { name = name, stateMachine = sm, defaultWeight = 1 });
+                return sm;
+            }
+            AnimatorState State(AnimatorStateMachine sm, string name, Motion m)
+            {
+                var s = sm.AddState(name);
+                s.motion = m;
+                s.writeDefaultValues = true;
+                return s;
+            }
+            void Go(AnimatorState from, AnimatorState to, AnimatorConditionMode mode, float threshold, string prm)
+            {
+                var t = from.AddTransition(to);
+                t.hasExitTime = false;
+                t.duration = 0;
+                t.AddCondition(mode, threshold, Prefix + prm);
+            }
+
+            // Keys: one Direct blend tree driving the shader's per-key floats.
+            var baseClip = Clip("SB Base");
+            Mat(baseClip, "_Page", 0);
+            for (int i = 0; i < 15; i++)
+            {
+                Mat(baseClip, "_Active" + i, 0);
+                Mat(baseClip, "_Playing" + i, 0);
+                Mat(baseClip, "_Pressed" + i, 0);
+            }
+            var tree = new BlendTree { name = "SB Keys", blendType = BlendTreeType.Direct, hideFlags = HideFlags.HideInHierarchy };
+            AssetDatabase.AddObjectToAsset(tree, ctrl);
+            var kids = new List<ChildMotion>
+            {
+                new ChildMotion { motion = baseClip, directBlendParameter = Prefix + "_One", timeScale = 1 },
+            };
+            var page = Clip("SB Page");
+            Mat(page, "_Page", 1);
+            kids.Add(new ChildMotion { motion = page, directBlendParameter = Prefix + "Page", timeScale = 1 });
+            for (int i = 1; i <= n; i++)
+            {
+                var a = Clip("SB Active " + i); Mat(a, "_Active" + (i - 1), 1);
+                var p = Clip("SB Playing " + i); Mat(p, "_Playing" + (i - 1), 1);
+                var k = Clip("SB Pressed " + i); Mat(k, "_Pressed" + (i - 1), 1);
+                kids.Add(new ChildMotion { motion = a, directBlendParameter = Prefix + "Active/" + i, timeScale = 1 });
+                kids.Add(new ChildMotion { motion = p, directBlendParameter = Prefix + "Playing/" + i, timeScale = 1 });
+                kids.Add(new ChildMotion { motion = k, directBlendParameter = Prefix + "Key/" + i, timeScale = 1 });
+            }
+            tree.children = kids.ToArray();
+            State(Machine("Soundboard Keys"), "Keys", tree);
+
+            // Enabled: the Panel object (mesh + receivers + physbones) is off unless enabled.
+            var offC = Clip("SB Off"); Set(offC, PanelPath, typeof(GameObject), "m_IsActive", 0);
+            var onC = Clip("SB On"); Set(onC, PanelPath, typeof(GameObject), "m_IsActive", 1);
+            var en = Machine("Soundboard Enabled");
+            var off = State(en, "Off", offC);
+            var on = State(en, "On", onC);
+            en.defaultState = off;
+            Go(off, on, AnimatorConditionMode.If, 0, "Enabled");
+            Go(on, off, AnimatorConditionMode.IfNot, 0, "Enabled");
+
+            // Mode: 0 Follow, 1 Placed in space (constraint frozen), 2 Pickable (frozen + grab PhysBone on).
+            AnimationClip ModeClip(string name, bool freeze, bool grab)
+            {
+                var c = Clip(name);
+                Set(c, PanelPath, typeof(VRCParentConstraint), "FreezeToWorld", freeze ? 1 : 0);
+                Set(c, ArmPath, typeof(VRCPhysBone), "m_Enabled", grab ? 1 : 0);
+                return c;
+            }
+            var mode = Machine("Soundboard Mode");
+            var follow = State(mode, "Follow", ModeClip("SB Follow", false, false));
+            var placed = State(mode, "Placed", ModeClip("SB Placed", true, false));
+            var pick = State(mode, "Pickable", ModeClip("SB Pickable", true, true));
+            mode.defaultState = follow;
+            var states = new[] { follow, placed, pick };
+            for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                if (i != j) Go(states[i], states[j], AnimatorConditionMode.Equals, j, "Mode");
+            // Any value other than 1/2 means Follow.
+            Go(placed, follow, AnimatorConditionMode.Less, 1, "Mode");
+            Go(pick, follow, AnimatorConditionMode.Less, 1, "Mode");
+            Go(placed, follow, AnimatorConditionMode.Greater, 2, "Mode");
+            Go(pick, follow, AnimatorConditionMode.Greater, 2, "Mode");
+
+            EditorUtility.SetDirty(ctrl);
+        }
+
+        // ---------------------------------------------------------------- hierarchy
+
+        // Hierarchy:
+        //   SoundboardPanel RxC     VRCFury Full Controller + SoundboardPanelSettings
+        //     Anchor                VRCFury Armature Link -> Chest (aligned)
+        //     Panel                 VRC Parent Constraint -> Anchor; Enabled toggles it; Freeze to World = placed
+        //       Lag                 PhysBone, rotation-only lag for Follow smoothing (not grabbable)
+        //         Arm               PhysBone, grabbable + posable by the wearer, on only in Pickable
+        //           Board           faces the wearer
+        //             Mesh          Soundboard/PanelKey material
+        //             Keys/Key n    contact receivers -> Soundboard/v1/Key/n
+        public static GameObject Build(int rows, int cols, bool syncActive = true)
+        {
+            var tag = Tag(rows, cols);
+            var root = new GameObject("SoundboardPanel " + tag);
+            GameObject Child(string name, Transform parent)
+            {
+                var go = new GameObject(name);
+                go.transform.SetParent(parent, false);
+                return go;
+            }
+
+            var anchor = Child("Anchor", root.transform);
+            var panel = Child("Panel", root.transform);
+            panel.SetActive(false); // Enabled defaults off
+            var lag = Child("Lag", panel.transform);
+            var arm = Child("Arm", lag.transform);
+            var board = Child("Board", arm.transform);
+            board.transform.localPosition = BoardOffset;
+            board.transform.localEulerAngles = BoardEuler;
+
+            // Panel follows the chest anchor; Freeze to World is animated by the Mode layer.
+            var pc = panel.AddComponent<VRCParentConstraint>();
+            pc.Sources.Add(new VRC.Dynamics.VRCConstraintSource { SourceTransform = anchor.transform, Weight = 1 });
+            pc.IsActive = true;
+            pc.Locked = true;
+
+            // Follow smoothing: a soft, non-grabbable bone that swings toward the board and lags turns.
+            var lagPb = lag.AddComponent<VRCPhysBone>();
+            lagPb.endpointPosition = BoardOffset;
+            lagPb.ignoreTransforms = new List<Transform> { arm.transform };
+            lagPb.pull = 0.25f;
+            lagPb.spring = 0.6f;
+            lagPb.stiffness = 0.2f;
+            lagPb.gravity = 0;
+            lagPb.immobileType = VRCPhysBoneBase.ImmobileType.AllMotion;
+            lagPb.immobile = 0;
+            lagPb.allowCollision = VRCPhysBoneBase.AdvancedBool.False;
+            lagPb.allowGrabbing = VRCPhysBoneBase.AdvancedBool.False;
+            lagPb.allowPosing = VRCPhysBoneBase.AdvancedBool.False;
+            lagPb.limitType = VRCPhysBoneBase.LimitType.Angle;
+            lagPb.maxAngleX = 25;
+
+            // Pickable: grab and pose the arm; it stays where released (no pull, no gravity).
+            var armPb = arm.AddComponent<VRCPhysBone>();
+            armPb.enabled = false;
+            armPb.endpointPosition = BoardOffset;
+            armPb.ignoreTransforms = new List<Transform> { board.transform };
+            armPb.pull = 0;
+            armPb.spring = 0;
+            armPb.stiffness = 0;
+            armPb.gravity = 0;
+            armPb.immobileType = VRCPhysBoneBase.ImmobileType.World;
+            armPb.immobile = 1;
+            armPb.allowCollision = VRCPhysBoneBase.AdvancedBool.False;
+            armPb.allowGrabbing = VRCPhysBoneBase.AdvancedBool.Other;
+            armPb.grabFilter = new VRCPhysBoneBase.PermissionFilter { allowSelf = true, allowOthers = false };
+            armPb.allowPosing = VRCPhysBoneBase.AdvancedBool.Other;
+            armPb.poseFilter = new VRCPhysBoneBase.PermissionFilter { allowSelf = true, allowOthers = false };
+            armPb.maxStretch = 1f;
+            armPb.maxSquish = 0.5f;
+            armPb.grabMovement = 1;
+            armPb.resetWhenDisabled = true; // leaving Pickable snaps back to the follow pose
+
+            var meshGo = Child("Mesh", board.transform);
+            var mesh = AssetDatabase.LoadAssetAtPath<Mesh>($"{Root}/Models/SoundboardPanel_{tag}.fbx");
+            meshGo.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = meshGo.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = AssetDatabase.LoadAssetAtPath<Material>($"{Root}/Materials/SoundboardPanel_{tag}.mat");
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            mr.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+            mr.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+
+            var keys = Child("Keys", board.transform);
+            var centers = KeyCenters(mesh, rows * cols);
+            for (int i = 0; i < centers.Count; i++)
+            {
+                var k = Child("Key " + (i + 1), keys.transform);
+                k.transform.localPosition = centers[i];
+                var r = k.AddComponent<VRCContactReceiver>();
+                r.shapeType = ContactBase.ShapeType.Sphere;
+                r.radius = 0.018f;
+                r.position = new Vector3(0, 0, -0.004f); // a little behind the key face: a fingertip has to reach it
+                r.allowSelf = true;
+                r.allowOthers = true;
+                r.localOnly = false;
+                r.collisionTags = new List<string> { "Finger", "Hand" };
+                r.receiverType = ContactReceiver.ReceiverType.Constant;
+                r.parameter = Prefix + "Key/" + (i + 1);
+            }
+
+            AddArmatureLink(anchor);
+            AddFullController(root, tag, syncActive);
+            var settings = root.AddComponent<SoundboardPanel.SoundboardPanelSettings>();
+            settings.syncGrayedOutKeys = syncActive;
+            settings.syncedParams = AssetDatabase.LoadAssetAtPath<VRCExpressionParameters>(ParamsPath(tag, true));
+            settings.localParams = AssetDatabase.LoadAssetAtPath<VRCExpressionParameters>(ParamsPath(tag, false));
+            return root;
+        }
+
+        [MenuItem("Tools/Soundboard Panel (dev)/Rebuild prefabs")]
+        public static void BuildPrefabs()
+        {
+            if (!AssetDatabase.IsValidFolder($"{Root}/Prefabs")) AssetDatabase.CreateFolder(Root, "Prefabs");
+            foreach (var (r, c) in Sizes)
+            {
+                var go = Build(r, c);
+                PrefabUtility.SaveAsPrefabAsset(go, PrefabPath(Tag(r, c)));
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+            AssetDatabase.SaveAssets();
+        }
+
+        public static string PrefabPath(string tag) => $"{Root}/Prefabs/SoundboardPanel {tag}.prefab";
+
+        // Key face centers from the mesh: vertices whose second UV set is (index, 1).
+        public static List<Vector3> KeyCenters(Mesh mesh, int n)
+        {
+            var uv = new List<Vector2>();
+            mesh.GetUVs(1, uv);
+            var verts = mesh.vertices;
+            var sum = new Vector3[n];
+            var count = new int[n];
+            for (int v = 0; v < verts.Length; v++)
+            {
+                int idx = Mathf.RoundToInt(uv[v].x);
+                if (idx < 0 || idx >= n || uv[v].y < 0.5f) continue;
+                sum[idx] += verts[v];
+                count[idx]++;
+            }
+            return Enumerable.Range(0, n).Select(i => sum[i] / Mathf.Max(1, count[i])).ToList();
+        }
+
+        // ---------------------------------------------------------------- VRCFury (reflection)
+
+        static System.Reflection.Assembly Vf => AppDomain.CurrentDomain.GetAssemblies().First(a => a.GetName().Name == "VRCFury");
+
+        static object Wrap(string typeName, UnityEngine.Object obj)
+        {
+            var t = Vf.GetType(typeName);
+            var op = t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .First(m => m.Name == "op_Implicit" && m.ReturnType == t);
+            return op.Invoke(null, new object[] { obj });
+        }
+
+        static void AddFeature(GameObject go, object feature)
+        {
+            SetLatestVersion(feature);
+            var vfType = Vf.GetType("VF.Model.VRCFury");
+            var comp = go.AddComponent(vfType);
+            vfType.GetField("content").SetValue(comp, feature);
+            SetLatestVersion(comp);
+            EditorUtility.SetDirty(comp);
+        }
+
+        static void AddArmatureLink(GameObject anchor)
+        {
+            var t = Vf.GetType("VF.Model.Feature.ArmatureLink");
+            var link = Activator.CreateInstance(t);
+            t.GetField("propBone").SetValue(link, anchor);
+            var list = (IList)t.GetField("linkTo").GetValue(link);
+            var to = list[0];
+            to.GetType().GetField("useBone").SetValue(to, true);
+            to.GetType().GetField("bone").SetValue(to, HumanBodyBones.Chest);
+            t.GetField("alignPosition").SetValue(link, true);
+            t.GetField("alignRotation").SetValue(link, true);
+            AddFeature(anchor, link);
+        }
+
+        static void AddFullController(GameObject root, string tag, bool syncActive)
+        {
+            var fcType = Vf.GetType("VF.Model.Feature.FullController");
+            var fc = Activator.CreateInstance(fcType);
+            var flags = System.Reflection.BindingFlags.Public;
+
+            var ceT = fcType.GetNestedType("ControllerEntry", flags);
+            var ce = Activator.CreateInstance(ceT);
+            ceT.GetField("controller").SetValue(ce, Wrap("VF.Model.GuidController",
+                AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(ControllerPath(tag))));
+            ((IList)fcType.GetField("controllers").GetValue(fc)).Add(ce);
+
+            var meT = fcType.GetNestedType("MenuEntry", flags);
+            var me = Activator.CreateInstance(meT);
+            meT.GetField("menu").SetValue(me, Wrap("VF.Model.GuidMenu", AssetDatabase.LoadAssetAtPath<VRCExpressionsMenu>(MenuPath)));
+            meT.GetField("prefix").SetValue(me, "Soundboard");
+            ((IList)fcType.GetField("menus").GetValue(fc)).Add(me);
+
+            var peT = fcType.GetNestedType("ParamsEntry", flags);
+            var pe = Activator.CreateInstance(peT);
+            peT.GetField("parameters").SetValue(pe, Wrap("VF.Model.GuidParams",
+                AssetDatabase.LoadAssetAtPath<VRCExpressionParameters>(ParamsPath(tag, syncActive))));
+            ((IList)fcType.GetField("prms").GetValue(fc)).Add(pe);
+
+            // Keep every Soundboard/v1/* name exactly as the OSC contract spells it.
+            ((IList)fcType.GetField("globalParams").GetValue(fc)).Add(Prefix + "*");
+            fcType.GetField("allowMissingAssets").SetValue(fc, false);
+            AddFeature(root, fc);
+        }
+
+        static void SetLatestVersion(object o)
+        {
+            var t = o.GetType();
+            var latest = (int)t.GetMethod("GetLatestVersion").Invoke(o, null);
+            t.GetProperty("Version")?.SetValue(o, latest);
+        }
+    }
+}

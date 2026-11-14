@@ -95,6 +95,33 @@ then set a Hotkey button to send that key. This is tap-only (no hold-to-talk), t
 button can't show the sound name, and it doesn't fire while you're holding a modifier
 key, because keybinds need an exact modifier match.
 
+## VRChat avatar panel (OSC, experimental)
+
+A Stream-Deck-like panel worn on a VRChat avatar (PC avatars; the Unity package with three
+prefabs, 1×5 / 3×3 / 3×5, is attached to each GitHub release and needs VRCFury). Pressing a
+key, with your hand or a friend's, triggers the app over OSC.
+
+1. Turn on OSC in VRChat (Action Menu → Options → OSC → Enabled).
+2. Open the app's dashboard, then the **VRChat avatar panel** button in the navbar, and turn
+   the panel **on** (it's off by default). Lay out the keys by dragging actions onto the grid;
+   the layout is saved per profile. Set the grid size to match the prefab on your avatar (the
+   editor warns when they differ).
+
+   The first time it's on, Windows Firewall asks whether to allow Soundboard on your networks.
+   Automatic discovery (mDNS) listens on every network interface, which is what triggers it;
+   allowing **Private networks** is enough. That's why the panel is off until you turn it on.
+3. The status line should say "Connected — N-key panel" once VRChat is running with the avatar.
+
+Discovery uses **OSCQuery** (mDNS + a small local HTTP server), so no ports need setting up.
+If you launch VRChat with custom `--osc=<VRChat in>:127.0.0.1:<VRChat out>` ports, open **Manual ports** in
+the editor, turn on fixed ports and enter them: the app receives on VRChat's out port and sends to its
+in port (defaults: receive 9001, send 9000). The app
+only listens on 127.0.0.1. Discovery needs the `multicast-dns` package (`pnpm install`); without
+it the editor says so and manual ports still work.
+
+The panel only works while the dashboard is open. The avatar menu's Enabled toggle turns the
+panel (and other people's presses) off.
+
 ## Build a Windows .exe to share
 
 Set your public server URL first so it's baked into the binary — your friends
@@ -115,8 +142,8 @@ SOUNDBOARD_URL=https://soundboard.example.com pnpm --filter electron dist:win
 
 Outputs to `electron/dist/`:
 
-- `Soundboard-Setup-1.5.1-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
-- `Soundboard-1.5.1-x64-portable.exe` — single-file executable, no install.
+- `Soundboard-Setup-1.5.2-x64.exe` — NSIS installer (Start Menu + desktop shortcuts).
+- `Soundboard-1.5.2-x64-portable.exe` — single-file executable, no install.
 
 Send one of these to your friends. They open it, log in with Discord, done.
 Power users can still change the URL later via **File → Change server URL…**
@@ -190,6 +217,10 @@ electron-builder's [code signing docs](https://www.electron.build/code-signing).
   token handshake, presses go to the dashboard through `window.soundboard.streamDeck`
   (only from the configured server's main frame), and the dashboard publishes its
   sound and profile lists back, which main re-validates before passing them on.
+- VRChat avatar panel: `vrchat-osc.js` runs an OSC socket + OSCQuery server on 127.0.0.1
+  while the dashboard is attached, finds VRChat over mDNS, and forwards key presses through
+  `window.soundboard.vrcOsc`; the dashboard sends each key's Active/Playing state back, which
+  main re-validates and only sends under `Soundboard/v1/`.
 
 ## Notes / caveats
 

@@ -275,6 +275,9 @@ export const profiles = pgTable("profile", {
   voiceFx: text("voiceFx"),
   // Serialized per-clip Sound Effects map ({ [soundId]: EffectConfig[] }). JSON text.
   soundFx: text("soundFx"),
+  // ver/1.5.2 VRChat avatar panel: serialized key layout (lib/osc-board.ts OscLayout).
+  // JSON text; null = default (3×5, one empty page).
+  oscLayout: text("oscLayout"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

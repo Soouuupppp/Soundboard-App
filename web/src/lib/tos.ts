@@ -8,7 +8,7 @@ export const TOS_VERSION = 1;
 // Third-party AI voice providers the app can send audio/text to (the voice
 // changer's AI paths). Surfaced in the TOS so users know what leaves their
 // machine. Keep this list in sync with the "AI voice providers" section in
-// CLAUDE.md and with lib/voice-ai*.ts.
+// AGENTS.md and with lib/voice-ai*.ts.
 export type AiVoiceProvider = {
   name: string;
   // What we send them and when.

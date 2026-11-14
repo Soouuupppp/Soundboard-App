@@ -2,7 +2,7 @@
   "name": "soundboard-electron",
   "productName": "Soundboard",
   "private": true,
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Desktop wrapper for the Soundboard web app with OS-level global hotkeys.",
   "author": {
     "name": "Soouuupppp",
@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
+    "multicast-dns": "^7.2.5",
     "uiohook-napi": "^1.5.4"
   },
   "devDependencies": {
@@ -47,6 +48,7 @@
       "vr-controllers.js",
       "audio-capture.js",
       "streamdeck-bridge.js",
+      "vrchat-osc.js",
       "preload.js",
       "prompt-preload.js",
       "package.json",

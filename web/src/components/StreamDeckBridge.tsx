@@ -12,11 +12,11 @@ import { useAudio } from "@/components/AudioProvider";
 import { setAiVoiceEnabled } from "@/components/AiVoicePanel";
 import { livepadPlaybackKey } from "@/lib/livepad";
 import { getStreamDeckBridge, type StreamDeckPress, type StreamDeckState } from "@/lib/streamdeck";
+import { useRemoteActions, type RemoteAction, type RemoteSavedSound } from "@/lib/remote-actions";
 
 // livepad:<captureId> keys in playingSoundIds; the editor's "livepad:preview" is not a card.
 const LIVEPAD_PREFIX = livepadPlaybackKey("");
 
-type SavedSound = { entryId: string; soundId: string; name: string; onBoard: boolean };
 
 export function StreamDeckBridge({
   sounds,
@@ -32,7 +32,7 @@ export function StreamDeckBridge({
   replayLastConversion,
   triggerLivepadCapture,
 }: {
-  sounds: SavedSound[];
+  sounds: RemoteSavedSound[];
   profiles: { id: string; name: string }[];
   activeProfileId: string | null;
   setActiveProfile: (id: string) => void;
@@ -48,13 +48,16 @@ export function StreamDeckBridge({
   // Captures come straight from the Livepad context here, not through Dashboard's
   // props: this component renders nothing, so re-rendering it on every capture
   // change is cheap, while Dashboard stays on useLivepadBinds().
-  const { captures, playCapture } = useLivepad();
+  const { captures } = useLivepad();
   const audio = useAudio();
   const aiEnabled = !!audio.voiceFx[audio.inputDeviceId]?.ai?.enabled;
 
+  // Shared with the VRChat avatar panel (lib/remote-actions.ts).
+  const run = useRemoteActions({ sounds, profiles, activeProfileId, setActiveProfile, playEntry, cancelAll, triggerLivepadCapture });
+
   // Latest values for the press handler, so attaching happens once per mount.
-  const live = useRef({ audio, aiEnabled, captures, playCapture, sounds, profiles, activeProfileId, setActiveProfile, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture });
-  live.current = { audio, aiEnabled, captures, playCapture, sounds, profiles, activeProfileId, setActiveProfile, playEntry, cancelAll, startAiPtt, stopAiPtt, replayLastConversion, triggerLivepadCapture };
+  const live = useRef({ audio, aiEnabled, run, startAiPtt, stopAiPtt, replayLastConversion });
+  live.current = { audio, aiEnabled, run, startAiPtt, stopAiPtt, replayLastConversion };
   const pttHeldRef = useRef(false);
 
   useEffect(() => {
@@ -63,17 +66,26 @@ export function StreamDeckBridge({
     const onPress = (p: StreamDeckPress) => {
       const l = live.current;
       const ok = () => bridge.result(p.id, true);
+      const runDown = (a: RemoteAction) => {
+        if (p.edge !== "down") return ok();
+        const r = l.run(a);
+        return r.ok ? ok() : bridge.result(p.id, false, r.error);
+      };
       switch (p.action) {
-        case "play": {
-          if (p.edge !== "down") return ok();
-          const s = l.sounds.find((x) => x.soundId === p.soundId);
-          if (!s) return bridge.result(p.id, false, "not-found");
-          l.playEntry(s.entryId, s.soundId);
-          return ok();
-        }
+        case "play":
+          return runDown({ type: "play", soundId: p.soundId ?? "" });
         case "cancelAll":
-          if (p.edge === "down") l.cancelAll();
-          return ok();
+          return runDown({ type: "cancelAll" });
+        case "livepad":
+          return runDown({ type: "livepadCapture" });
+        case "profile":
+          return runDown({ type: "profile", profileId: p.profileId ?? "" });
+        case "profileCycle":
+          return runDown({ type: "profileCycle" });
+        case "livepadPlayLatest":
+          return runDown({ type: "livepadPlayLatest" });
+        case "livepadPlay":
+          return runDown({ type: "livepadPlay", slot: p.slot, captureId: p.captureId });
         case "aiPtt":
           if (p.edge === "down" && !pttHeldRef.current) {
             pttHeldRef.current = true;
@@ -86,43 +98,10 @@ export function StreamDeckBridge({
         case "aiReplay":
           if (p.edge === "down") l.replayLastConversion();
           return ok();
-        case "livepad":
-          if (p.edge === "down") l.triggerLivepadCapture();
-          return ok();
-        case "profile": {
-          if (p.edge !== "down") return ok();
-          if (!l.profiles.some((x) => x.id === p.profileId)) return bridge.result(p.id, false, "not-found");
-          l.setActiveProfile(p.profileId!);
-          return ok();
-        }
-        case "profileCycle": {
-          // Next profile in `position` order (the list arrives sorted), wrapping
-          // last → first. One profile = nothing to switch to, still a success.
-          if (p.edge !== "down" || l.profiles.length < 2) return ok();
-          const i = l.profiles.findIndex((x) => x.id === l.activeProfileId);
-          l.setActiveProfile(l.profiles[(i + 1) % l.profiles.length].id);
-          return ok();
-        }
         case "aiToggle":
           if (p.edge !== "down") return ok();
           // No mic selected → nothing to turn AI on for.
           return setAiVoiceEnabled(l.audio, !l.aiEnabled) ? ok() : bridge.result(p.id, false, "unavailable");
-        case "livepadPlayLatest":
-        case "livepadPlay": {
-          if (p.edge !== "down") return ok();
-          // playCapture restarts a card that's already playing, like the grid's button.
-          const c =
-            p.action === "livepadPlayLatest"
-              ? l.captures[0]
-              : p.captureId
-                ? l.captures.find((x) => x.id === p.captureId)
-                : p.slot
-                  ? l.captures[p.slot - 1]
-                  : undefined;
-          if (!c) return bridge.result(p.id, false, "not-found");
-          void l.playCapture(c);
-          return ok();
-        }
         default:
           return bridge.result(p.id, false, "unavailable");
       }

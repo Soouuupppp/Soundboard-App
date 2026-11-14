@@ -27,6 +27,7 @@ import {
 } from "react";
 import type { ProfileBacking, VoiceFxMap, SoundFxMap } from "@/lib/audio-output";
 import { analytics } from "@/lib/analytics";
+import { parseOscLayout, type OscLayout } from "@/lib/osc-board";
 
 export type ProfileMeta = {
   id: string;
@@ -36,6 +37,8 @@ export type ProfileMeta = {
   // Serialized config blobs as stored server-side (parsed lazily for the active one).
   voiceFx: string | null;
   soundFx: string | null;
+  // ver/1.5.2 VRChat avatar panel layout (JSON text; null = default).
+  oscLayout: string | null;
 };
 
 type ProfileCtx = {
@@ -55,6 +58,14 @@ type ProfileCtx = {
   backing: ProfileBacking;
 };
 
+// VRChat avatar panel layout of the active profile + a debounced server save. Its
+// own context, so layout edits re-render only the editor + VrcOscBridge, not every
+// useProfiles() consumer (Dashboard included).
+type OscLayoutCtx = {
+  oscLayout: OscLayout;
+  setOscLayout: (layout: OscLayout) => void;
+};
+
 const ACTIVE_KEY = "soundboard:activeProfile";
 const MIGRATED_KEY = "soundboard:profilesMigrated";
 const VOICEFX_KEY = "soundboard:voicefx";
@@ -62,6 +73,7 @@ const SOUNDFX_KEY = "soundboard:soundfx";
 const PERSIST_DEBOUNCE_MS = 250;
 
 const Ctx = createContext<ProfileCtx | null>(null);
+const OscCtx = createContext<OscLayoutCtx | null>(null);
 
 function parseMap<T>(raw: string | null | undefined): T {
   if (!raw) return {} as T;
@@ -95,7 +107,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
 
   // Debounced server PATCH of a profile's config, merged per profile id.
   const patchTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const patchPending = useRef<Map<string, { voiceFx?: string; soundFx?: string }>>(new Map());
+  const patchPending = useRef<Map<string, { voiceFx?: string; soundFx?: string; oscLayout?: string }>>(new Map());
 
   const flushPatch = useCallback((id: string) => {
     const t = patchTimers.current.get(id);
@@ -103,18 +115,27 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     const body = patchPending.current.get(id);
     if (!body) return;
     patchPending.current.delete(id);
+    // Only the avatar panel editor reports a failed save (via this event); the FX
+    // config writes stay silent as before.
+    const reportFailure = () => {
+      if (body.oscLayout !== undefined) window.dispatchEvent(new Event("soundboard:oscLayout-saveFailed"));
+    };
     void fetch(`/api/profiles/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }).catch(() => {});
+    })
+      .then((r) => {
+        if (!r.ok) reportFailure();
+      })
+      .catch(reportFailure);
   }, []);
 
   const flushAllPatches = useCallback(() => {
     for (const id of Array.from(patchPending.current.keys())) flushPatch(id);
   }, [flushPatch]);
 
-  const schedulePatch = useCallback((id: string, fields: { voiceFx?: string; soundFx?: string }) => {
+  const schedulePatch = useCallback((id: string, fields: { voiceFx?: string; soundFx?: string; oscLayout?: string }) => {
     const cur = patchPending.current.get(id) ?? {};
     patchPending.current.set(id, { ...cur, ...fields });
     const existing = patchTimers.current.get(id);
@@ -147,6 +168,23 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     const id = activeRef.current;
     if (id) persist(id, { soundFx: v });
   }, [persist]);
+
+  // The panel layout re-renders its editor, so unlike voiceFx/soundFx it lives in state.
+  const [oscLayout, setOscLayoutState] = useState<OscLayout>(() => parseOscLayout(null));
+  const setOscLayout = useCallback((layout: OscLayout) => {
+    const id = activeRef.current;
+    if (!id) return;
+    setOscLayoutState(layout);
+    const serialized = JSON.stringify(layout);
+    const arr = profilesRef.current;
+    const i = arr.findIndex((p) => p.id === id);
+    if (i >= 0) {
+      const next = arr.slice();
+      next[i] = { ...arr[i], oscLayout: serialized };
+      profilesRef.current = next;
+    }
+    schedulePatch(id, { oscLayout: serialized });
+  }, [schedulePatch]);
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -212,6 +250,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       voiceFx: parseMap<VoiceFxMap>(p?.voiceFx),
       soundFx: parseMap<SoundFxMap>(p?.soundFx),
     });
+    setOscLayoutState(parseOscLayout(p?.oscLayout));
   }, [activeProfileId, loadGen]);
 
   // Flush pending config writes on unload so an interrupted drag isn't lost.
@@ -308,7 +347,9 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     [activeProfileId, loadGen, config, persistVoiceFx, persistSoundFx],
   );
 
-  const value: ProfileCtx = {
+  // Memoized (without oscLayout) so a layout edit, which re-renders this provider,
+  // doesn't hand every useProfiles() consumer a new object.
+  const value = useMemo<ProfileCtx>(() => ({
     profiles,
     activeProfileId,
     limit,
@@ -321,9 +362,23 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     deleteProfile,
     reorderProfile,
     backing,
-  };
+  }), [
+    profiles, activeProfileId, limit, loading, setActiveProfile, loadProfiles, createProfile,
+    renameProfile, cloneProfile, deleteProfile, reorderProfile, backing,
+  ]);
+  const oscValue = useMemo<OscLayoutCtx>(() => ({ oscLayout, setOscLayout }), [oscLayout, setOscLayout]);
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={value}>
+      <OscCtx.Provider value={oscValue}>{children}</OscCtx.Provider>
+    </Ctx.Provider>
+  );
+}
+
+export function useOscLayout(): OscLayoutCtx {
+  const ctx = useContext(OscCtx);
+  if (!ctx) throw new Error("useOscLayout must be used within a ProfileProvider");
+  return ctx;
 }
 
 export function useProfiles(): ProfileCtx {

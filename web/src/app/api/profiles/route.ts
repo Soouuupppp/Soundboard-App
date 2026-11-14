@@ -25,6 +25,7 @@ export async function GET() {
       isDefault: p.isDefault,
       voiceFx: p.voiceFx,
       soundFx: p.soundFx,
+      oscLayout: p.oscLayout,
     })),
     limit,
   });

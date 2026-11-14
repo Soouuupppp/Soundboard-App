@@ -13,6 +13,7 @@ const hotkeys = require("./hotkeys");
 const vrControllers = require("./vr-controllers");
 const audioCapture = require("./audio-capture");
 const streamDeck = require("./streamdeck-bridge");
+const vrchatOsc = require("./vrchat-osc");
 const crypto = require("crypto");
 const { autoUpdater } = require("electron-updater");
 
@@ -667,6 +668,103 @@ function registerStreamDeckIpc() {
   });
 }
 
+// --- VRChat avatar panel (OSC) ------------------------------------------------
+// vrchat-osc.js runs only while the dashboard is attached. Presses reach the page
+// only while attached and the page is still the configured server; what the page
+// sends back (key states, page, ports) is re-validated here.
+
+const VRC_MAX_KEYS = 15;
+const VRC_MAX_PAGE = 9;
+const VRC_DEFAULT_CONFIG = { manual: false, inPort: 9001, outPort: 9000 };
+let vrcAttached = false;
+
+const validPort = (v) => Number.isInteger(v) && v >= 1024 && v <= 65535;
+
+function vrcConfig() {
+  const c = readSettings().vrcOsc || {};
+  return {
+    manual: c.manual === true,
+    inPort: validPort(c.inPort) ? c.inPort : VRC_DEFAULT_CONFIG.inPort,
+    outPort: validPort(c.outPort) ? c.outPort : VRC_DEFAULT_CONFIG.outPort,
+  };
+}
+
+function vrcSend(channel, payload) {
+  if (vrcAttached && pageIsTrusted()) mainWindow.webContents.send(channel, payload);
+}
+
+function vrcStart() {
+  vrchatOsc.start({
+    config: vrcConfig(),
+    onPress: (n) => vrcSend("soundboard:vrcOsc:press", { n }),
+    onAvatarChange: () => vrcSend("soundboard:vrcOsc:avatarChange"),
+    onStatus: (status) => {
+      if (pageIsTrusted()) mainWindow.webContents.send("soundboard:vrcOsc:status", status);
+    },
+  });
+}
+
+function vrcDetach() {
+  if (!vrcAttached) return;
+  vrcAttached = false;
+  vrchatOsc.stop();
+}
+
+function registerVrcOscIpc() {
+  ipcMain.handle("soundboard:vrcOsc:attach", (evt) => {
+    if (!senderIsTrusted(evt)) return { ok: false };
+    if (!vrcAttached) {
+      vrcAttached = true;
+      vrcStart();
+    }
+    return { ok: true };
+  });
+  ipcMain.handle("soundboard:vrcOsc:detach", (evt) => {
+    if (!senderIsTrusted(evt)) return;
+    vrcDetach();
+  });
+  ipcMain.handle("soundboard:vrcOsc:status", (evt) => {
+    if (!senderIsTrusted(evt)) return { running: false, vrchatFound: false, avatarKeys: null, manual: false };
+    return vrchatOsc.status();
+  });
+  // No argument = read; an object = validate, save, restart if running.
+  ipcMain.handle("soundboard:vrcOsc:config", (evt, cfg) => {
+    if (!senderIsTrusted(evt)) return null;
+    if (cfg === undefined) return vrcConfig();
+    if (!cfg || typeof cfg !== "object") return { ok: false, error: "invalid" };
+    const next = { ...vrcConfig() };
+    if (cfg.manual !== undefined) {
+      if (typeof cfg.manual !== "boolean") return { ok: false, error: "invalid" };
+      next.manual = cfg.manual;
+    }
+    for (const k of ["inPort", "outPort"]) {
+      if (cfg[k] === undefined) continue;
+      if (!validPort(cfg[k])) return { ok: false, error: "invalid" };
+      next[k] = cfg[k];
+    }
+    if (next.inPort === next.outPort) return { ok: false, error: "invalid" };
+    writeSettings({ ...readSettings(), vrcOsc: next });
+    if (vrcAttached) vrcStart();
+    return { ok: true, config: next };
+  });
+  ipcMain.on("soundboard:vrcOsc:keys", (evt, keys) => {
+    if (!senderIsTrusted(evt) || !vrcAttached || !Array.isArray(keys) || keys.length > VRC_MAX_KEYS) return;
+    const clean = [];
+    for (const k of keys) {
+      if (!k || typeof k !== "object") continue;
+      if (!Number.isInteger(k.n) || k.n < 1 || k.n > VRC_MAX_KEYS) continue;
+      if (typeof k.active !== "boolean" || typeof k.playing !== "boolean") continue;
+      clean.push({ n: k.n, active: k.active, playing: k.playing });
+    }
+    vrchatOsc.setKeys(clean);
+  });
+  ipcMain.on("soundboard:vrcOsc:page", (evt, i) => {
+    if (!senderIsTrusted(evt) || !vrcAttached) return;
+    if (!Number.isInteger(i) || i < 0 || i > VRC_MAX_PAGE) return;
+    vrchatOsc.setPage(i);
+  });
+}
+
 // Hosts allowed to navigate inside the window even when they aren't the
 // soundboard origin — needed so OAuth (Discord) completes in-app and the
 // session cookie lands on the right origin.
@@ -809,11 +907,13 @@ function createWindow(url) {
     if (details.isMainFrame && !details.isSameDocument) {
       stopNativeCapture();
       sdDetach();
+      vrcDetach();
     }
   });
   mainWindow.webContents.on("render-process-gone", () => {
     stopNativeCapture();
     sdDetach();
+    vrcDetach();
   });
 
   mainWindow.loadURL(url);
@@ -991,6 +1091,7 @@ app.whenReady().then(async () => {
 
   registerNativeCaptureIpc();
   registerStreamDeckIpc();
+  registerVrcOscIpc();
   streamDeck.start({
     appDataDir: app.getPath("appData"),
     onPress: handleStreamDeckPress,
@@ -1023,6 +1124,7 @@ app.on("will-quit", () => {
   vrControllers.stop();
   audioCapture.stop();
   streamDeck.stop();
+  vrchatOsc.stop();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
