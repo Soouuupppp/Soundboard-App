@@ -261,9 +261,13 @@ CREATE TABLE IF NOT EXISTS "profile" (
   "isDefault" BOOLEAN NOT NULL DEFAULT FALSE,
   "voiceFx" TEXT,
   "soundFx" TEXT,
+  "oscLayout" TEXT,
   "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS "profile_user_idx" ON "profile" ("userId");
+
+-- ver/1.5.2 VRChat avatar panel: per-profile key layout (JSON text, NULL = default).
+ALTER TABLE "profile" ADD COLUMN IF NOT EXISTS "oscLayout" TEXT;
 
 -- A sound's board placement within ONE profile. A row exists only for sounds
 -- touched per-profile; absence = saved-only in that profile. Unique per

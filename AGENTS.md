@@ -90,6 +90,19 @@ pnpm up / pnpm down # docker compose up --build / down
   **`build:native`** (CMake-build the vr-bridge → `resources/vr`; Windows + VS
   2022 C++ workload + CMake required), `dist`, `dist:win`, `dist:portable`,
   `release:win`. See `electron/README.md`.
+- **Local testing (agents, read this before starting anything):** start the stack with auth
+  off so you land on the seeded **system** dev account instead of a Discord login, and point
+  the dev app at it (its own `Soundboard-dev` userData, so the installed app is untouched):
+  ```bash
+  AUTH_DISABLED=true docker compose up --build -d
+  SOUNDBOARD_URL=http://localhost:5050 pnpm electron
+  ```
+  `.env` doesn't set `AUTH_DISABLED`, so a plain `docker compose up` / `pnpm up` uses Discord
+  login. It's a runtime env, so switching only needs `AUTH_DISABLED=true docker compose up -d web`
+  (no rebuild). Never set it on a reachable deployment (see Security notes). The dev app's
+  bundled Stream Deck plugin comes from `electron/resources/streamdeck`; run
+  `pnpm --filter electron build:streamdeck` after a version bump or the launch-time plugin
+  update prompt offers a stale copy.
 
 ## Key concepts
 
@@ -519,6 +532,36 @@ local bridge. Path: Stream Deck app → plugin (`src/bridge.ts`) → named pipe 
 - **No Marketplace, no browser support, no dials** (1.5.1 scope). The stock Hotkey action with
   F13–F24 is the documented tap-only fallback (`electron/README.md`).
 
+### VRChat avatar panel (OSC, desktop app, 1.5.2 experimental)
+A Stream-Deck-like panel on a VRChat avatar (Unity package in `avatar-panel/`, PC only, VRCFury
+drop-in) whose keys trigger the desktop app over OSC. Path: avatar contact → VRChat →
+OSC/UDP on 127.0.0.1 → `electron/vrchat-osc.js` → `main.js` IPC → `components/VrcOscBridge.tsx`
+in `Dashboard` → `lib/remote-actions.ts` (the same dispatch the Stream Deck uses).
+- **OSC contract** (the table in the 1.5.2 task section): `Soundboard/v1/Key/<n>` (press, avatar →
+  app, rising edge), `Active/<n>` + `Playing/<n>` + `Page` (app → avatar), `Enabled` + `Mode`
+  (avatar menu only). Keys are numbered 1..N row-major; N is read from the worn avatar's OSCQuery
+  tree (5 / 9 / 15, or 0 = no panel).
+- **Discovery:** OSCQuery. `vrchat-osc.js` serves its own HTTP tree (must contain `/avatar` or
+  VRChat sends nothing) and advertises it over mDNS (`multicast-dns`), browses for
+  `VRChat-Client-*`, reads VRChat's receive port and avatar parameters, and re-reads them on
+  `/avatar/change` and every 30 s. Our mDNS replies must put the PTRs in answers and the
+  SRV/TXT/A records in **additionals** (the layout VRChat itself uses): with everything in answers,
+  VRChat ignores us, never reads our tree and never sends avatar parameters. **Manual ports** (default receive 9001 / send 9000, saved in
+  `userData/settings.json` `vrcOsc`) skip discovery for users who launch with `--osc`.
+- **Layout:** per profile, server-side (`profile.oscLayout`, `lib/osc-board.ts` `OscLayout`): grid
+  size + 1–10 pages of 15 slots in a fixed 3×5 space, so a smaller grid only grays slots out.
+  Actions: play sound, cancel all, Livepad capture, Livepad play (position or specific capture),
+  profile (cycle or specific), page − / +. The current page is runtime state (reset on avatar
+  change and profile switch).
+- **Editor:** `components/OscBoardEditor.tsx` in a navbar popover (desktop app only):
+  drag-and-drop grid, page tabs, grid size, status line with a mismatch warning when the avatar's
+  size differs, a device-local on/off switch (`soundboard:vrcOscEnabled`) and manual ports.
+- **Off by default** (owner decision 2026-11-14, overriding A1's "default on"): mDNS discovery
+  listens on all interfaces, so Windows Firewall prompts on first start; keeping it off means
+  only users who turn the panel on see that prompt.
+- Works only while the dashboard is mounted; presses ignore the master keybinds switch. The
+  avatar-side menu toggle (`Enabled`) is the griefing control.
+
 ### User-facing notifications
 - `components/Toast.tsx` — `ToastProvider` + `useToast` (mounted in the root
   layout), with a `fromResponse` helper (reads a failed Response's `{error}`,
@@ -542,7 +585,9 @@ chord model) · `vr-bind.ts` (controller step/sequence model + matcher) ·
 `validation.ts` (Zod schemas) · `livepad.ts` (rolling buffer, WAV encode, capture
 render pipeline) · `livepad-store.ts` (OPFS temp files + session locks) ·
 `livepad-native.ts` (desktop per-app/playback-device bridge types + helpers) ·
-`streamdeck.ts` (desktop Stream Deck bridge types + accessor) · `utils.ts`
+`streamdeck.ts` (desktop Stream Deck bridge types + accessor) · `osc-board.ts` (VRChat
+avatar panel layout model + OSC bridge types) · `remote-actions.ts` (shared Stream Deck / avatar
+panel action dispatch) · `utils.ts`
 (`formatBytes`, etc.).
 
 ## Third-party AI voice providers
@@ -608,6 +653,15 @@ never sell user data, and the TOS links Google's privacy policy.
   testing only; the only guards are the startup warning and the red banner on every page.
   CSRF/Origin checks and the CSP are unchanged by it, and the system user's upload folder still
   passes `lib/storage.ts`'s numeric-id check.
+- **VRChat OSC** (`electron/vrchat-osc.js`): the UDP socket and the OSCQuery HTTP server bind to
+  **127.0.0.1 only**. mDNS is LAN multicast by nature, but our records point at 127.0.0.1 and
+  discovery answers are only trusted from this machine; VRChat is always contacted on loopback.
+  Only names starting `Soundboard/v1/` are ever sent. Every `soundboard:vrcOsc:*` handler checks
+  `senderIsTrusted`, presses reach the page only while attached and `pageIsTrusted()`, and main
+  re-validates key states (n 1–15, real booleans), the page (0–9) and ports (1024–65535). Any local
+  process can send OSC to our port, so a press is treated as untrusted input that can only pick
+  one of the user's configured keys. The stored layout is a ≤ 32 KB JSON string validated against
+  `OscLayoutBody` on every PATCH.
 
 ## Project status
 
@@ -772,6 +826,13 @@ navbar chips, a separate `Soundboard-dev` userData for source runs, and an `AUTH
 switch for local testing. Tasks 1–7 owner-tested on a Stream Deck MK.2, tasks 8–15 owner-reported
 working in the dev app against a local stack (2026-11-13); the plugin update prompt needs a
 packaged build and is untested. No schema change, no CSP change, no web API change.
+
+**1.5.2 shipped** (experimental — VRChat avatar panel): a Unity package
+(`avatar-panel/`, VRCFury drop-in, PC only) with 1×5 / 3×3 / 3×5 Stream-Deck-like panels whose
+keys talk to the desktop app over OSC/OSCQuery (`electron/vrchat-osc.js`). Keys are laid out in
+the app per profile (new `profile.oscLayout` column) through a navbar editor, with pages; the
+Stream Deck and the panel share one action dispatch (`lib/remote-actions.ts`). Owner-reported
+working in VRChat against a local stack (2026-11-14).
 
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
@@ -3960,6 +4021,320 @@ avatar). **No separate grid-size parameter:** the app reads the grid size from w
    locked tasks in this section.
    **Progress: ✅ Done** *(all scope decided with the owner 2026-11-14, recorded above;
    ready for `/plan-release`.)*
+
+**Planning round 2 (owner, 2026-11-14, `/plan-release`) — locked:**
+- **Install = VRCFury drop-in.** The prefab carries a VRCFury **Full Controller** (FX
+  layers + menu + params merged at upload). Users drag it onto their avatar; VRCFury is the
+  one required dependency. Full Controller must keep parameter names global (no
+  VRCFury rename), or the `Soundboard/v1/…` addresses break.
+- **Editor entry = a navbar button, desktop only** (hidden on the web build), next to
+  Voice / AI / Sound Effects, opening a wide portal popover with the drag-and-drop editor
+  and the OSC status.
+- **Syncing `Active/<n>` is an option on the avatar prefab** (a checkbox on its inspector,
+  default **on**). Off = only the wearer sees grayed keys, which saves those synced bits.
+  The app always sends `Active/<n>`; it doesn't care which is chosen.
+- **Placement default = Follow.** Placed in space = VRChat constraint *Freeze to World*.
+  Pickable = grabbable PhysBone with posing, so it **stays where it's let go** until the
+  mode changes.
+
+**Planning decisions (agent, 2026-11-14 — revisit if the owner objects):**
+- **PC avatars only for 1.5.2.** The panel uses a small custom shader (one draw call, state
+  per key in material floats), and Quest avatars can't use custom shaders. Quest is a later
+  version.
+- **Networking in Electron:** OSC encode/decode is hand-written over `node:dgram` (bool,
+  int, float, string only). mDNS uses the small pure-JS **`multicast-dns`** npm package (MIT)
+  rather than a hand-rolled responder. The OSCQuery HTTP server is plain `node:http`.
+- **Two parallel tracks** with the OSC contract below as their only shared interface:
+  **Track A** (web + Electron, this repo) and **Track B** (Blender + Unity in
+  `{{path:avatar-project}}`, copied here at the end). Neither track edits the other's files.
+  Both update only their **own** task Progress lines in this file, and re-read it before each
+  edit (the other loop may have changed it).
+
+**OSC contract (locked; both tracks build against exactly this):**
+
+| Parameter (`/avatar/parameters/` + …) | Type | Synced | Direction | Meaning |
+| --- | --- | --- | --- | --- |
+| `Soundboard/v1/Key/<n>` | bool | no (0 bits) | avatar → app | contact on key `n` (true while touched) |
+| `Soundboard/v1/Active/<n>` | bool | prefab option, default yes | app → avatar | key has a usable action (false = grayed out) |
+| `Soundboard/v1/Playing/<n>` | bool | yes | app → avatar | key's sound/capture is playing |
+| `Soundboard/v1/Enabled` | bool | yes, saved | menu | panel shown + contacts on (default off) |
+| `Soundboard/v1/Mode` | int | yes, saved | menu | 0 = Follow (default), 1 = Placed in space, 2 = Pickable |
+| `Soundboard/v1/Page` | int | no | app → avatar | current page, 0-based (for a small page indicator) |
+
+- **Keys are numbered `1..N` row-major from the top-left** (1×5: one row of 5; 3×3: 3 rows
+  of 3; 3×5: 3 rows of 5; "3×5" = 3 rows × 5 columns, like a 15-key Stream Deck). The app
+  reads N from which `Key/<n>` nodes the worn avatar's OSCQuery tree has (5, 9 or 15; none =
+  "avatar has no Soundboard panel").
+- A press fires on the **rising edge** of `Key/<n>` (false → true). The app ignores further
+  trues until it goes false again.
+- Every `Key/<n>` is an **unsynced expression parameter** (so OSC sees it, at no bit cost).
+- **Bit budget (3×5, Active synced):** 15 + 15 + 1 + 8 = 39 of 256 synced bits.
+
+#### Track A — app (web + Electron). Build order A1 → A6.
+
+A1. **VRChat OSC + OSCQuery service in Electron** *(feat, do first)*. New
+    `electron/vrchat-osc.js` (add to `build.files`, add `multicast-dns` to
+    `electron/package.json` dependencies; the user runs `pnpm install`).
+    - **OSC:** a UDP socket bound to `127.0.0.1` on a free port; minimal OSC 1.0 codec
+      (address, `,T`/`,F`/`,i`/`,f`/`,s` type tags, 4-byte padding, bundles decoded and
+      flattened). Malformed packets are dropped, never thrown.
+    - **OSCQuery:** a `node:http` server on `127.0.0.1` serving `?HOST_INFO` (name
+      `Soundboard`, `OSC_IP` 127.0.0.1, `OSC_PORT`, `OSC_TRANSPORT` UDP) and a root tree
+      that contains `/avatar` (VRChat only sends avatar data to apps whose tree has it).
+      Advertise `_oscjson._tcp` and `_osc._udp` over mDNS with `multicast-dns`, instance
+      name `Soundboard-<random4>`.
+    - **Find VRChat:** browse `_oscjson._tcp` for an instance starting `VRChat-Client-`,
+      GET its `?HOST_INFO` for VRChat's receive port, and GET `/avatar/parameters` to read
+      the `Soundboard/v1/Key/<n>` children → grid size. Re-query on `/avatar/change` and
+      every 30 s while connected. VRChat on Windows only answers same-machine queries, so
+      only loopback/link-local answers are used.
+    - **Manual fallback:** when enabled, skip discovery and use fixed ports (default:
+      receive 9001, send 9000, for users who launch with `--osc`); stored in
+      `userData/settings.json` as `vrcOsc: {manual, inPort, outPort}`.
+    - **Lifecycle:** runs only while the page is attached (A2), the feature switch is on
+      (device-local in the page, default on when `hasDesktop`); window focus doesn't
+      matter. Stopped on detach, navigation, renderer crash and quit;
+      the mDNS advert is withdrawn on stop.
+    - **Out:** `sendBool(name, v)`, `sendInt(name, v)` only for names under
+      `Soundboard/v1/` (hard-coded prefix check), rate-limited to resend only changes plus a
+      full resend on `/avatar/change` and on (re)connect.
+    **Progress: ✅ Done** *(new `electron/vrchat-osc.js`: hand-written OSC codec (T/F/i/f/s, padding,
+    bundles flattened to depth 4, unknown types or malformed packets dropped), UDP socket on
+    127.0.0.1 (free port, or `inPort` in manual mode), OSCQuery `node:http` on 127.0.0.1 with
+    `?HOST_INFO` and a tree containing `/avatar`. mDNS via `multicast-dns`, required lazily so a
+    missing install reports `error: "mdns-missing"` instead of crashing; advertises
+    `Soundboard-<4 hex>` on `_oscjson._tcp` + `_osc._udp` with A = 127.0.0.1, re-announces every
+    10 s, sends TTL-0 goodbyes on stop. Browses for `VRChat-Client-*`, trusts only answers whose
+    source address is this machine (loopback, link-local or a local interface), always connects
+    to 127.0.0.1, reads `OSC_PORT` from HOST_INFO and walks `/avatar/parameters` for
+    `Soundboard/v1/Key/<n>` (5/9/15 numbered 1..N = that size, none or odd = 0, unknown = null);
+    re-queries on `/avatar/change` and every 30 s, and treats two failed queries as VRChat gone.
+    Rising-edge presses on `Key/<n>` (bool, or float > 0.5). Sends only names starting
+    `Soundboard/v1/`, changes only, flushed on `setImmediate`, full resend on avatar change and
+    (re)connect. In manual mode "VRChat found" means a packet arrived. Added `multicast-dns`
+    ^7.2.5 to dependencies and the file to `build.files`; not installed. Wiring to main is A2.)*
+
+A2. **Electron bridge + preload API** *(feat)*. `main.js` IPC
+    `soundboard:vrcOsc:attach/detach/status/config` (invoke) and `keys/page` (send), every
+    handler behind `senderIsTrusted`, presses forwarded only while attached and
+    `pageIsTrusted()`. `preload.js` exposes `window.soundboard.vrcOsc = { attach(onPress,
+    onStatus) → detach, publishKeys([{n, active, playing}]), setPage(i), getStatus(),
+    getConfig(), setConfig(cfg) }` (callback delivery like `streamDeck`). Main re-validates:
+    `n` integer 1–15, booleans only, page integer 0–9, ports integer 1024–65535. Status =
+    `{running, vrchatFound, avatarKeys: 0|5|9|15|null, manual, error?}`.
+    **Progress: ✅ Done** *(`main.js`: `registerVrcOscIpc()` with `soundboard:vrcOsc:attach/detach/status/config`
+    (invoke) and `keys/page` (send), every handler behind `senderIsTrusted`. Attach starts
+    `vrchat-osc.js`, detach stops it; navigation, renderer crash and quit also stop it. Presses
+    and avatar-change events go to the page only while attached and `pageIsTrusted()`; status
+    goes whenever the page is trusted, so the editor sees it too. `config` with no argument
+    reads `settings.json` `vrcOsc` (defaults manual off, in 9001, out 9000); with an object it
+    validates (boolean `manual`, ports integer 1024–65535, in ≠ out), saves, and restarts the
+    service if attached. Keys are dropped unless `n` is an integer 1–15 and both flags are real
+    booleans (≤ 15 entries); page must be an integer 0–9. `preload.js` exposes
+    `window.soundboard.vrcOsc` = `attach(onPress, onStatus, onAvatarChange?)` → detach,
+    `publishKeys`, `setPage`, `getStatus`, `getConfig`, `setConfig`, plus an extra
+    `onStatus(fn)` listener for the editor. The optional avatar-change callback is an addition
+    so the page can reset to page 0. `node --check` only.)*
+
+A3. **Layout model + per-profile storage** *(feat)*. New `web/src/lib/osc-board.ts`
+    (client-safe): `GridSize = "1x5" | "3x3" | "3x5"`, `keysFor(grid)` (5/9/15),
+    `slotOf(row, col)` in a fixed **3×5 coordinate space** so shrinking keeps settings (a
+    slot outside the current grid is *inactive*, shown grayed, restored when the grid grows).
+    `OscKeyAction` = `play {soundId, soundName}` · `cancelAll` · `livepadCapture` ·
+    `livepadPlay {mode: "position", slot 1–120} | {mode: "specific", captureId, captureName}`
+    · `profile {mode: "cycle"} | {mode: "specific", profileId, profileName}` · `pageNext` ·
+    `pagePrev`. `OscLayout = {v: 1, grid, pages: (OscKeyAction | null)[15][]}` (1–10 pages).
+    **Storage (locked: per profile, server-side):** new `profile.oscLayout` text column in
+    BOTH `schema.ts` and `bootstrap.sql` (`ADD COLUMN IF NOT EXISTS`); `PATCH
+    /api/profiles/[id]` accepts it (Zod `OscLayoutBody` in `lib/validation.ts`, raw length
+    ≤ 32 KB, names ≤ 120, ids `[A-Za-z0-9_-]{1,64}` / uuid); the clone route copies it;
+    `ProfileProvider` exposes `oscLayout` + a debounced `setOscLayout` like the voiceFx
+    backing. Default = 3×5, one empty page.
+    **Progress: ✅ Done** *(new `web/src/lib/osc-board.ts`: `GridSize`, `gridDims`/`keysFor`/`slotOf`/`slotInGrid`,
+    `keySlot(grid, n)` (avatar key 1..N row-major → slot in the fixed 3×5 space),
+    `gridForKeys`, the `OscKeyAction` union, `OscLayout {v:1, grid, pages}` (each page 15
+    slots, 1–10 pages), `defaultOscLayout` (3×5, one empty page), a defensive
+    `parseOscLayout`, `newAction`/`ACTION_LABELS` for the editor, plus the bridge types
+    (`VrcOscStatus`, `VrcOscConfig`, `getVrcOscBridge()`) and the device-local feature switch
+    `soundboard:vrcOscEnabled` (now default **off**, see Key concepts; synced in-page by a window event). Schema:
+    `profile.oscLayout` text in `schema.ts` and in `bootstrap.sql` (CREATE block + `ADD COLUMN
+    IF NOT EXISTS`); not applied. `validation.ts`: `OscLayoutBody` (strict, every action shape,
+    names printable ≤ 120, soundId/profileId uuid or "" while unset, captureId
+    `[A-Za-z0-9_-]{1,64}` or "", position 1–120) and `oscLayout` on `PatchProfileBody` as a
+    ≤ 32 KB JSON string whose parsed value must pass it. PATCH stores it, clone copies it, GET
+    returns it. `ProfileProvider` exposes the active profile’s parsed `oscLayout` and `setOscLayout`
+    through a separate `useOscLayout()` context (its `useProfiles()` value is now memoized, so
+    layout edits don’t re-render Dashboard), saved through the existing 250 ms debounced PATCH
+    and flushed on switch/unload. tsc clean.)*
+
+A4. **Dashboard side: `VrcOscBridge` + shared action dispatch** *(feat)*. Extract the
+    press handling in `components/StreamDeckBridge.tsx` (play by soundId through
+    `playEntry`, cancelAll, livepad capture / play latest / play slot / play capture,
+    profile cycle / specific) into a shared hook (e.g. `lib/remote-actions.ts` /
+    `useRemoteActions`) so Stream Deck and the avatar panel run the **same** code. New
+    `components/VrcOscBridge.tsx` (render-nothing, mounted in `Dashboard` beside
+    `StreamDeckBridge`): attaches on mount, maps `(page, key n)` → slot → action, runs it,
+    and publishes per key: `active` = in-grid, has an action and the action is usable now
+    (sound in Saved, capture exists for that position/id, profile exists; page keys active
+    only when there is another page), `playing` = its sound/capture is playing. The current
+    **page is runtime state** (not stored), reset to 0 on avatar change and profile switch;
+    page keys wrap. Works only while the dashboard is mounted; ignores the master keybinds
+    switch (like Stream Deck). The layout's grid comes from the stored layout; the avatar's
+    reported size only drives the mismatch warning (A5).
+    **Progress: ✅ Done** *(new `lib/remote-actions.ts` `useRemoteActions(deps)` → a stable `run(action)`
+    (play by soundId through `playEntry`, cancel all, Livepad capture / play latest / play by
+    position or id, profile specific / cycle in `position` order), returning
+    `{ok}` or `not-found`. `StreamDeckBridge.tsx` now routes those presses through it (AI PTT,
+    replay and toggle stay there); Stream Deck behavior is unchanged. New
+    `components/VrcOscBridge.tsx`, mounted in `Dashboard` next to `StreamDeckBridge` with the same
+    sound/profile lists: attaches while the feature switch (`useVrcOscEnabled`) is on, maps key
+    n → `keySlot(grid, n)` on the current page, handles Page +/− itself (wrapping, no-op with one
+    page), and publishes all 15 keys (outside the grid = off) plus the page after every change
+    and after each attach. Active = sound in Saved / Livepad armed (capture) / capture at that
+    position or id exists / profile exists or more than one (cycle) / more than one page (page
+    keys) / always (cancel all); Playing = that sound or capture is playing. The page resets to 0
+    on avatar change (new optional callback from A2) and profile switch, and is clamped when pages
+    are removed. `vrchat-osc.js` now keeps the last key states across a restart (port change) so
+    they are resent. tsc clean.)*
+
+A5. **Editor UI (navbar, desktop only)** *(feat)*. A new header button in `AppHeader`'s
+    center group (icon e.g. `LayoutGrid`, only when `useVr().hasDesktop` and
+    `window.soundboard.vrcOsc` exists; `Panel` += `"osc"`, one-open-at-a-time), opening a
+    wide `Popover` in `portal` mode with `components/OscBoardEditor.tsx`:
+    - **Palette** of the 7 action types; **grid** of the layout's size drawn like a Stream
+      Deck (no logo strip); HTML5 drag-and-drop from palette → key, key → key (move/swap),
+      key → palette (remove), plus click-to-select / click-to-place as the keyboard and
+      touch fallback.
+    - **Per-key options** for the selected key: sound `Select` from Saved (grouped On board
+      / Saved like Stream Deck), Livepad mode + position / capture list, profile mode +
+      list. Missing targets show "(gone)" and keep the setting.
+    - **Pages:** tabs with add / remove (confirm when the page has keys), max 10.
+    - **Grid size** `Select` (1×5 / 3×3 / 3×5); shrinking grays the out-of-grid slots and
+      keeps them.
+    - **Status line:** "VRChat not found" / "Connected — avatar has no Soundboard panel" /
+      "Connected — 15-key panel"; an amber **mismatch warning** when the avatar reports a
+      different size than the layout; a feature on/off switch; a collapsible **manual
+      ports** section (`setConfig`).
+    - Saves on change through `setOscLayout` (no save button). Route failures through
+      `useToast`.
+    **Progress: ✅ Done** *(`HeaderControls`: `Panel` += `"osc"`, a `LayoutGrid` button at the end of the center
+    group, shown only when `useVr().hasDesktop` and `window.soundboard.vrcOsc` exists (so older
+    desktop builds hide it), opening a 34rem portal `Popover`, one-open-at-a-time with the others.
+    New `components/OscBoardEditor.tsx`: on/off switch (the device-local
+    `soundboard:vrcOscEnabled`), status line (off / not running with the reason / VRChat not found
+    or waiting on manual ports / "no Soundboard panel" / "N-key panel") plus an amber warning when
+    the avatar’s size differs from the layout’s; grid size `Select`; page tabs with add, remove
+    (confirm when the page has keys), max 10; a palette of the 7 actions; the 3×5 grid drawn in
+    full with out-of-grid slots grayed (kept, not droppable). HTML5 drag-and-drop: palette → key,
+    key → key (swap), key → palette (clear); click an action then a key as the fallback. The
+    selected key’s options: sound `Select` grouped On board / Saved (+ "(gone)"), Livepad
+    position 1–120 or specific capture, profile cycle or specific; Clear. Sounds come from
+    `GET /api/board?profileId=<active>`. Collapsible manual ports (fixed-ports toggle, receive and
+    send inputs saved on blur, toast on invalid). Saves through `setOscLayout`; ProfileProvider
+    now fires `soundboard:oscLayout-saveFailed` when a layout save fails and the editor toasts it.
+    tsc clean.)*
+
+A6. **Docs, CI, typecheck** *(chore)*. A "VRChat avatar panel (OSC)" section under Key
+    concepts, `lib/` map entries, a Security note (loopback-only sockets, `Soundboard/v1/`
+    send prefix, origin checks, values re-validated in main), `electron/README.md` (setup,
+    OSCQuery vs manual ports), the `.env`/compose untouched. In
+    `.github/workflows/electron-release.yml`, after the Stream Deck step, attach
+    `avatar-panel/release/*.unitypackage` to the draft release with `gh release upload --clobber`
+    (skip with a warning if the file is missing). `tsc --noEmit` clean for web.
+    **Progress: ✅ Done** *(AGENTS.md: a "VRChat avatar panel (OSC …)" section under Key concepts, `osc-board.ts` and
+    `remote-actions.ts` in the `lib/` map, and a VRChat OSC entry in Security notes (loopback-only
+    sockets, mDNS records pointing at 127.0.0.1, `Soundboard/v1/` send prefix, origin checks,
+    re-validation in main, the ≤ 32 KB `OscLayoutBody` check). `electron/README.md`: a "VRChat
+    avatar panel" setup section (enable OSC, editor, OSCQuery vs manual ports, the
+    `multicast-dns` install note) and a "How it works" bullet. `electron-release.yml`: an
+    "Attach VRChat avatar panel package" step after the Stream Deck one, uploading
+    `avatar-panel/release/*.unitypackage` with `--clobber` or emitting a warning when none exist.
+    Nothing in `avatar-panel/` touched. tsc clean for web.)*
+
+#### Track B — avatar panel (Blender + Unity). Build order B1 → B6.
+
+Work happens in `{{path:avatar-project}}` through the Blender MCP + Unity MCP (Unity
+2022.3.22f1, VRChat SDK 3.10.4, VRCFury present). **Never modify the owner's existing
+avatars or the "Open me!" scene**: everything new goes in `Assets/SoundboardPanel/`, a new
+test scene `Assets/SoundboardPanel/Test/SoundboardPanelTest.unity`, and a *copy* of an
+avatar in that scene for testing. Never upload to VRChat. The `.blend` source lives
+outside `Assets/` (Unity would try to import it): `{{path:avatar-project}}/SoundboardPanelSource/`.
+
+B1. **Panel model (Blender)** *(feat, do first)*. A Stream-Deck-like body (rounded slab,
+    keys slightly recessed, **no logo strip**), roughly 30 × 18 cm for 3×5 and scaled
+    bodies for 1×5 / 3×3. One mesh per grid size, **one material**, keys as separate UV
+    islands with the **key index in UV1.x** (0..N-1, row-major from the top-left) so the
+    shader can look up per-key state; a page-indicator strip of 10 dots on the bottom edge
+    (UV1.x = 100 + i). Low poly (< 2k tris each). Export FBX to
+    `Assets/SoundboardPanel/Models/` (+Y up, apply transforms, 1 unit = 1 m).
+    **Progress: ✅ Done** *(built in Blender by script in {{path:avatar-project}}/SoundboardPanelSource/SoundboardPanel.blend: a beveled slab (25 mm deep) with 3 mm key wells cut by boolean, key caps set 1 mm below the face, and 10 eight-sided page dots on a bottom strip. Sizes 292×80 mm (1×5), 188×184 mm (3×3), 292×184 mm (3×5), 52 mm key pitch, 44 mm keys. 308 / 424 / 588 tris. One material slot. UV0 maps each key face 0..1 (body/dots 0.5). Second UV set `UVIndex` = (key index 0..N-1 row-major from the top-left, 1 on the key's front face / 0 on its sides), body -1, dots 100+i. Exported to `Assets/SoundboardPanel/Models/SoundboardPanel_{1x5,3x3,3x5}.fbx` (FBX units, -Z forward / Y up, transforms baked); imported with no materials, rig or animation. Checked in Unity: no extra rotation, scale 1, key faces point +Z (the viewer stands on +Z), key 0 top-left seen from the front.)*
+
+B2. **Shader + material** *(feat)*. `Soundboard/PanelKey`, a small unlit shader shipped in
+    the package (no Poiyomi dependency): base body colour, keys tinted by state from
+    material floats `_Active0.._Active14`, `_Playing0.._Playing14`, `_Pressed0.._Pressed14`,
+    `_Page` (grayed when inactive, accent when playing, bright flash while pressed), page dot
+    lit for `_Page`. Single pass, no textures required. One material per grid size.
+    **Progress: ✅ Done** *(`Assets/SoundboardPanel/Shaders/SoundboardPanelKey.shader` (`Soundboard/PanelKey`): unlit, one pass, no textures, instancing/single-pass-stereo safe, `VRCFallback`=Unlit. The vertex stage reads the key index from the second UV set and picks that key's `_Active<n>`/`_Playing<n>`/`_Pressed<n>` (passed flat to the fragment), and lights page dot `_Page`. Colors are material properties (body, active key, grayed key, playing accent lime, pressed flash white, page dot + current dot); key faces get a soft inset edge, sides are darkened, and a small up-facing shade term gives depth. `_Active*` default 1, others 0. Materials `Assets/SoundboardPanel/Materials/SoundboardPanel_{1x5,3x3,3x5}.mat`. Compiles with no messages; an offscreen preview render of the 3×5 with grayed, playing, pressed keys and page 2 looked right from the front.)*
+
+B3. **Contacts, parameters, FX controller, menu** *(feat)*.
+    - One **contact receiver per key** (sphere at the key face, `Constant`, Allow Self +
+      Allow Others, not Local Only, collision tags `Finger`/`Hand`, parameter
+      `Soundboard/v1/Key/<n>`).
+    - `VRCExpressionParameters` per the contract table (Key unsynced, Playing synced, Enabled
+      + Mode synced + saved, Page unsynced, Active synced **or** unsynced per the B5 option —
+      two param assets).
+    - FX controller: a **Direct BlendTree** layer driving the material floats from
+      `Active/Playing/Key/Page` (no per-key state machines); an Enabled layer toggling the
+      panel object + receivers; a Mode layer for placement (B4).
+    - Menu: `Soundboard` submenu with an **Enabled** toggle and a **Mode** radio
+      (Follow / Placed in space / Pickable).
+    - All of it wired through one **VRCFury Full Controller** with parameters kept global.
+    **Progress: ✅ Done** *(Per grid size under `Assets/SoundboardPanel/Avatar/`: two expression-parameter assets `SoundboardPanel_<size>_Params_{SyncedActive,LocalActive}` (Key unsynced, Playing synced, Enabled + Mode synced and saved, Page unsynced, Active synced or not; 19/27/39 bits synced-Active, 14/18/24 without), one FX controller `SoundboardPanel_<size>_FX.controller` (clips stored inside it) and a shared `SoundboardPanel_Menu` (Enabled toggle + Follow / Placed in space / Pickable as `Mode` 0/1/2). FX: a `Soundboard Keys` layer with one Direct blend tree (base clip on a local `Soundboard/v1/_One` = 1, then `Active/n`, `Playing/n`, `Key/n` → `_Active/_Playing/_Pressed<n-1>`, `Page` → `_Page`; those animator params are declared Float so the bool/int expression params drive the weights), and a `Soundboard Enabled` layer toggling the `Panel` object, write defaults on. Hierarchy `SoundboardPanel RxC / Panel (off by default) / Board / Mesh + Keys/Key n`. One sphere receiver per key (r 18 mm, centre 4 mm behind the key face, Constant, self + others, not local-only, tags Finger/Hand) found from the mesh's key-face UVs. One VRCFury Full Controller (controller + params + menu under prefix `Soundboard`), `globalParams` = `Soundboard/v1/*`, built by reflection because VRCFury's model types are internal, in a dev-only `Test/Editor/SoundboardPanelBuilder.cs` that isn't shipped. Checked with a VRCFury editor test copy of a copied avatar in `Test/SoundboardPanelTest.unity`: all 48 names unchanged, Soundboard submenu correct, 15 receivers, on PC 32 synced (+39 bits). **Found:** building with the Android target unsyncs them all, because VRCFury's platform alignment unsyncs parameters the other platform's avatar lacks. That's fine for this PC-only release; worth a README line.)*
+
+B4. **Placement modes** *(feat)*. Follow (default): a VRC Parent Constraint to the chest /
+    head with a forward offset and smoothing (chained constraint or damping, like common
+    follower prefabs). Placed in space: the same constraint with **Freeze to World** turned on
+    by the Mode layer, so it stays where it was when switched. Pickable: a grabbable
+    **PhysBone** on the panel's root bone with **Allow Posing**, no gravity/pull, so it stays
+    where released; leaving Pickable restores Follow's transform. Enabled off hides the panel
+    and stops the receivers in every mode.
+    **Progress: ✅ Done** *(Hierarchy is now `SoundboardPanel RxC / Anchor + Panel / Lag / Arm / Board / Mesh + Keys`. `Anchor` gets a VRCFury Armature Link to the Chest (position + rotation aligned); `Panel` has a VRC Parent Constraint to `Anchor`. A `Soundboard Mode` FX layer sets the constraint's `FreezeToWorld` (Follow 0, Placed and Pickable 1) and enables the `Arm` PhysBone only in Pickable; any Mode outside 1–2 falls back to Follow. Follow smoothing = a soft, non-grabbable `Lag` PhysBone (pull 0.25, spring 0.6, 25° limit) that only rotates. Pickable = `Arm` PhysBone, grab + pose by the wearer only, no pull/gravity/collision, stretch up to 2×, `resetWhenDisabled` so leaving Pickable snaps back to the follow pose. The board sits 30 cm in front of the chest, 6 cm lower, tilted 30° up toward the face, facing the wearer. Enabled off still turns off `Panel` (mesh, receivers, PhysBones). All asset generation moved into the dev builder (`Tools/Soundboard Panel (dev)/Rebuild assets`). Tested in Play mode with Av3Emulator on the copied avatar: Enabled shows the panel at the chest; Active/Playing reach the right key floats; Placed stays put while the avatar moves 1 m; back to Follow it rejoins; Pickable enables the grab bone with the constraint frozen; turning 90° makes the lag bone trail about 13°. Grabbing itself wasn't tried (no VR hands in the editor). Known limit: Placed/Pickable freeze where the panel was when the mode changed, and Pickable can only be dragged within the arm's reach of where it froze)*
+
+B5. **Three prefabs + sync option + test** *(feat)*. Prefabs `SoundboardPanel 1x5`,
+    `3x3`, `3x5` under `Assets/SoundboardPanel/Prefabs/`. A small editor-only component
+    `SoundboardPanelSettings` (`IEditorOnly`) with **"Sync grayed-out keys to other players"**
+    (default on) whose custom inspector swaps the Full Controller's parameters asset
+    between the synced and unsynced variants. Test on the copied avatar in Gesture Manager /
+    Av3Emulator: menu toggles, contacts set `Key/<n>`, setting `Active/Playing/Page` by hand
+    changes the visuals, all three modes behave, avatar builds without VRCFury errors. Record
+    the performance-rank impact (contact receivers count) in the progress note.
+    **Progress: ✅ Done** *(Prefabs `Assets/SoundboardPanel/Prefabs/SoundboardPanel {1x5,3x3,3x5}.prefab` (output of the dev builder's `Rebuild prefabs`). `Scripts/SoundboardPanelSettings.cs` (IEditorOnly, "Sync grayed-out keys to other players", default on, holds both parameter assets) with a small custom inspector. **Deviation:** the inspector can't swap the Full Controller's parameters asset, because VRCFury reverts every override on its own components in a prefab instance before each build (`VRCFPrefabFixer`). Instead `Scripts/Editor/SoundboardPanelBuildHook.cs` (avatar preprocess, order -20000, before VRCFury's -10000) points the Full Controller at the synced or local asset on the copy being built (upload, test copy, play mode); the setting itself is a plain override that survives. Tested on the copied avatar in `Test/SoundboardPanelTest.unity`: VRCFury test copies of all three prefabs build with no errors, keys 1..N and N receivers, 12 / 20 / 32 synced params (synced Active); sync off → Active unsynced, 15 fewer bits; Av3Emulator play-mode checks of Enabled, key floats and all three modes from B4. **Performance impact (PC):** +5 / 9 / 15 contact receivers (enough to push a typical avatar's contact rank to Good/Medium; the test avatar goes 6 → 21 = Medium), +2 PhysBone components / 2 transforms, +1 VRC constraint, +1 material, +1 mesh, +308 / 424 / 588 tris. Not tested: real VRChat (grab, others pressing, OSC), the Gesture Manager menu UI)*
+
+B6. **Export + copy into this repo** *(chore)*. Copy the raw package files (the whole
+    `Assets/SoundboardPanel/` minus the test scene, with `.meta` files) plus
+    `SoundboardPanelSource/*.blend` into a new repo-root folder **`avatar-panel/`**
+    (`avatar-panel/Assets/SoundboardPanel/…`, `avatar-panel/source/…`, a short
+    `avatar-panel/README.md` with install steps: install VRCFury, drag a prefab onto the
+    avatar, PC only). Export `Soundboard-Avatar-Panel-1.5.2.unitypackage` (via
+    `AssetDatabase.ExportPackage`, dependencies off) to `avatar-panel/release/`. Self-contained
+    apart from VRCFury and the VRChat SDK. Never touch `web/`, `electron/` or the workflow
+    (A6 owns the CI step).
+    **Progress: ✅ Done** *(Repo-root `avatar-panel/`: `Assets/SoundboardPanel/…` (the package's raw files with `.meta`, Test folder left out), `source/SoundboardPanel.blend`, `source/SoundboardPanelBuilder.cs.txt` (the dev builder, renamed so Unity never imports it), `README.md` (install VRCFury, drag one prefab onto the avatar root, PC only, menu/modes, the sync option, cost table, the Quest-unsync note) and `release/Soundboard-Avatar-Panel-1.5.2.unitypackage` (`AssetDatabase.ExportPackage` with an explicit list of the 31 `Assets/SoundboardPanel` assets: no dependencies, no Test scene or builder). Self-contained apart from VRCFury and the VRChat SDK. **Anonymity:** Blender stores the save path, a file-browser folder, the old render path and a brush-library link to the Blender install inside the .blend (zstd-compressed, so a plain grep misses them), so the repo copy is saved uncompressed with the brush library purged and those strings blanked; it still loads. The package, raw files and README contain no local paths or names. Nothing in `web/`, `electron/` or CI changed. The test scene, the avatar copy and the dev builder stay in {{path:avatar-project}} under `Assets/SoundboardPanel/Test/`)*
+
+**Integration test (owner, after both tracks):** wear the 3×5 panel in VRChat, desktop app
+shows "Connected — 15-key panel"; pressing a key (own hand and a friend's) plays its sound;
+Playing lights while it plays; grayed keys match the editor; page keys change page; 3×3
+layout on a 15-key avatar shows the mismatch warning; Enabled off stops presses; the three
+modes look the same to a friend; manual ports work with `--osc`.
+
+**Integration testing (2026-11-14, 3×5 panel worn in VRChat, dev app on a local stack):**
+checked live: mDNS finds `VRChat-Client-*`, VRChat's `HOST_INFO` gives `OSC_PORT` 9000, the app
+reads a 15-key panel from `/avatar/parameters`, and the `Active`/`Playing`/`Page` values the app
+sends reach VRChat (read back through VRChat's own OSCQuery) and show on the panel (grayed keys
+matched the editor). A first round where presses played no sound was fixed in a separate
+session (its change isn't recorded here); after that the owner reported everything working.
+Not individually confirmed: a friend's hand pressing, the mismatch warning, Enabled off, how
+the three modes look to a friend, and manual ports with `--osc`.
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions

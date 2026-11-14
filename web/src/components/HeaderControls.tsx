@@ -9,7 +9,10 @@
 //
 // (Pre-1.4.1 this was one self-contained <HeaderControls> in the left zone.)
 
-import { Settings, Wand2, Sparkles, SlidersHorizontal } from "lucide-react";
+import { Settings, Wand2, Sparkles, SlidersHorizontal, LayoutGrid } from "lucide-react";
+import { useVr } from "@/components/VrProvider";
+import { OscBoardEditor } from "@/components/OscBoardEditor";
+import { getVrcOscBridge } from "@/lib/osc-board";
 import { useAudio } from "@/components/AudioProvider";
 import { Popover } from "@/components/Popover";
 import { LevelMeter } from "@/components/LevelMeter";
@@ -18,7 +21,7 @@ import { VoiceChangerPanel } from "@/components/VoiceChangerPanel";
 import { AiVoicePanel } from "@/components/AiVoicePanel";
 import { SoundEffectsPickerPanel } from "@/components/SoundEffectsModal";
 
-export type Panel = "settings" | "voice" | "ai" | "fx" | null;
+export type Panel = "settings" | "voice" | "ai" | "fx" | "osc" | null;
 
 type ControlsProps = {
   panel: Panel;
@@ -62,6 +65,8 @@ function HeaderButton({
 export function CenterControls({ panel, toggle, close }: ControlsProps) {
   const audio = useAudio();
   const engine = audio.supportsSinkId;
+  const { hasDesktop } = useVr();
+  const oscAvailable = hasDesktop && !!getVrcOscBridge();
 
   return (
     <div className="flex items-center gap-2">
@@ -118,6 +123,24 @@ export function CenterControls({ panel, toggle, close }: ControlsProps) {
           }
         >
           <SoundEffectsPickerPanel audio={audio} onClose={close} />
+        </Popover>
+      )}
+
+      {/* VRChat avatar panel editor: desktop app builds that ship the OSC bridge only. */}
+      {oscAvailable && (
+        <Popover
+          open={panel === "osc"}
+          onClose={close}
+          align="left"
+          portal
+          panelClassName="w-[34rem] max-w-[calc(100vw-1.5rem)] max-h-[85vh] overflow-y-auto p-3"
+          trigger={
+            <HeaderButton active={panel === "osc"} onClick={() => toggle("osc")} title="VRChat avatar panel">
+              <LayoutGrid size={16} />
+            </HeaderButton>
+          }
+        >
+          <OscBoardEditor />
         </Popover>
       )}
     </div>

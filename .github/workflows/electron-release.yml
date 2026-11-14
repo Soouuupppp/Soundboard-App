@@ -93,6 +93,22 @@ jobs:
         run: |
           gh release upload "$TAG" electron/resources/streamdeck/com.soouuupppp.soundboard.streamDeckPlugin --clobber
 
+      # The VRChat avatar panel's Unity package is built outside CI and committed to
+      # avatar-panel/release/. Attach it when present; a missing file only warns.
+      - name: Attach VRChat avatar panel package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          shopt -s nullglob
+          files=(avatar-panel/release/*.unitypackage)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::warning::No avatar-panel/release/*.unitypackage found; skipping."
+          else
+            gh release upload "$TAG" "${files[@]}" --clobber
+          fi
+
   publish:
     needs: [check, build]
     runs-on: ubuntu-latest

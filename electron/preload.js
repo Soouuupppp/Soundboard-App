@@ -58,6 +58,51 @@ contextBridge.exposeInMainWorld("soundboard", {
       };
     },
   },
+  // VRChat avatar panel over OSC (main's vrchat-osc.js). attach() starts the OSC
+  // service and returns a detach function that stops it. Presses are callbacks, not
+  // window events. main re-validates everything sent from here.
+  vrcOsc: {
+    attach: (onPress, onStatus, onAvatarChange) => {
+      vrcPressHandler = onPress;
+      vrcAttachStatusHandler = onStatus || null;
+      vrcAvatarChangeHandler = onAvatarChange || null;
+      ipcRenderer.invoke("soundboard:vrcOsc:attach");
+      return () => {
+        if (vrcPressHandler !== onPress) return;
+        vrcPressHandler = null;
+        vrcAttachStatusHandler = null;
+        vrcAvatarChangeHandler = null;
+        ipcRenderer.invoke("soundboard:vrcOsc:detach");
+      };
+    },
+    publishKeys: (keys) => ipcRenderer.send("soundboard:vrcOsc:keys", keys),
+    setPage: (i) => ipcRenderer.send("soundboard:vrcOsc:page", i),
+    getStatus: () => ipcRenderer.invoke("soundboard:vrcOsc:status"),
+    getConfig: () => ipcRenderer.invoke("soundboard:vrcOsc:config"),
+    setConfig: (cfg) => ipcRenderer.invoke("soundboard:vrcOsc:config", cfg),
+    // Extra status listener for the editor (works whether or not the dashboard attached).
+    onStatus: (fn) => {
+      vrcStatusListeners.add(fn);
+      return () => {
+        vrcStatusListeners.delete(fn);
+      };
+    },
+  },
+});
+
+let vrcPressHandler = null;
+let vrcAttachStatusHandler = null;
+let vrcAvatarChangeHandler = null;
+const vrcStatusListeners = new Set();
+ipcRenderer.on("soundboard:vrcOsc:press", (_evt, press) => {
+  if (vrcPressHandler && press && Number.isInteger(press.n)) vrcPressHandler(press.n);
+});
+ipcRenderer.on("soundboard:vrcOsc:avatarChange", () => {
+  if (vrcAvatarChangeHandler) vrcAvatarChangeHandler();
+});
+ipcRenderer.on("soundboard:vrcOsc:status", (_evt, status) => {
+  if (vrcAttachStatusHandler) vrcAttachStatusHandler(status);
+  for (const fn of vrcStatusListeners) fn(status);
 });
 
 let streamDeckPressHandler = null;

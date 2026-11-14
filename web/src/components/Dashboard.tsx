@@ -23,6 +23,7 @@ import {
 import { useAudio } from "@/components/AudioProvider";
 import { useProfiles } from "@/components/ProfileProvider";
 import { StreamDeckBridge } from "@/components/StreamDeckBridge";
+import { VrcOscBridge } from "@/components/VrcOscBridge";
 import { useVoiceChanger } from "@/components/VoiceChangerProvider";
 import { useVr } from "@/components/VrProvider";
 import { VrBindPicker } from "@/components/VrBindPicker";
@@ -1031,6 +1032,16 @@ export function Dashboard({
         startAiPtt={startAiPtt}
         stopAiPtt={stopAiPtt}
         replayLastConversion={replayLastConversion}
+        triggerLivepadCapture={triggerLivepadCapture}
+      />
+      <VrcOscBridge
+        sounds={streamDeckSounds}
+        profiles={streamDeckProfiles}
+        activeProfileId={activeProfileId}
+        setActiveProfile={setActiveProfile}
+        playingSoundIds={audio.playingSoundIds}
+        playEntry={playEntry}
+        cancelAll={cancelAll}
         triggerLivepadCapture={triggerLivepadCapture}
       />
       {/* The audio Control Panel moved into the header (Settings · Voice changer ·

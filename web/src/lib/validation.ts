@@ -91,6 +91,45 @@ export const profileName = printable(60).pipe(z.string().min(1));
 // the JSON text verbatim (parsed defensively on read).
 const profileConfigJson = printable(100_000);
 
+// ver/1.5.2 VRChat avatar panel layout (lib/osc-board.ts OscLayout). Stored as
+// JSON text; the raw string is capped and its parsed shape fully checked here.
+const OSC_LAYOUT_MAX_BYTES = 32 * 1024;
+const oscName = printable(120);
+const captureId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+const OscKeyActionBody = z.union([
+  // soundId "" = placed but no sound chosen yet.
+  z.object({ type: z.literal("play"), soundId: z.union([uuid, z.literal("")]), soundName: oscName }).strict(),
+  z.object({ type: z.literal("cancelAll") }).strict(),
+  z.object({ type: z.literal("livepadCapture") }).strict(),
+  z.object({ type: z.literal("livepadPlay"), mode: z.literal("position"), slot: z.number().int().min(1).max(120) }).strict(),
+  z
+    .object({ type: z.literal("livepadPlay"), mode: z.literal("specific"), captureId: z.union([captureId, z.literal("")]), captureName: oscName })
+    .strict(),
+  z.object({ type: z.literal("profile"), mode: z.literal("cycle") }).strict(),
+  z
+    .object({ type: z.literal("profile"), mode: z.literal("specific"), profileId: z.union([uuid, z.literal("")]), profileName: oscName })
+    .strict(),
+  z.object({ type: z.literal("pageNext") }).strict(),
+  z.object({ type: z.literal("pagePrev") }).strict(),
+]);
+export const OscLayoutBody = z
+  .object({
+    v: z.literal(1),
+    grid: z.enum(["1x5", "3x3", "3x5"]),
+    pages: z.array(z.array(OscKeyActionBody.nullable()).length(15)).min(1).max(10),
+  })
+  .strict();
+const oscLayoutJson = z
+  .string()
+  .max(OSC_LAYOUT_MAX_BYTES)
+  .refine((s) => {
+    try {
+      return OscLayoutBody.safeParse(JSON.parse(s)).success;
+    } catch {
+      return false;
+    }
+  }, "invalid oscLayout");
+
 export const PostProfileBody = z.object({ name: profileName }).strict();
 
 export const PatchProfileBody = z
@@ -99,6 +138,7 @@ export const PatchProfileBody = z
     position: z.number().int().min(0).max(10_000).optional(),
     voiceFx: profileConfigJson.nullable().optional(),
     soundFx: profileConfigJson.nullable().optional(),
+    oscLayout: oscLayoutJson.nullable().optional(),
   })
   .strict();
 

@@ -40,6 +40,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       isDefault: false,
       voiceFx: src.voiceFx,
       soundFx: src.soundFx,
+      oscLayout: src.oscLayout,
     })
     .returning();
 

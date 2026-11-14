@@ -9,8 +9,8 @@ import { clientKey, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
-// PATCH /api/profiles/[id] — rename / reorder (position) / persist voiceFx|soundFx
-// config. All fields optional; only the caller's own profile is editable.
+// PATCH /api/profiles/[id] — rename / reorder (position) / persist voiceFx|soundFx|
+// oscLayout config. All fields optional; only the caller's own profile is editable.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -34,6 +34,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (data.position !== undefined) updates.position = data.position;
   if ("voiceFx" in data) updates.voiceFx = data.voiceFx ?? null;
   if ("soundFx" in data) updates.soundFx = data.soundFx ?? null;
+  if ("oscLayout" in data) updates.oscLayout = data.oscLayout ?? null;
   if (Object.keys(updates).length === 0) return NextResponse.json({ profile: owned });
 
   const [row] = await db
