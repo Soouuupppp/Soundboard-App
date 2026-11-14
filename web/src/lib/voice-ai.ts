@@ -6,7 +6,7 @@
 // BROWSER-DIRECT via @gradio/client. We hold NO HF token; calling the Space from
 // the browser means each user spends their own per-IP ZeroGPU quota (HF's edge
 // injects an X-IP-Token for the browser session). This is push-to-talk, best-
-// effort, preset-voices-only — see docs/voice-changer-research.md §4b.
+// effort, preset-voices-only — see docs/voice-changer-research.md §4.
 //
 // ⚠️ PRIVACY: the recorded mic audio is UPLOADED to a third-party Space (Hugging
 // Face) for conversion. The UI MUST disclose this wherever AI is enabled.

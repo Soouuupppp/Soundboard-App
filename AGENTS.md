@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Guidance for Codex when working in this repo.
+Guidance for coding agents (Codex, Claude Code, …) working in this repo. This is the
+single source of project docs: `CLAUDE.md` only imports it (`@AGENTS.md`), so edit
+this file, never `CLAUDE.md`.
 
 ## What this is
 
@@ -3862,8 +3864,8 @@ in Cycle; a Play Livepad capture key opens at Position 1.
 Version bumped to **1.5.2** across all four `package.json` + the Stream Deck manifest +
 docs. An **experimental** release: a small **Unity avatar package** that puts a soundboard
 floating in front of the player, which sends **OSC** events the desktop app picks up to
-trigger sounds. **Scope is not settled yet** — the owner will follow up with details, so
-nothing below is locked except the overall idea.
+trigger sounds. **Scope is not settled yet**: the owner will follow up with how it looks and
+behaves, so only the decisions below are fixed.
 
 **What is known (owner, 2026-11-13):**
 - A Unity avatar package (a new part of the repo) with an in-world soundboard panel
@@ -3872,16 +3874,92 @@ nothing below is locked except the overall idea.
   triggers playback, much like the existing global hotkeys, VR controller binds and the
   Stream Deck bridge.
 
-**Open questions for the follow-up** (to be answered before `/plan-release`): target
-platform (presumably VRChat avatar OSC, to confirm), what the panel shows and which sounds
-it maps to (board slots, specific sounds, profile), which actions beyond play (cancel all,
-AI push-to-talk, Livepad…), OSC port/address scheme and direction (app → avatar feedback
-or one-way), how the listener is secured and enabled, where the Unity package lives in the
-monorepo and how it is distributed, and whether it is desktop-only like the Stream Deck.
+**Decided (owner, 2026-11-14):**
+- **Platform: VRChat** (avatar OSC: VRChat sends `/avatar/parameters/<name>` to the app,
+  the app can send parameters back).
+- **Others can press the buttons**, not only the wearer.
+- **No text labels on the keys** (owner, 2026-11-14, reversing an earlier "local-only
+  labels" idea): keys show only their state (active, grayed out, playing). What each key
+  does is shown in the app's editor.
+
+**Agreed direction (not locked; exact look and behavior to come from the owner):**
+- **Buttons are contact receivers** that allow self and others. Their parameters stay
+  **unsynced**: only the wearer's client needs them to send OSC to the app, so they cost no
+  synced bits. Each receiver counts toward the avatar's performance rank, so the button
+  count is a real limit.
+- **Key state from the app** (`Active`, `Playing`) must be resent after an avatar change
+  or reload (VRChat sends `/avatar/change`).
+- **Indicators for others:** the press glow can be worked out on each viewer's own client
+  from the contact itself (no sync). A small synced bool per button (for example
+  "playing") covers state that only the app knows.
+
+**Panel + setup (owner, 2026-11-14):**
+- **Looks like a Stream Deck** without the logo strip at the top, floating in front of the
+  player. **The grid size is a variable**: the Unity package ships **three prefabs, 1×5,
+  3×3 and 3×5** (5, 9 or 15 keys), and the editor in the app uses the same grid size.
+- **Configured in the Soundboard app**, not in Unity: a new **settings cog** opens a
+  dropdown with a **Stream Deck-style drag-and-drop editor** (an action list dragged onto
+  the grid, then per-key options).
+- **Key actions:** **Play sound** (pick from a dropdown) · **Cancel all** · **Livepad
+  capture** · **Livepad play last X** · **Profile switch** · **Page − / Page +**.
+- **Pages** mean the avatar only knows its numbered keys: the app maps (page, key) to an
+  action and resends the key states when the page changes, so the avatar never needs
+  rebuilding when the layout changes.
+- **Decided (owner, 2026-11-14):**
+  - The layout is stored **per profile, server-side** (like the board), so a profile
+    switch also changes the panel.
+  - **Livepad play last X** works like the Stream Deck "Play Livepad capture" key
+    (position N, 1 = newest, the key follows the list, or one specific capture).
+  - **Profile switch** works like the Stream Deck key (cycle to next, or one specific
+    profile).
+- **Grid size (owner, 2026-11-14):** the size is a **setting in the app**, saved with the
+  layout. When OSC is connected, the app checks it against what the worn avatar reports
+  and shows a **warning if they differ**.
+- **Shrinking the grid:** keys that no longer fit become **inactive (grayed out)** in the
+  editor. They keep their settings and come back if the grid grows again.
+
+**Packaging (owner, 2026-11-14):**
+- **Desktop app only**, like the Stream Deck plugin.
+- The Unity package gets **its own folder in the repo root** holding the raw Unity files
+  and the exported `.unitypackage`. The package is **self-contained** (every file it needs
+  is built in) and is attached to each GitHub release as **one file**, next to the desktop
+  installers.
+- **The Unity/Blender work is its own phase in the dev plan** (owner, 2026-11-14). An
+  agent does it with the **Blender MCP + Unity MCP** in the owner's avatar project
+  `{{path:avatar-project}}` (see `Paths.md`). All temp work and files stay there; when the phase is done,
+  the finished raw files + exported `.unitypackage` are copied into this repo's Unity
+  folder for release.
+
+**OSC + in-game menu (owner, 2026-11-14):**
+- **Ports: OSCQuery**, with a **manual port setting as fallback** (for users who launch
+  VRChat with custom `--osc` ports).
+- **Griefing control is an avatar menu toggle that enables/disables the soundpad** (no
+  separate "allow others" lock in the app). Turning it off hides the panel and stops its
+  contacts.
+- **Placement options in the same avatar menu:**
+  - **Placed in space:** the board stays where you left it in the world.
+  - **Pickable:** you can grab the board and move it.
+  - **Follow:** the board follows the avatar wherever it goes.
+  These are synced so other players see the board in the same place. **Pickable = a
+  grabbable PhysBone** (owner, 2026-11-14; avatars can't use world-style pickups). To plan:
+  how "placed in space" and "follow" are built, and the synced bits the modes cost.
+- **Security:** the owner declined the extra suggestions (2026-11-14); the in-game
+  enable toggle is the control. Nothing extra is planned beyond what OSCQuery does by
+  default.
+
+**OSC parameter names (owner, 2026-11-14):** every shared parameter lives under a
+versioned prefix, `Soundboard/v1/…` (full address `/avatar/parameters/Soundboard/v1/…`),
+so a later package can change the layout while the app still supports older avatars.
+Proposed names: `Key/<n>` (bool, contact press, avatar → app), `Active/<n>` (bool,
+grayed out or not, app → avatar), `Playing/<n>` (bool, synced indicator), `Enabled`
+(bool, synced menu toggle), `Mode` (int, synced placement mode), `Page` (int, app →
+avatar). **No separate grid-size parameter:** the app reads the grid size from which
+`Key/<n>` parameters the worn avatar has, via OSCQuery.
 
 1. **Define scope with the owner** — collect the follow-up details and turn them into
    locked tasks in this section.
-   **Progress: Not started**
+   **Progress: ✅ Done** *(all scope decided with the owner 2026-11-14, recorded above;
+   ready for `/plan-release`.)*
 
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions
@@ -3894,5 +3972,13 @@ locked with the owner recorded inline.
 - **Do not run linting** (`pnpm lint` / eslint) — don't run it to verify changes.
   `tsc --noEmit` is fine for typechecking.
 - License is UNLICENSED / all rights reserved.
+- **Local paths go through `Paths.md`.** Tracked files must stay anonymous: no
+  absolute paths on the owner's machine and no personal details. Write a machine path
+  as a `{{path:<key>}}` placeholder (e.g. `{{path:avatar-project}}`) and record the real
+  path in the repo-root **`Paths.md`** (a key → path table). If `Paths.md` exists, read
+  it and resolve every `{{path:<key>}}` to its real path before acting on it; if a key
+  is missing there, ask the owner instead of guessing. `Paths.md` is gitignored: never
+  commit it, never copy its paths into a tracked file. When a new local path comes up,
+  add a row to `Paths.md` and use the placeholder in the docs.
 - Background context lives in the auto-memory (`virtual-mic-capture`,
   `ver-1-3-0-scope`); consult it before reopening settled decisions.
