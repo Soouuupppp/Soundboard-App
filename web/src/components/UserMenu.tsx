@@ -55,7 +55,7 @@ export function UserMenu({
         ) : (
           <div className="h-7 w-7 shrink-0 rounded-full bg-white/5 border border-white/10" />
         )}
-        <span className="text-muted hidden md:inline max-w-[8rem] truncate">{name}</span>
+        <span className="text-muted hidden lg:inline max-w-[8rem] truncate">{name}</span>
         <ChevronDown size={14} className="text-muted shrink-0 ml-auto" />
       </button>
 
