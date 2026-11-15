@@ -1,0 +1,3085 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soundboard Guide Prototype</title>
+<meta name="description" content="Clickable copy of the Soundboard dashboard with example data, used to design and fine-tune the in-app guide without rebuilding the app.">
+<!--
+  Soundboard UI prototype (docs, not part of the app).
+
+  What it is: a clickable copy of the dashboard running on example data, so the
+  guide (and later other UI ideas) can be tuned without rebuilding the app.
+  Nothing plays, records, uploads or is saved; a reload resets everything.
+
+  Editing:
+    - Guide text, steps and info items: the GUIDES / INFO data below.
+    - Example clips, profiles and people: the DEMO data below.
+    - Markup uses the app's own Tailwind classes. After adding classes or icons
+      (icon names are lucide-react file names, e.g. gamepad-2), run:
+          node docs/build-guide.mjs
+      It refills the generated CSS / icon / logo blocks from the app's
+      tailwind.config.ts, globals.css and lucide-react.
+
+  The only network request is the Play font from Google Fonts (the app's font);
+  offline it falls back to the system font.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Play:wght@400;700&display=swap">
+<style>
+  :root { --font-play: "Play"; }
+  [hidden] { display: none !important; }
+  .tour-ring { box-shadow: 0 0 0 9999px rgba(3, 4, 10, 0.45), 0 0 0 2px #7C8CFF, 0 0 24px rgba(124, 140, 255, 0.55); }
+  .tour-ring.ok { box-shadow: 0 0 0 9999px rgba(3, 4, 10, 0.45), 0 0 0 2px #34d399, 0 0 24px rgba(52, 211, 153, 0.5); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+  }
+</style>
+<!-- generated:start css -->
+<style>
+*, ::before, ::after {
+  --tw-border-spacing-x: 0;
+  --tw-border-spacing-y: 0;
+  --tw-translate-x: 0;
+  --tw-translate-y: 0;
+  --tw-rotate: 0;
+  --tw-skew-x: 0;
+  --tw-skew-y: 0;
+  --tw-scale-x: 1;
+  --tw-scale-y: 1;
+  --tw-pan-x:  ;
+  --tw-pan-y:  ;
+  --tw-pinch-zoom:  ;
+  --tw-scroll-snap-strictness: proximity;
+  --tw-gradient-from-position:  ;
+  --tw-gradient-via-position:  ;
+  --tw-gradient-to-position:  ;
+  --tw-ordinal:  ;
+  --tw-slashed-zero:  ;
+  --tw-numeric-figure:  ;
+  --tw-numeric-spacing:  ;
+  --tw-numeric-fraction:  ;
+  --tw-ring-inset:  ;
+  --tw-ring-offset-width: 0px;
+  --tw-ring-offset-color: #fff;
+  --tw-ring-color: rgb(59 130 246 / 0.5);
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-shadow: 0 0 #0000;
+  --tw-shadow-colored: 0 0 #0000;
+  --tw-blur:  ;
+  --tw-brightness:  ;
+  --tw-contrast:  ;
+  --tw-grayscale:  ;
+  --tw-hue-rotate:  ;
+  --tw-invert:  ;
+  --tw-saturate:  ;
+  --tw-sepia:  ;
+  --tw-drop-shadow:  ;
+  --tw-backdrop-blur:  ;
+  --tw-backdrop-brightness:  ;
+  --tw-backdrop-contrast:  ;
+  --tw-backdrop-grayscale:  ;
+  --tw-backdrop-hue-rotate:  ;
+  --tw-backdrop-invert:  ;
+  --tw-backdrop-opacity:  ;
+  --tw-backdrop-saturate:  ;
+  --tw-backdrop-sepia:  ;
+  --tw-contain-size:  ;
+  --tw-contain-layout:  ;
+  --tw-contain-paint:  ;
+  --tw-contain-style:  ;
+}
+
+::backdrop {
+  --tw-border-spacing-x: 0;
+  --tw-border-spacing-y: 0;
+  --tw-translate-x: 0;
+  --tw-translate-y: 0;
+  --tw-rotate: 0;
+  --tw-skew-x: 0;
+  --tw-skew-y: 0;
+  --tw-scale-x: 1;
+  --tw-scale-y: 1;
+  --tw-pan-x:  ;
+  --tw-pan-y:  ;
+  --tw-pinch-zoom:  ;
+  --tw-scroll-snap-strictness: proximity;
+  --tw-gradient-from-position:  ;
+  --tw-gradient-via-position:  ;
+  --tw-gradient-to-position:  ;
+  --tw-ordinal:  ;
+  --tw-slashed-zero:  ;
+  --tw-numeric-figure:  ;
+  --tw-numeric-spacing:  ;
+  --tw-numeric-fraction:  ;
+  --tw-ring-inset:  ;
+  --tw-ring-offset-width: 0px;
+  --tw-ring-offset-color: #fff;
+  --tw-ring-color: rgb(59 130 246 / 0.5);
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-shadow: 0 0 #0000;
+  --tw-shadow-colored: 0 0 #0000;
+  --tw-blur:  ;
+  --tw-brightness:  ;
+  --tw-contrast:  ;
+  --tw-grayscale:  ;
+  --tw-hue-rotate:  ;
+  --tw-invert:  ;
+  --tw-saturate:  ;
+  --tw-sepia:  ;
+  --tw-drop-shadow:  ;
+  --tw-backdrop-blur:  ;
+  --tw-backdrop-brightness:  ;
+  --tw-backdrop-contrast:  ;
+  --tw-backdrop-grayscale:  ;
+  --tw-backdrop-hue-rotate:  ;
+  --tw-backdrop-invert:  ;
+  --tw-backdrop-opacity:  ;
+  --tw-backdrop-saturate:  ;
+  --tw-backdrop-sepia:  ;
+  --tw-contain-size:  ;
+  --tw-contain-layout:  ;
+  --tw-contain-paint:  ;
+  --tw-contain-style:  ;
+}/*
+! tailwindcss v3.4.19 | MIT License | https://tailwindcss.com
+*//*
+1. Prevent padding and border from affecting element width. (https://github.com/mozdevs/cssremedy/issues/4)
+2. Allow adding a border to an element by just adding a border-width. (https://github.com/tailwindcss/tailwindcss/pull/116)
+*/
+
+*,
+::before,
+::after {
+  box-sizing: border-box; /* 1 */
+  border-width: 0; /* 2 */
+  border-style: solid; /* 2 */
+  border-color: #e5e7eb; /* 2 */
+}
+
+::before,
+::after {
+  --tw-content: '';
+}
+
+/*
+1. Use a consistent sensible line-height in all browsers.
+2. Prevent adjustments of font size after orientation changes in iOS.
+3. Use a more readable tab size.
+4. Use the user's configured `sans` font-family by default.
+5. Use the user's configured `sans` font-feature-settings by default.
+6. Use the user's configured `sans` font-variation-settings by default.
+7. Disable tap highlights on iOS
+*/
+
+html,
+:host {
+  line-height: 1.5; /* 1 */
+  -webkit-text-size-adjust: 100%; /* 2 */
+  -moz-tab-size: 4; /* 3 */
+  -o-tab-size: 4;
+     tab-size: 4; /* 3 */
+  font-family: var(--font-play), ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; /* 4 */
+  font-feature-settings: normal; /* 5 */
+  font-variation-settings: normal; /* 6 */
+  -webkit-tap-highlight-color: transparent; /* 7 */
+}
+
+/*
+1. Remove the margin in all browsers.
+2. Inherit line-height from `html` so users can set them as a class directly on the `html` element.
+*/
+
+body {
+  margin: 0; /* 1 */
+  line-height: inherit; /* 2 */
+}
+
+/*
+1. Add the correct height in Firefox.
+2. Correct the inheritance of border color in Firefox. (https://bugzilla.mozilla.org/show_bug.cgi?id=190655)
+3. Ensure horizontal rules are visible by default.
+*/
+
+hr {
+  height: 0; /* 1 */
+  color: inherit; /* 2 */
+  border-top-width: 1px; /* 3 */
+}
+
+/*
+Add the correct text decoration in Chrome, Edge, and Safari.
+*/
+
+abbr:where([title]) {
+  -webkit-text-decoration: underline dotted;
+          text-decoration: underline dotted;
+}
+
+/*
+Remove the default font size and weight for headings.
+*/
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+/*
+Reset links to optimize for opt-in styling instead of opt-out.
+*/
+
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+/*
+Add the correct font weight in Edge and Safari.
+*/
+
+b,
+strong {
+  font-weight: bolder;
+}
+
+/*
+1. Use the user's configured `mono` font-family by default.
+2. Use the user's configured `mono` font-feature-settings by default.
+3. Use the user's configured `mono` font-variation-settings by default.
+4. Correct the odd `em` font sizing in all browsers.
+*/
+
+code,
+kbd,
+samp,
+pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; /* 1 */
+  font-feature-settings: normal; /* 2 */
+  font-variation-settings: normal; /* 3 */
+  font-size: 1em; /* 4 */
+}
+
+/*
+Add the correct font size in all browsers.
+*/
+
+small {
+  font-size: 80%;
+}
+
+/*
+Prevent `sub` and `sup` elements from affecting the line height in all browsers.
+*/
+
+sub,
+sup {
+  font-size: 75%;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+}
+
+sub {
+  bottom: -0.25em;
+}
+
+sup {
+  top: -0.5em;
+}
+
+/*
+1. Remove text indentation from table contents in Chrome and Safari. (https://bugs.chromium.org/p/chromium/issues/detail?id=999088, https://bugs.webkit.org/show_bug.cgi?id=201297)
+2. Correct table border color inheritance in all Chrome and Safari. (https://bugs.chromium.org/p/chromium/issues/detail?id=935729, https://bugs.webkit.org/show_bug.cgi?id=195016)
+3. Remove gaps between table borders by default.
+*/
+
+table {
+  text-indent: 0; /* 1 */
+  border-color: inherit; /* 2 */
+  border-collapse: collapse; /* 3 */
+}
+
+/*
+1. Change the font styles in all browsers.
+2. Remove the margin in Firefox and Safari.
+3. Remove default padding in all browsers.
+*/
+
+button,
+input,
+optgroup,
+select,
+textarea {
+  font-family: inherit; /* 1 */
+  font-feature-settings: inherit; /* 1 */
+  font-variation-settings: inherit; /* 1 */
+  font-size: 100%; /* 1 */
+  font-weight: inherit; /* 1 */
+  line-height: inherit; /* 1 */
+  letter-spacing: inherit; /* 1 */
+  color: inherit; /* 1 */
+  margin: 0; /* 2 */
+  padding: 0; /* 3 */
+}
+
+/*
+Remove the inheritance of text transform in Edge and Firefox.
+*/
+
+button,
+select {
+  text-transform: none;
+}
+
+/*
+1. Correct the inability to style clickable types in iOS and Safari.
+2. Remove default button styles.
+*/
+
+button,
+input:where([type='button']),
+input:where([type='reset']),
+input:where([type='submit']) {
+  -webkit-appearance: button; /* 1 */
+  background-color: transparent; /* 2 */
+  background-image: none; /* 2 */
+}
+
+/*
+Use the modern Firefox focus style for all focusable elements.
+*/
+
+:-moz-focusring {
+  outline: auto;
+}
+
+/*
+Remove the additional `:invalid` styles in Firefox. (https://github.com/mozilla/gecko-dev/blob/2f9eacd9d3d995c937b4251a5557d95d494c9be1/layout/style/res/forms.css#L728-L737)
+*/
+
+:-moz-ui-invalid {
+  box-shadow: none;
+}
+
+/*
+Add the correct vertical alignment in Chrome and Firefox.
+*/
+
+progress {
+  vertical-align: baseline;
+}
+
+/*
+Correct the cursor style of increment and decrement buttons in Safari.
+*/
+
+::-webkit-inner-spin-button,
+::-webkit-outer-spin-button {
+  height: auto;
+}
+
+/*
+1. Correct the odd appearance in Chrome and Safari.
+2. Correct the outline style in Safari.
+*/
+
+[type='search'] {
+  -webkit-appearance: textfield; /* 1 */
+  outline-offset: -2px; /* 2 */
+}
+
+/*
+Remove the inner padding in Chrome and Safari on macOS.
+*/
+
+::-webkit-search-decoration {
+  -webkit-appearance: none;
+}
+
+/*
+1. Correct the inability to style clickable types in iOS and Safari.
+2. Change font properties to `inherit` in Safari.
+*/
+
+::-webkit-file-upload-button {
+  -webkit-appearance: button; /* 1 */
+  font: inherit; /* 2 */
+}
+
+/*
+Add the correct display in Chrome and Safari.
+*/
+
+summary {
+  display: list-item;
+}
+
+/*
+Removes the default spacing and border for appropriate elements.
+*/
+
+blockquote,
+dl,
+dd,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+hr,
+figure,
+p,
+pre {
+  margin: 0;
+}
+
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+
+legend {
+  padding: 0;
+}
+
+ol,
+ul,
+menu {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/*
+Reset default styling for dialogs.
+*/
+dialog {
+  padding: 0;
+}
+
+/*
+Prevent resizing textareas horizontally by default.
+*/
+
+textarea {
+  resize: vertical;
+}
+
+/*
+1. Reset the default placeholder opacity in Firefox. (https://github.com/tailwindlabs/tailwindcss/issues/3300)
+2. Set the default placeholder color to the user's configured gray 400 color.
+*/
+
+input::-moz-placeholder, textarea::-moz-placeholder {
+  opacity: 1; /* 1 */
+  color: #9ca3af; /* 2 */
+}
+
+input::placeholder,
+textarea::placeholder {
+  opacity: 1; /* 1 */
+  color: #9ca3af; /* 2 */
+}
+
+/*
+Set the default cursor for buttons.
+*/
+
+button,
+[role="button"] {
+  cursor: pointer;
+}
+
+/*
+Make sure disabled buttons don't get the pointer cursor.
+*/
+:disabled {
+  cursor: default;
+}
+
+/*
+1. Make replaced elements `display: block` by default. (https://github.com/mozdevs/cssremedy/issues/14)
+2. Add `vertical-align: middle` to align replaced elements more sensibly by default. (https://github.com/jensimmons/cssremedy/issues/14#issuecomment-634934210)
+   This can trigger a poorly considered lint error in some tools but is included by design.
+*/
+
+img,
+svg,
+video,
+canvas,
+audio,
+iframe,
+embed,
+object {
+  display: block; /* 1 */
+  vertical-align: middle; /* 2 */
+}
+
+/*
+Constrain images and videos to the parent width and preserve their intrinsic aspect ratio. (https://github.com/mozdevs/cssremedy/issues/14)
+*/
+
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Make elements with the HTML hidden attribute stay hidden by default */
+[hidden]:where(:not([hidden="until-found"])) {
+  display: none;
+}
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding-left: 0.875rem;
+  padding-right: 0.875rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.btn-primary:active {
+  --tw-scale-x: 0.98;
+  --tw-scale-y: 0.98;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.btn-primary:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.btn-primary {
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1));
+  --tw-shadow: 0 0 24px rgba(124,140,255,0.35);
+  --tw-shadow-colored: 0 0 24px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+    background-image: linear-gradient(135deg, #7C8CFF 0%, #5865F2 100%);
+}
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding-left: 0.875rem;
+  padding-right: 0.875rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.btn-ghost:active {
+  --tw-scale-x: 0.98;
+  --tw-scale-y: 0.98;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.btn-ghost:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.btn-ghost {
+  border-width: 1px;
+  border-color: rgb(255 255 255 / 0.1);
+  background-color: rgb(255 255 255 / 0.04);
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1));
+  --tw-backdrop-blur: blur(8px);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
+}
+.btn-ghost:hover {
+  background-color: rgb(255 255 255 / 0.08);
+}
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding-left: 0.875rem;
+  padding-right: 0.875rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.btn-danger:active {
+  --tw-scale-x: 0.98;
+  --tw-scale-y: 0.98;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.btn-danger:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.btn-danger {
+  border-width: 1px;
+  border-color: rgb(248 113 113 / 0.3);
+  background-color: rgb(239 68 68 / 0.9);
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1));
+}
+.btn-danger:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgb(239 68 68 / var(--tw-bg-opacity, 1));
+}
+.input {
+  width: 100%;
+  border-radius: 0.5rem;
+  border-width: 1px;
+  border-color: rgb(255 255 255 / 0.1);
+  background-color: rgb(255 255 255 / 0.04);
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.input:focus {
+  border-color: rgb(124 140 255 / 0.7);
+  background-color: rgb(255 255 255 / 0.06); box-shadow: 0 0 0 3px rgba(124,140,255,0.15);
+}
+/* Shared surface for floating menus/popovers (avatar dropdown, the Select
+     menu). The faint `.glass` gradient reads washed-out when it floats over page
+     content; this is a near-solid dark panel (over the #070811 base) so a popover
+     reads as a distinct raised layer while keeping the blur + border. */
+.popover {
+  border-width: 1px;
+  border-color: rgb(255 255 255 / 0.1);
+  --tw-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+  --tw-shadow-colored: 0 8px 32px var(--tw-shadow-color), inset 0 1px 0 var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  --tw-shadow-color: rgba(20, 24, 36, 0.55);
+  --tw-shadow: var(--tw-shadow-colored);
+  --tw-backdrop-blur: blur(24px);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
+    background: linear-gradient(180deg, rgba(24,26,42,0.97), rgba(13,15,26,0.97));
+}
+.\!card {
+  border-width: 1px;
+  border-color: rgb(255 255 255 / 0.1);
+  --tw-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+  --tw-shadow-colored: 0 8px 32px var(--tw-shadow-color), inset 0 1px 0 var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  --tw-shadow-color: rgba(20, 24, 36, 0.55);
+  --tw-shadow: var(--tw-shadow-colored);
+  --tw-backdrop-blur: blur(24px);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+    border-radius: 1rem;
+    padding: 1.25rem;
+}
+.card {
+  border-width: 1px;
+  border-color: rgb(255 255 255 / 0.1);
+  --tw-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+  --tw-shadow-colored: 0 8px 32px var(--tw-shadow-color), inset 0 1px 0 var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  --tw-shadow-color: rgba(20, 24, 36, 0.55);
+  --tw-shadow: var(--tw-shadow-colored);
+  --tw-backdrop-blur: blur(24px);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+    border-radius: 1rem;
+    padding: 1.25rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  border-width: 1px;
+  border-color: rgb(255 255 255 / 0.1);
+  background-color: rgb(255 255 255 / 0.04);
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+  font-size: 11px;
+  --tw-text-opacity: 1;
+  color: rgb(154 163 178 / var(--tw-text-opacity, 1));
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+.pointer-events-none {
+  pointer-events: none;
+}
+.visible {
+  visibility: visible;
+}
+.fixed {
+  position: fixed;
+}
+.absolute {
+  position: absolute;
+}
+.relative {
+  position: relative;
+}
+.sticky {
+  position: sticky;
+}
+.inset-0 {
+  inset: 0px;
+}
+.inset-y-1 {
+  top: 0.25rem;
+  bottom: 0.25rem;
+}
+.-left-32 {
+  left: -8rem;
+}
+.-right-2 {
+  right: -0.5rem;
+}
+.-right-40 {
+  right: -10rem;
+}
+.-top-2 {
+  top: -0.5rem;
+}
+.-top-32 {
+  top: -8rem;
+}
+.bottom-4 {
+  bottom: 1rem;
+}
+.bottom-\[-200px\] {
+  bottom: -200px;
+}
+.left-0 {
+  left: 0px;
+}
+.left-1\/2 {
+  left: 50%;
+}
+.left-1\/3 {
+  left: 33.333333%;
+}
+.left-2\.5 {
+  left: 0.625rem;
+}
+.right-0 {
+  right: 0px;
+}
+.right-4 {
+  right: 1rem;
+}
+.top-0 {
+  top: 0px;
+}
+.top-1\/2 {
+  top: 50%;
+}
+.top-1\/3 {
+  top: 33.333333%;
+}
+.top-full {
+  top: 100%;
+}
+.-z-10 {
+  z-index: -10;
+}
+.z-10 {
+  z-index: 10;
+}
+.z-20 {
+  z-index: 20;
+}
+.z-40 {
+  z-index: 40;
+}
+.z-50 {
+  z-index: 50;
+}
+.z-\[60\] {
+  z-index: 60;
+}
+.z-\[65\] {
+  z-index: 65;
+}
+.z-\[70\] {
+  z-index: 70;
+}
+.z-\[75\] {
+  z-index: 75;
+}
+.z-\[90\] {
+  z-index: 90;
+}
+.mx-auto {
+  margin-left: auto;
+  margin-right: auto;
+}
+.mb-0\.5 {
+  margin-bottom: 0.125rem;
+}
+.mb-1 {
+  margin-bottom: 0.25rem;
+}
+.mb-3 {
+  margin-bottom: 0.75rem;
+}
+.mb-4 {
+  margin-bottom: 1rem;
+}
+.ml-1 {
+  margin-left: 0.25rem;
+}
+.ml-auto {
+  margin-left: auto;
+}
+.mr-1 {
+  margin-right: 0.25rem;
+}
+.mr-1\.5 {
+  margin-right: 0.375rem;
+}
+.mr-3 {
+  margin-right: 0.75rem;
+}
+.mt-0\.5 {
+  margin-top: 0.125rem;
+}
+.mt-1 {
+  margin-top: 0.25rem;
+}
+.mt-2 {
+  margin-top: 0.5rem;
+}
+.mt-3 {
+  margin-top: 0.75rem;
+}
+.mt-4 {
+  margin-top: 1rem;
+}
+.mt-auto {
+  margin-top: auto;
+}
+.block {
+  display: block;
+}
+.inline-block {
+  display: inline-block;
+}
+.flex {
+  display: flex;
+}
+.inline-flex {
+  display: inline-flex;
+}
+.grid {
+  display: grid;
+}
+.hidden {
+  display: none;
+}
+.aspect-square {
+  aspect-ratio: 1 / 1;
+}
+.h-1 {
+  height: 0.25rem;
+}
+.h-1\.5 {
+  height: 0.375rem;
+}
+.h-24 {
+  height: 6rem;
+}
+.h-3\.5 {
+  height: 0.875rem;
+}
+.h-4 {
+  height: 1rem;
+}
+.h-5 {
+  height: 1.25rem;
+}
+.h-6 {
+  height: 1.5rem;
+}
+.h-7 {
+  height: 1.75rem;
+}
+.h-8 {
+  height: 2rem;
+}
+.h-9 {
+  height: 2.25rem;
+}
+.h-\[420px\] {
+  height: 420px;
+}
+.h-\[480px\] {
+  height: 480px;
+}
+.h-\[520px\] {
+  height: 520px;
+}
+.h-full {
+  height: 100%;
+}
+.max-h-64 {
+  max-height: 16rem;
+}
+.max-h-\[80vh\] {
+  max-height: 80vh;
+}
+.max-h-\[min\(88vh\2c 56rem\)\] {
+  max-height: min(88vh, 56rem);
+}
+.min-h-\[1\.5rem\] {
+  min-height: 1.5rem;
+}
+.w-1\.5 {
+  width: 0.375rem;
+}
+.w-10 {
+  width: 2.5rem;
+}
+.w-11 {
+  width: 2.75rem;
+}
+.w-12 {
+  width: 3rem;
+}
+.w-16 {
+  width: 4rem;
+}
+.w-24 {
+  width: 6rem;
+}
+.w-3 {
+  width: 0.75rem;
+}
+.w-3\.5 {
+  width: 0.875rem;
+}
+.w-4 {
+  width: 1rem;
+}
+.w-52 {
+  width: 13rem;
+}
+.w-6 {
+  width: 1.5rem;
+}
+.w-64 {
+  width: 16rem;
+}
+.w-7 {
+  width: 1.75rem;
+}
+.w-8 {
+  width: 2rem;
+}
+.w-80 {
+  width: 20rem;
+}
+.w-9 {
+  width: 2.25rem;
+}
+.w-\[21rem\] {
+  width: 21rem;
+}
+.w-\[23rem\] {
+  width: 23rem;
+}
+.w-\[34rem\] {
+  width: 34rem;
+}
+.w-\[420px\] {
+  width: 420px;
+}
+.w-\[480px\] {
+  width: 480px;
+}
+.w-\[520px\] {
+  width: 520px;
+}
+.w-\[min\(20rem\2c calc\(100vw-1\.5rem\)\)\] {
+  width: min(20rem, calc(100vw - 1.5rem));
+}
+.w-full {
+  width: 100%;
+}
+.w-px {
+  width: 1px;
+}
+.min-w-0 {
+  min-width: 0px;
+}
+.min-w-\[12rem\] {
+  min-width: 12rem;
+}
+.min-w-\[14rem\] {
+  min-width: 14rem;
+}
+.min-w-\[6rem\] {
+  min-width: 6rem;
+}
+.min-w-\[9rem\] {
+  min-width: 9rem;
+}
+.max-w-5xl {
+  max-width: 64rem;
+}
+.max-w-\[10rem\] {
+  max-width: 10rem;
+}
+.max-w-\[16rem\] {
+  max-width: 16rem;
+}
+.max-w-\[1800px\] {
+  max-width: 1800px;
+}
+.max-w-\[8rem\] {
+  max-width: 8rem;
+}
+.max-w-\[calc\(100vw-1\.5rem\)\] {
+  max-width: calc(100vw - 1.5rem);
+}
+.max-w-\[calc\(100vw-2rem\)\] {
+  max-width: calc(100vw - 2rem);
+}
+.max-w-lg {
+  max-width: 32rem;
+}
+.flex-1 {
+  flex: 1 1 0%;
+}
+.shrink-0 {
+  flex-shrink: 0;
+}
+.basis-\[30rem\] {
+  flex-basis: 30rem;
+}
+.-translate-x-1\/2 {
+  --tw-translate-x: -50%;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.-translate-y-1\/2 {
+  --tw-translate-y: -50%;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.-translate-y-full {
+  --tw-translate-y: -100%;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.translate-x-1 {
+  --tw-translate-x: 0.25rem;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.translate-x-6 {
+  --tw-translate-x: 1.5rem;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.translate-x-\[18px\] {
+  --tw-translate-x: 18px;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.translate-y-0 {
+  --tw-translate-y: 0px;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.rotate-180 {
+  --tw-rotate: 180deg;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.transform {
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+@keyframes pulse {
+
+  50% {
+    opacity: .5;
+  }
+}
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.cursor-crosshair {
+  cursor: crosshair;
+}
+.touch-none {
+  touch-action: none;
+}
+.select-none {
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+}
+.resize {
+  resize: both;
+}
+.grid-cols-1 {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+.grid-cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.grid-cols-5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.grid-cols-\[auto_1fr_auto\] {
+  grid-template-columns: auto 1fr auto;
+}
+.flex-col {
+  flex-direction: column;
+}
+.flex-wrap {
+  flex-wrap: wrap;
+}
+.items-start {
+  align-items: flex-start;
+}
+.items-center {
+  align-items: center;
+}
+.items-stretch {
+  align-items: stretch;
+}
+.\!justify-start {
+  justify-content: flex-start !important;
+}
+.justify-end {
+  justify-content: flex-end;
+}
+.justify-center {
+  justify-content: center;
+}
+.justify-between {
+  justify-content: space-between;
+}
+.gap-0\.5 {
+  gap: 0.125rem;
+}
+.gap-1 {
+  gap: 0.25rem;
+}
+.gap-1\.5 {
+  gap: 0.375rem;
+}
+.gap-2 {
+  gap: 0.5rem;
+}
+.gap-2\.5 {
+  gap: 0.625rem;
+}
+.gap-3 {
+  gap: 0.75rem;
+}
+.gap-4 {
+  gap: 1rem;
+}
+.gap-\[2px\] {
+  gap: 2px;
+}
+.gap-x-4 {
+  -moz-column-gap: 1rem;
+       column-gap: 1rem;
+}
+.gap-y-2 {
+  row-gap: 0.5rem;
+}
+.space-y-2 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.5rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.5rem * var(--tw-space-y-reverse));
+}
+.space-y-2\.5 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.625rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.625rem * var(--tw-space-y-reverse));
+}
+.space-y-3 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.75rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.75rem * var(--tw-space-y-reverse));
+}
+.space-y-4 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(1rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(1rem * var(--tw-space-y-reverse));
+}
+.space-y-6 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(1.5rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(1.5rem * var(--tw-space-y-reverse));
+}
+.space-y-8 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(2rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(2rem * var(--tw-space-y-reverse));
+}
+.overflow-hidden {
+  overflow: hidden;
+}
+.overflow-y-auto {
+  overflow-y: auto;
+}
+.overflow-x-hidden {
+  overflow-x: hidden;
+}
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.whitespace-nowrap {
+  white-space: nowrap;
+}
+.break-words {
+  overflow-wrap: break-word;
+}
+.rounded {
+  border-radius: 0.25rem;
+}
+.rounded-2xl {
+  border-radius: 1rem;
+}
+.rounded-full {
+  border-radius: 9999px;
+}
+.rounded-lg {
+  border-radius: 0.5rem;
+}
+.rounded-md {
+  border-radius: 0.375rem;
+}
+.rounded-sm {
+  border-radius: 0.125rem;
+}
+.rounded-xl {
+  border-radius: 0.75rem;
+}
+.rounded-l-none {
+  border-top-left-radius: 0px;
+  border-bottom-left-radius: 0px;
+}
+.rounded-r-none {
+  border-top-right-radius: 0px;
+  border-bottom-right-radius: 0px;
+}
+.border {
+  border-width: 1px;
+}
+.border-b {
+  border-bottom-width: 1px;
+}
+.border-l {
+  border-left-width: 1px;
+}
+.border-t {
+  border-top-width: 1px;
+}
+.border-accent {
+  --tw-border-opacity: 1;
+  border-color: rgb(124 140 255 / var(--tw-border-opacity, 1));
+}
+.border-accent\/30 {
+  border-color: rgb(124 140 255 / 0.3);
+}
+.border-accent\/40 {
+  border-color: rgb(124 140 255 / 0.4);
+}
+.border-amber-400\/40 {
+  border-color: rgb(251 191 36 / 0.4);
+}
+.border-black\/30 {
+  border-color: rgb(0 0 0 / 0.3);
+}
+.border-white\/10 {
+  border-color: rgb(255 255 255 / 0.1);
+}
+.border-white\/15 {
+  border-color: rgb(255 255 255 / 0.15);
+}
+.border-white\/5 {
+  border-color: rgb(255 255 255 / 0.05);
+}
+.bg-accent {
+  --tw-bg-opacity: 1;
+  background-color: rgb(124 140 255 / var(--tw-bg-opacity, 1));
+}
+.bg-accent\/10 {
+  background-color: rgb(124 140 255 / 0.1);
+}
+.bg-accent\/15 {
+  background-color: rgb(124 140 255 / 0.15);
+}
+.bg-accent\/20 {
+  background-color: rgb(124 140 255 / 0.2);
+}
+.bg-accent\/25 {
+  background-color: rgb(124 140 255 / 0.25);
+}
+.bg-accent\/70 {
+  background-color: rgb(124 140 255 / 0.7);
+}
+.bg-black\/30 {
+  background-color: rgb(0 0 0 / 0.3);
+}
+.bg-black\/60 {
+  background-color: rgb(0 0 0 / 0.6);
+}
+.bg-cyan-400\/10 {
+  background-color: rgb(34 211 238 / 0.1);
+}
+.bg-emerald-400 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(52 211 153 / var(--tw-bg-opacity, 1));
+}
+.bg-emerald-500 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(16 185 129 / var(--tw-bg-opacity, 1));
+}
+.bg-fuchsia-500\/15 {
+  background-color: rgb(217 70 239 / 0.15);
+}
+.bg-lime-400 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(163 230 53 / var(--tw-bg-opacity, 1));
+}
+.bg-red-500\/30 {
+  background-color: rgb(239 68 68 / 0.3);
+}
+.bg-transparent {
+  background-color: transparent;
+}
+.bg-white {
+  --tw-bg-opacity: 1;
+  background-color: rgb(255 255 255 / var(--tw-bg-opacity, 1));
+}
+.bg-white\/10 {
+  background-color: rgb(255 255 255 / 0.1);
+}
+.bg-white\/15 {
+  background-color: rgb(255 255 255 / 0.15);
+}
+.bg-white\/20 {
+  background-color: rgb(255 255 255 / 0.2);
+}
+.bg-white\/5 {
+  background-color: rgb(255 255 255 / 0.05);
+}
+.bg-white\/\[0\.02\] {
+  background-color: rgb(255 255 255 / 0.02);
+}
+.bg-white\/\[0\.03\] {
+  background-color: rgb(255 255 255 / 0.03);
+}
+.bg-white\/\[0\.04\] {
+  background-color: rgb(255 255 255 / 0.04);
+}
+.bg-white\/\[0\.06\] {
+  background-color: rgb(255 255 255 / 0.06);
+}
+.bg-white\/\[0\.08\] {
+  background-color: rgb(255 255 255 / 0.08);
+}
+.bg-accent-grad {
+  background-image: linear-gradient(135deg, #7C8CFF 0%, #5865F2 100%);
+}
+.fill-accent {
+  fill: #7C8CFF;
+}
+.fill-red-500 {
+  fill: #ef4444;
+}
+.\!p-3 {
+  padding: 0.75rem !important;
+}
+.p-0\.5 {
+  padding: 0.125rem;
+}
+.p-1 {
+  padding: 0.25rem;
+}
+.p-1\.5 {
+  padding: 0.375rem;
+}
+.p-2 {
+  padding: 0.5rem;
+}
+.p-3 {
+  padding: 0.75rem;
+}
+.p-4 {
+  padding: 1rem;
+}
+.\!px-1\.5 {
+  padding-left: 0.375rem !important;
+  padding-right: 0.375rem !important;
+}
+.\!px-2 {
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+}
+.\!py-1 {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+.\!py-1\.5 {
+  padding-top: 0.375rem !important;
+  padding-bottom: 0.375rem !important;
+}
+.px-1 {
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+}
+.px-1\.5 {
+  padding-left: 0.375rem;
+  padding-right: 0.375rem;
+}
+.px-2 {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+.px-2\.5 {
+  padding-left: 0.625rem;
+  padding-right: 0.625rem;
+}
+.px-3 {
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+.px-4 {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+.py-0 {
+  padding-top: 0px;
+  padding-bottom: 0px;
+}
+.py-0\.5 {
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+}
+.py-1 {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+.py-1\.5 {
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+}
+.py-10 {
+  padding-top: 2.5rem;
+  padding-bottom: 2.5rem;
+}
+.py-2 {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+.py-2\.5 {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+}
+.py-3 {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+.py-4 {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+.pb-1 {
+  padding-bottom: 0.25rem;
+}
+.pb-3 {
+  padding-bottom: 0.75rem;
+}
+.pl-8 {
+  padding-left: 2rem;
+}
+.pr-2 {
+  padding-right: 0.5rem;
+}
+.pt-1 {
+  padding-top: 0.25rem;
+}
+.pt-1\.5 {
+  padding-top: 0.375rem;
+}
+.pt-2 {
+  padding-top: 0.5rem;
+}
+.pt-4 {
+  padding-top: 1rem;
+}
+.text-left {
+  text-align: left;
+}
+.text-center {
+  text-align: center;
+}
+.text-right {
+  text-align: right;
+}
+.text-\[10px\] {
+  font-size: 10px;
+}
+.text-\[11px\] {
+  font-size: 11px;
+}
+.text-lg {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+.text-sm {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.text-xs {
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+.font-medium {
+  font-weight: 500;
+}
+.font-semibold {
+  font-weight: 600;
+}
+.uppercase {
+  text-transform: uppercase;
+}
+.tabular-nums {
+  --tw-numeric-spacing: tabular-nums;
+  font-variant-numeric: var(--tw-ordinal) var(--tw-slashed-zero) var(--tw-numeric-figure) var(--tw-numeric-spacing) var(--tw-numeric-fraction);
+}
+.leading-none {
+  line-height: 1;
+}
+.tracking-tight {
+  letter-spacing: -0.025em;
+}
+.tracking-wider {
+  letter-spacing: 0.05em;
+}
+.text-accent {
+  --tw-text-opacity: 1;
+  color: rgb(124 140 255 / var(--tw-text-opacity, 1));
+}
+.text-amber-300 {
+  --tw-text-opacity: 1;
+  color: rgb(252 211 77 / var(--tw-text-opacity, 1));
+}
+.text-black {
+  --tw-text-opacity: 1;
+  color: rgb(0 0 0 / var(--tw-text-opacity, 1));
+}
+.text-emerald-300 {
+  --tw-text-opacity: 1;
+  color: rgb(110 231 183 / var(--tw-text-opacity, 1));
+}
+.text-emerald-400 {
+  --tw-text-opacity: 1;
+  color: rgb(52 211 153 / var(--tw-text-opacity, 1));
+}
+.text-muted {
+  --tw-text-opacity: 1;
+  color: rgb(154 163 178 / var(--tw-text-opacity, 1));
+}
+.text-muted\/60 {
+  color: rgb(154 163 178 / 0.6);
+}
+.text-muted\/70 {
+  color: rgb(154 163 178 / 0.7);
+}
+.text-red-300 {
+  --tw-text-opacity: 1;
+  color: rgb(252 165 165 / var(--tw-text-opacity, 1));
+}
+.text-red-500 {
+  --tw-text-opacity: 1;
+  color: rgb(239 68 68 / var(--tw-text-opacity, 1));
+}
+.text-sky-300 {
+  --tw-text-opacity: 1;
+  color: rgb(125 211 252 / var(--tw-text-opacity, 1));
+}
+.text-violet-300 {
+  --tw-text-opacity: 1;
+  color: rgb(196 181 253 / var(--tw-text-opacity, 1));
+}
+.text-white {
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1));
+}
+.text-white\/60 {
+  color: rgb(255 255 255 / 0.6);
+}
+.text-white\/80 {
+  color: rgb(255 255 255 / 0.8);
+}
+.line-through {
+  text-decoration-line: line-through;
+}
+.accent-accent {
+  accent-color: #7C8CFF;
+}
+.opacity-0 {
+  opacity: 0;
+}
+.opacity-60 {
+  opacity: 0.6;
+}
+.opacity-70 {
+  opacity: 0.7;
+}
+.shadow {
+  --tw-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --tw-shadow-colored: 0 1px 3px 0 var(--tw-shadow-color), 0 1px 2px -1px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+.shadow-\[0_0_0_3px_rgba\(163\2c 230\2c 53\2c 0\.12\)\] {
+  --tw-shadow: 0 0 0 3px rgba(163,230,53,0.12);
+  --tw-shadow-colored: 0 0 0 3px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+.shadow-xl {
+  --tw-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --tw-shadow-colored: 0 20px 25px -5px var(--tw-shadow-color), 0 8px 10px -6px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+.outline-none {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+.ring {
+  --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+  --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(3px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+}
+.ring-1 {
+  --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+  --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+}
+.ring-2 {
+  --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+  --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+}
+.ring-accent {
+  --tw-ring-opacity: 1;
+  --tw-ring-color: rgb(124 140 255 / var(--tw-ring-opacity, 1));
+}
+.ring-lime-400\/70 {
+  --tw-ring-color: rgb(163 230 53 / 0.7);
+}
+.ring-red-400\/70 {
+  --tw-ring-color: rgb(248 113 113 / 0.7);
+}
+.blur-3xl {
+  --tw-blur: blur(64px);
+  filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
+}
+.filter {
+  filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
+}
+.backdrop-blur-md {
+  --tw-backdrop-blur: blur(12px);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
+}
+.backdrop-blur-sm {
+  --tw-backdrop-blur: blur(4px);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
+}
+.backdrop-blur-xl {
+  --tw-backdrop-blur: blur(24px);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
+}
+.transition {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.transition-\[top\2c left\] {
+  transition-property: top,left;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.transition-\[width\] {
+  transition-property: width;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.transition-colors {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.transition-transform {
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+.duration-200 {
+  transition-duration: 200ms;
+}
+.duration-300 {
+  transition-duration: 300ms;
+}
+.duration-500 {
+  transition-duration: 500ms;
+}
+.duration-75 {
+  transition-duration: 75ms;
+}
+
+html, body {
+  background: #070811;
+  color: #e6e8ee;
+  font-family: var(--font-play), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100%;
+}
+
+/* The fixed-attachment gradient below is clipped to the body's box. A
+   percentage min-height collapses to content height on short pages (e.g.
+   /public with only a row or two), cutting the gradient off mid-screen — pin
+   the body to at least the viewport so it always fills the window. */
+body {
+  min-height: 100vh;
+  background-image:
+    radial-gradient(1200px 600px at 10% -10%, rgba(124,140,255,0.18), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(216,99,255,0.14), transparent 55%),
+    radial-gradient(700px 500px at 50% 120%, rgba(70,200,255,0.10), transparent 60%);
+  background-attachment: fixed;
+}
+
+* { box-sizing: border-box; }
+
+::-moz-selection { background: rgba(124,140,255,0.35); }
+
+::selection { background: rgba(124,140,255,0.35); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+.hover\:border-accent\/40:hover {
+  border-color: rgb(124 140 255 / 0.4);
+}
+.hover\:border-accent\/50:hover {
+  border-color: rgb(124 140 255 / 0.5);
+}
+.hover\:bg-white\/10:hover {
+  background-color: rgb(255 255 255 / 0.1);
+}
+.hover\:bg-white\/5:hover {
+  background-color: rgb(255 255 255 / 0.05);
+}
+.hover\:bg-white\/\[0\.04\]:hover {
+  background-color: rgb(255 255 255 / 0.04);
+}
+.hover\:bg-white\/\[0\.06\]:hover {
+  background-color: rgb(255 255 255 / 0.06);
+}
+.hover\:bg-white\/\[0\.08\]:hover {
+  background-color: rgb(255 255 255 / 0.08);
+}
+.hover\:bg-white\/\[0\.1\]:hover {
+  background-color: rgb(255 255 255 / 0.1);
+}
+.hover\:text-white:hover {
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1));
+}
+.hover\:underline:hover {
+  text-decoration-line: underline;
+}
+.disabled\:pointer-events-none:disabled {
+  pointer-events: none;
+}
+.disabled\:cursor-not-allowed:disabled {
+  cursor: not-allowed;
+}
+.disabled\:opacity-40:disabled {
+  opacity: 0.4;
+}
+.disabled\:opacity-50:disabled {
+  opacity: 0.5;
+}
+.group:focus-within .group-focus-within\:opacity-100 {
+  opacity: 1;
+}
+.group:hover .group-hover\:opacity-100 {
+  opacity: 1;
+}
+@media (min-width: 640px) {
+
+  .sm\:col-span-2 {
+    grid-column: span 2 / span 2;
+  }
+
+  .sm\:flex {
+    display: flex;
+  }
+
+  .sm\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sm\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sm\:grid-cols-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .sm\:p-6 {
+    padding: 1.5rem;
+  }
+
+  .sm\:px-6 {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+
+  .sm\:py-4 {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+
+  .sm\:py-5 {
+    padding-top: 1.25rem;
+    padding-bottom: 1.25rem;
+  }
+
+  .sm\:pt-6 {
+    padding-top: 1.5rem;
+  }
+}
+@media (min-width: 768px) {
+
+  .md\:w-28 {
+    width: 7rem;
+  }
+}
+@media (min-width: 1024px) {
+
+  .lg\:col-span-3 {
+    grid-column: span 3 / span 3;
+  }
+
+  .lg\:block {
+    display: block;
+  }
+
+  .lg\:inline {
+    display: inline;
+  }
+
+  .lg\:min-w-\[12rem\] {
+    min-width: 12rem;
+  }
+
+  .lg\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lg\:grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .lg\:gap-2 {
+    gap: 0.5rem;
+  }
+}
+@media (min-width: 1280px) {
+
+  .xl\:not-sr-only {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
+  .xl\:mr-0\.5 {
+    margin-right: 0.125rem;
+  }
+
+  .xl\:grid-cols-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1536px) {
+
+  .\32xl\:grid-cols-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+</style>
+<!-- generated:end css -->
+</head>
+<body>
+<div class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+  <div class="absolute -top-32 -left-32 h-[480px] w-[480px] rounded-full bg-accent/20 blur-3xl"></div>
+  <div class="absolute top-1/3 -right-40 h-[520px] w-[520px] rounded-full bg-fuchsia-500/15 blur-3xl"></div>
+  <div class="absolute bottom-[-200px] left-1/3 h-[420px] w-[420px] rounded-full bg-cyan-400/10 blur-3xl"></div>
+</div>
+<div id="app"></div>
+<div id="overlay"></div>
+<div id="toasts" class="fixed bottom-4 right-4 z-[90] flex flex-col gap-2 max-w-[calc(100vw-2rem)] w-80" role="status" aria-live="polite"></div>
+<div id="live" class="sr-only" aria-live="polite"></div>
+
+<!-- generated:start icons -->
+<script>var ICONS = {"book-open":"<path d=\"M12 7v14\"/><path d=\"M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z\"/>","bookmark":"<path d=\"m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z\"/>","cable":"<path d=\"M17 21v-2a1 1 0 0 1-1-1v-1a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1\"/><path d=\"M19 15V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V9\"/><path d=\"M21 21v-2h-4\"/><path d=\"M3 5h4V3\"/><path d=\"M7 5a1 1 0 0 1 1 1v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1V3\"/>","check":"<path d=\"M20 6 9 17l-5-5\"/>","chevron-down":"<path d=\"m6 9 6 6 6-6\"/>","circle":"<circle cx=\"12\" cy=\"12\" r=\"10\"/>","circle-check":"<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"m9 12 2 2 4-4\"/>","circle-help":"<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\"/><path d=\"M12 17h.01\"/>","download":"<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" x2=\"12\" y1=\"15\" y2=\"3\"/>","expand":"<path d=\"m21 21-6-6m6 6v-4.8m0 4.8h-4.8\"/><path d=\"M3 16.2V21m0 0h4.8M3 21l6-6\"/><path d=\"M21 7.8V3m0 0h-4.8M21 3l-6 6\"/><path d=\"M3 7.8V3m0 0h4.8M3 3l6 6\"/>","gamepad-2":"<line x1=\"6\" x2=\"10\" y1=\"11\" y2=\"11\"/><line x1=\"8\" x2=\"8\" y1=\"9\" y2=\"13\"/><line x1=\"15\" x2=\"15.01\" y1=\"12\" y2=\"12\"/><line x1=\"18\" x2=\"18.01\" y1=\"10\" y2=\"10\"/><path d=\"M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z\"/>","globe":"<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20\"/><path d=\"M2 12h20\"/>","headphones":"<path d=\"M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3\"/>","headset":"<path d=\"M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Zm0 0a9 9 0 1 1 18 0m0 0v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3Z\"/><path d=\"M21 16v2a4 4 0 0 1-4 4h-5\"/>","info":"<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 16v-4\"/><path d=\"M12 8h.01\"/>","key":"<path d=\"m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4\"/><path d=\"m21 2-9.6 9.6\"/><circle cx=\"7.5\" cy=\"15.5\" r=\"5.5\"/>","keyboard":"<path d=\"M10 8h.01\"/><path d=\"M12 12h.01\"/><path d=\"M14 8h.01\"/><path d=\"M16 12h.01\"/><path d=\"M18 8h.01\"/><path d=\"M6 8h.01\"/><path d=\"M7 16h10\"/><path d=\"M8 12h.01\"/><rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"/>","layers":"<path d=\"m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z\"/><path d=\"m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65\"/><path d=\"m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65\"/>","layout-grid":"<rect width=\"7\" height=\"7\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"3\" y=\"14\" rx=\"1\"/>","lightbulb":"<path d=\"M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5\"/><path d=\"M9 18h6\"/><path d=\"M10 22h4\"/>","list-ordered":"<path d=\"M10 12h11\"/><path d=\"M10 18h11\"/><path d=\"M10 6h11\"/><path d=\"M4 10h2\"/><path d=\"M4 6h1v4\"/><path d=\"M6 18H4c0-1 2-2 2-3s-1-1.5-2-1\"/>","lock":"<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/>","mic":"<path d=\"M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z\"/><path d=\"M19 10v2a7 7 0 0 1-14 0v-2\"/><line x1=\"12\" x2=\"12\" y1=\"19\" y2=\"22\"/>","monitor":"<rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><line x1=\"8\" x2=\"16\" y1=\"21\" y2=\"21\"/><line x1=\"12\" x2=\"12\" y1=\"17\" y2=\"21\"/>","mouse-pointer-click":"<path d=\"M14 4.1 12 6\"/><path d=\"m5.1 8-2.9-.8\"/><path d=\"m6 12-1.9 2\"/><path d=\"M7.2 2.2 8 5.1\"/><path d=\"M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z\"/>","music":"<path d=\"M9 18V5l12-2v13\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><circle cx=\"18\" cy=\"16\" r=\"3\"/>","option":"<path d=\"M3 3h6l6 18h6\"/><path d=\"M14 3h7\"/>","pencil":"<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\"/><path d=\"m15 5 4 4\"/>","play":"<polygon points=\"6 3 20 12 6 21 6 3\"/>","plus":"<path d=\"M5 12h14\"/><path d=\"M12 5v14\"/>","radio":"<path d=\"M4.9 19.1C1 15.2 1 8.8 4.9 4.9\"/><path d=\"M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/><path d=\"M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5\"/><path d=\"M19.1 4.9C23 8.8 23 15.1 19.1 19\"/>","scissors":"<circle cx=\"6\" cy=\"6\" r=\"3\"/><path d=\"M8.12 8.12 12 12\"/><path d=\"M20 4 8.12 15.88\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><path d=\"M14.8 14.8 20 20\"/>","scroll":"<path d=\"M19 17V5a2 2 0 0 0-2-2H4\"/><path d=\"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3\"/>","search":"<circle cx=\"11\" cy=\"11\" r=\"8\"/><path d=\"m21 21-4.3-4.3\"/>","settings":"<path d=\"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>","sliders-horizontal":"<line x1=\"21\" x2=\"14\" y1=\"4\" y2=\"4\"/><line x1=\"10\" x2=\"3\" y1=\"4\" y2=\"4\"/><line x1=\"21\" x2=\"12\" y1=\"12\" y2=\"12\"/><line x1=\"8\" x2=\"3\" y1=\"12\" y2=\"12\"/><line x1=\"21\" x2=\"16\" y1=\"20\" y2=\"20\"/><line x1=\"12\" x2=\"3\" y1=\"20\" y2=\"20\"/><line x1=\"14\" x2=\"14\" y1=\"2\" y2=\"6\"/><line x1=\"8\" x2=\"8\" y1=\"10\" y2=\"14\"/><line x1=\"16\" x2=\"16\" y1=\"18\" y2=\"22\"/>","sliders-vertical":"<line x1=\"4\" x2=\"4\" y1=\"21\" y2=\"14\"/><line x1=\"4\" x2=\"4\" y1=\"10\" y2=\"3\"/><line x1=\"12\" x2=\"12\" y1=\"21\" y2=\"12\"/><line x1=\"12\" x2=\"12\" y1=\"8\" y2=\"3\"/><line x1=\"20\" x2=\"20\" y1=\"21\" y2=\"16\"/><line x1=\"20\" x2=\"20\" y1=\"12\" y2=\"3\"/><line x1=\"2\" x2=\"6\" y1=\"14\" y2=\"14\"/><line x1=\"10\" x2=\"14\" y1=\"8\" y2=\"8\"/><line x1=\"18\" x2=\"22\" y1=\"16\" y2=\"16\"/>","sparkles":"<path d=\"M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z\"/><path d=\"M20 3v4\"/><path d=\"M22 5h-4\"/><path d=\"M4 17v2\"/><path d=\"M5 18H3\"/>","square":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/>","star":"<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\"/>","tag":"<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\"/><circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\"/>","trash-2":"<path d=\"M3 6h18\"/><path d=\"M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6\"/><path d=\"M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2\"/><line x1=\"10\" x2=\"10\" y1=\"11\" y2=\"17\"/><line x1=\"14\" x2=\"14\" y1=\"11\" y2=\"17\"/>","triangle-alert":"<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4\"/><path d=\"M12 17h.01\"/>","upload":"<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"17 8 12 3 7 8\"/><line x1=\"12\" x2=\"12\" y1=\"3\" y2=\"15\"/>","users":"<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"/><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"/>","volume-2":"<path d=\"M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z\"/><path d=\"M16 9a5 5 0 0 1 0 6\"/><path d=\"M19.364 18.364a9 9 0 0 0 0-12.728\"/>","wand-sparkles":"<path d=\"m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72\"/><path d=\"m14 7 3 3\"/><path d=\"M5 6v4\"/><path d=\"M19 14v4\"/><path d=\"M10 2v2\"/><path d=\"M7 8H3\"/><path d=\"M21 16h-4\"/><path d=\"M11 3H9\"/>","x":"<path d=\"M18 6 6 18\"/><path d=\"m6 6 12 12\"/>","youtube":"<path d=\"M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17\"/><path d=\"m10 15 5-3-5-3z\"/>"};</script>
+<!-- generated:end icons -->
+<!-- generated:start logo -->
+<script>var LOGO = "data:image/png;base64,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";</script>
+<!-- generated:end logo -->
+<script>
+'use strict';
+
+/* =====================================================================
+   DEMO DATA — example clips, people and profiles. Edit freely.
+   ===================================================================== */
+var DEMO = {
+  user: { name: 'Demo user', storageUsed: '12.4 MB', storageMax: '50 MB', storagePct: 25 },
+  sounds: {
+    airhorn:  { name: 'Air horn',        file: 'air-horn.mp3',        tags: ['meme', 'loud'],  owner: 'Demo user', mine: true,  pub: false, dur: 2.2 },
+    drumroll: { name: 'Drum roll',       file: 'drum-roll.mp3',       tags: ['music'],         owner: 'Demo user', mine: true,  pub: true,  dur: 3 },
+    bruh:     { name: 'Bruh',            file: 'bruh.mp3',            tags: ['meme'],          owner: 'Sam',       mine: false, pub: true,  dur: 1.1 },
+    applause: { name: 'Applause',        file: 'applause.mp3',        tags: ['crowd'],         owner: 'Demo user', mine: true,  pub: false, dur: 3 },
+    trombone: { name: 'Sad trombone',    file: 'sad-trombone.mp3',    tags: ['meme', 'music'], owner: 'Riley',     mine: false, pub: true,  dur: 2.6 },
+    fanfare:  { name: 'Victory fanfare', file: 'victory-fanfare.mp3', tags: ['music'],         owner: 'Alex',      mine: false, pub: true,  dur: 3 },
+    rain:     { name: 'Rain loop',       file: 'rain-loop.mp3',       tags: ['ambient'],       owner: 'Jo',        mine: false, pub: true,  dur: 3 },
+    gg:       { name: 'GG',              file: 'gg.mp3',              tags: ['meme'],          owner: 'Kim',       mine: false, pub: true,  dur: 1.4 }
+  },
+  saved: ['airhorn', 'drumroll', 'bruh', 'applause', 'trombone'],
+  profiles: [
+    { id: 'p1', name: 'Default', board: ['drumroll', 'bruh', 'applause'], keys: { applause: 'Ctrl+Shift+A' }, ctrl: {}, clipFx: {}, micFx: [], ai: { on: false, engine: 'free', voice: 'Neutral' } },
+    { id: 'p2', name: 'Stream',  board: ['trombone', 'airhorn'], keys: { airhorn: 'F13' }, ctrl: { airhorn: { index: 'R A ↓' } }, clipFx: { trombone: ['Echo'] }, micFx: ['Robot'], ai: { on: false, engine: 'free', voice: 'Deeper' } }
+  ],
+  outputs: [['default', 'Default output'], ['speakers', 'Speakers (Realtek)'], ['headphones', 'Headphones (USB)'], ['cable', 'CABLE Input (VB-Audio Virtual Cable)']],
+  inputs: [['', 'None'], ['mic', 'Microphone (USB)'], ['headset', 'Headset mic']],
+  effects: ['Robot', 'Echo', 'Reverb', 'Distortion', 'Telephone', 'Pitch shift', 'Noise gate', 'Chorus'],
+  vrInputs: {
+    index: ['L A', 'L B', 'L Trigger', 'L Grip', 'L Stick', 'R A', 'R B', 'R Trigger', 'R Grip', 'R Stick'],
+    quest: ['L X', 'L Y', 'L Menu', 'L Trigger', 'L Grip', 'R A', 'R B', 'R Trigger', 'R Grip', 'R Stick']
+  },
+  livepadSources: [
+    { group: 'Apps', items: [['app-game', 'Game.exe'], ['app-chat', 'Voice chat']] },
+    { group: 'Playback devices', items: [['pb-head', 'Headphones (USB)']] },
+    { group: 'Recording devices', items: [['line', 'Line In (game cable)'], ['cableout', 'CABLE Output (VB-Audio Virtual Cable)']] }
+  ]
+};
+
+/* =====================================================================
+   GUIDE CONTENT — the part you fine-tune.
+   Interactive guides: each step highlights `target` and moves on by itself
+   once the user does the thing (`on` = an event name, or `check` = a state
+   test). `prepare` puts the screen in the right state first, so steps work
+   in any order and on replay.
+   Info items: expandable cards in the guide window; `action` adds a button.
+   ===================================================================== */
+var GUIDES = [
+  {
+    id: 'board', icon: 'layout-grid', title: 'Board & Saved', summary: 'Your library, the playable Board, playing and stopping.',
+    steps: [
+      { target: '#lt-saved', title: 'Saved is your library', text: 'Open Saved: every clip you upload or save lives here.',
+        prepare: function () { S.view.lib = 'board'; }, check: function () { return S.view.lib === 'saved'; } },
+      { target: '#tag-meme', title: 'Filter by tag', text: 'Click a tag to narrow the list. Search works on names and authors.',
+        prepare: function () { S.view.lib = 'saved'; S.view.tags = []; S.view.search = ''; S.view.mine = false; },
+        check: function () { return S.view.tags.length > 0; } },
+      { target: '#sadd-airhorn', title: 'Put it on your Board', text: 'Click + to add Air horn to the Board. It stays in Saved too.',
+        prepare: function () { S.view.lib = 'saved'; S.view.search = ''; S.view.mine = false; S.view.tags = []; S.view.expanded = null; ensureSaved('airhorn'); prof().board = without(prof().board, 'airhorn'); },
+        on: 'board_add', match: function (d) { return d.id === 'airhorn'; } },
+      { target: '#bplay-airhorn', title: 'Play it', text: 'Click the clip to play it.',
+        prepare: function () { S.view.lib = 'board'; ensureOnBoard('airhorn'); }, on: 'play', match: function (d) { return d.id === 'airhorn'; } },
+      { target: '#cancel-all', title: 'Stop everything', text: 'Cancel all stops every clip at once. It can have its own keybind.',
+        prepare: function () { S.view.lib = 'board'; ensureOnBoard('airhorn'); if (!S.playing.length) startPlaying('airhorn', 8); }, on: 'cancel' },
+      { target: '#bremove-airhorn', title: 'Take it off the Board', text: 'Click × to remove it from the Board. It stays in Saved.',
+        prepare: function () { S.view.lib = 'board'; ensureOnBoard('airhorn'); S.view.expanded = null; },
+        on: 'board_remove', match: function (d) { return d.id === 'airhorn'; } }
+    ]
+  },
+  {
+    id: 'uploads', icon: 'upload', title: 'Add a sound', summary: 'Upload, trim and tag a clip, or save someone else’s.',
+    steps: [
+      { target: '#ft-upload', title: 'Open the upload form', text: 'Click “Upload a sound”.',
+        prepare: function () { S.view.form = null; S.upload = freshUpload(); }, check: function () { return S.view.form === 'upload'; } },
+      { target: '#up-file', title: 'Pick a file', text: 'Choose an mp3. Here it picks an example file.',
+        prepare: function () { S.view.form = 'upload'; S.upload = freshUpload(); }, on: 'upload_pick' },
+      { target: '#up-editor', title: 'Cut out a part', text: 'Drag on the waveform to select a part, then press Cut.',
+        prepare: function () { S.view.form = 'upload'; if (!S.upload.file) pickDemoFile(); }, on: 'upload_cut' },
+      { target: '#up-tags', title: 'Add a tag', text: 'Type a tag and press Enter. You need at least one.',
+        prepare: function (ctx) { S.view.form = 'upload'; if (!S.upload.file) pickDemoFile(); ctx.n = S.upload.tags.length; },
+        check: function (ctx) { return S.upload.tags.length > ctx.n; } },
+      { target: '#up-save', title: 'Save it', text: 'Save it. New clips land in Saved, not on a Board.',
+        prepare: function () { S.view.form = 'upload'; if (!S.upload.file) pickDemoFile(); if (!S.upload.tags.length) S.upload.tags = ['hype']; },
+        on: 'upload_save' },
+      { target: '#ft-browse', title: 'Browse public clips', text: 'Open “Browse public” to see what others shared.',
+        prepare: function () { S.view.form = null; }, check: function () { return S.view.form === 'browse'; } },
+      { target: '#pub-add-fanfare', title: 'Save one', text: 'Click + to save Victory fanfare. It’s a reference, not a copy.',
+        prepare: function () { S.view.form = 'browse'; S.view.pubSearch = ''; S.saved = without(S.saved, 'fanfare'); S.profiles.forEach(function (p) { p.board = without(p.board, 'fanfare'); }); },
+        on: 'save_public', match: function (d) { return d.id === 'fanfare'; } }
+    ]
+  },
+  {
+    id: 'binds', icon: 'keyboard', title: 'Keybinds & controllers', summary: 'Play clips from your keyboard or VR controller.',
+    steps: [
+      { target: function (ctx) { return '#bedit-' + ctx.id; }, title: 'Edit a card', text: 'Click the pencil on a Board card.',
+        prepare: function (ctx) { S.view.lib = 'board'; ctx.id = boardFirst(); S.view.expanded = null; },
+        check: function (ctx) { return S.view.expanded === ctx.id; } },
+      { target: function (ctx) { return '#bkey-' + ctx.id; }, title: 'Set a keybind', text: 'Click “Set keybind”, then hold one or more keys and let go.',
+        prepare: function (ctx) { S.view.lib = 'board'; ctx.id = boardFirst(); S.view.expanded = ctx.id; },
+        on: 'bind_key' },
+      { target: function (ctx) { return '#bc-' + ctx.id; }, title: 'Use it', text: 'Press your keybind. In the desktop app it works even while a game has focus.',
+        prepare: function (ctx) { S.view.lib = 'board'; ctx.id = boardFirst(); S.view.expanded = null; S.keybindsOn = true; if (!prof().keys[ctx.id]) prof().keys[ctx.id] = 'F13'; },
+        on: 'play', match: function (d) { return d.via === 'key'; } },
+      { target: '#cp-select', title: 'Pick your headset', text: 'Choose Valve Index or Meta Quest. Each has its own buttons and its own binds.',
+        prepare: function () { S.view.lib = 'board'; }, on: 'cp' },
+      { target: function (ctx) { return '#bctrl-' + ctx.id; }, title: 'Set a controller bind', text: 'Click “Set controller”, pick buttons and save.',
+        prepare: function (ctx) { S.view.lib = 'board'; ctx.id = boardFirst(); S.view.expanded = ctx.id; },
+        on: 'bind_ctrl' }
+    ]
+  },
+  {
+    id: 'audio', icon: 'headphones', title: 'Play into a game', summary: 'Virtual Mic, your monitor, and voice effects.',
+    steps: [
+      { target: '#btn-settings', title: 'Open Settings', text: 'Click the gear.',
+        prepare: function () { S.view.panel = null; }, check: function () { return S.view.panel === 'settings'; } },
+      { target: '#sel-output', title: 'Output to the cable', text: 'Set Output to the virtual cable (CABLE Input).',
+        prepare: function () { S.view.panel = 'settings'; if (S.settings.output === 'cable') S.settings.output = 'default'; },
+        check: function () { return S.settings.output === 'cable'; } },
+      { target: '#sel-monitor', title: 'Hear it yourself', text: 'Set Monitor to your headphones.',
+        prepare: function () { S.view.panel = 'settings'; S.settings.monitor = 'default'; }, check: function () { return S.settings.monitor === 'headphones'; } },
+      { target: '#set-vm', title: 'Turn on Virtual Mic', text: 'Your mic and the board now mix into the cable. In the game, pick “CABLE Output” as your mic.',
+        prepare: function () { S.view.panel = 'settings'; S.settings.vm = false; }, check: function () { return S.settings.vm; } },
+      { target: '#btn-voice', title: 'Voice changer', text: 'Open the voice changer.',
+        prepare: function () { S.view.panel = null; }, check: function () { return S.view.panel === 'voice'; } },
+      { target: '#sel-vfx', title: 'Add an effect', text: 'Pick an effect. It runs live on your mic.',
+        prepare: function (ctx) { S.view.panel = 'voice'; ctx.n = prof().micFx.length; }, check: function (ctx) { return prof().micFx.length > ctx.n; } }
+    ]
+  },
+  {
+    id: 'livepad', icon: 'radio', title: 'Livepad', summary: 'Grab the last seconds of a game or chat as a clip.',
+    steps: [
+      { target: '#lt-livepad', title: 'Open Livepad', text: 'Click the Livepad tab.',
+        prepare: function () { S.view.lib = 'board'; }, check: function () { return S.view.lib === 'livepad'; } },
+      { target: '#sel-lpsource', title: 'Pick a source', text: 'Choose what to listen to: an app, a playback device or a recording device.',
+        prepare: function () { S.view.lib = 'livepad'; S.livepad.armed = false; S.livepad.source = ''; }, check: function () { return !!S.livepad.source; } },
+      { target: '#lp-arm', title: 'Arm it', text: 'Switch it on. It keeps the last seconds in memory while armed.',
+        prepare: function () { S.view.lib = 'livepad'; if (!S.livepad.source) S.livepad.source = 'app-game'; S.livepad.armed = false; },
+        check: function () { return S.livepad.armed; } },
+      { target: '#lp-capture', title: 'Capture', text: 'Click Capture to save the last seconds as a card.',
+        prepare: function () { S.view.lib = 'livepad'; if (!S.livepad.source) S.livepad.source = 'app-game'; S.livepad.armed = true; }, on: 'lp_capture' },
+      { target: function () { var c = S.livepad.captures.filter(function (x) { return !x.saved; })[0]; return c ? '#lp-save-' + c.id : '#lp-capture'; },
+        title: 'Keep it', text: 'Captures are temporary. Save one to add it to your library.',
+        prepare: function () { S.view.lib = 'livepad'; if (!S.livepad.source) S.livepad.source = 'app-game'; S.livepad.armed = true; if (!S.livepad.captures.some(function (c) { return !c.saved; })) captureLivepad(true); },
+        on: 'lp_save' }
+    ]
+  },
+  {
+    id: 'profiles', icon: 'layers', title: 'Profiles', summary: 'Switch whole setups, keep one library.',
+    steps: [
+      { target: '#btn-profiles', title: 'Open profiles', text: 'Click the profile menu.',
+        prepare: function () { S.view.panel = null; }, check: function () { return S.view.panel === 'profiles'; } },
+      { target: function (ctx) { return '#prof-' + ctx.other; }, title: 'Switch profile', text: 'Pick the other profile. Its Board, binds and effects load instantly.',
+        prepare: function (ctx) { S.view.panel = 'profiles'; ctx.from = S.active; ctx.other = otherProf().id; },
+        check: function (ctx) { return S.active !== ctx.from; } },
+      { target: '#lt-saved', title: 'Saved stays the same', text: 'Open Saved: your library is shared by every profile.',
+        prepare: function () { S.view.panel = null; S.view.lib = 'board'; }, check: function () { return S.view.lib === 'saved'; } }
+    ]
+  }
+];
+
+var INFO = [
+  { id: 'cable', icon: 'cable', title: 'Setting up a virtual cable',
+    body: ['Virtual Mic needs a virtual audio cable such as VB-Audio Virtual Cable or VoiceMeeter, installed in Windows.',
+      'In Settings, set Output to the cable’s playback end (CABLE Input) and turn on Virtual Mic. In your game or call, pick its recording end (CABLE Output) as the microphone.',
+      'To put another app’s audio in your mic, route that app to a cable in Windows first.'] },
+  { id: 'monitor', icon: 'headphones', title: 'What you hear vs. what they hear',
+    body: ['Output is what the game hears. Monitor is what you hear.',
+      'Previews in Saved and Browse public only play on your Monitor, so you can check a clip without everyone hearing it.'] },
+  { id: 'desktop', icon: 'download', title: 'Why get the desktop app?',
+    body: ['The Windows desktop app loads this same site and adds things a browser can’t: keybinds that work while a game has focus, VR controller binds, the Stream Deck plugin, Livepad capture from a single app, and the VRChat avatar panel.'] },
+  { id: 'hotkeys', icon: 'keyboard', title: 'Global hotkeys (desktop)',
+    body: ['In the desktop app, Board keybinds fire even when another window has focus. The key still reaches that window, so it never blocks your game.'],
+    action: { label: 'Try it: press a global hotkey', run: 'hotkey' } },
+  { id: 'vr', icon: 'gamepad-2', title: 'VR controllers (desktop)',
+    body: ['With SteamVR running, the desktop app reads Valve Index or Meta Quest (Touch) controllers. A bind can be buttons held together, a sequence, or a long press.',
+      'The Index/Quest choice is saved on this device, not in your profile.'],
+    action: { label: 'Try it: press a controller bind', run: 'vr' } },
+  { id: 'deck', icon: 'layout-grid', title: 'Stream Deck (desktop)',
+    body: ['Install our plugin from File → Install Stream Deck plugin… in the desktop app. Keys can play a sound, cancel all, hold for AI push-to-talk, capture or play Livepad clips, and switch profile.'],
+    action: { label: 'Try it: press a Stream Deck key', run: 'deck' } },
+  { id: 'osc', icon: 'sparkles', title: 'VRChat avatar panel (experimental)',
+    body: ['A Stream-Deck-like panel you wear on a VRChat avatar (PC only). Its keys run the actions you lay out in the avatar panel editor, saved per profile.'],
+    action: { label: 'Try it: press avatar key 1', run: 'osc' } },
+  { id: 'profiles-info', icon: 'layers', title: 'What a profile keeps',
+    body: ['Each profile has its own Board, keybinds, controller binds, voice effects, AI voice, clip effects and avatar panel layout.',
+      'Shared by all profiles: your Saved library. Kept on this device: audio devices, volumes, Virtual Mic, and the keybind/controller switches.'] },
+  { id: 'public', icon: 'globe', title: 'Public clips',
+    body: ['Making a clip public lets everyone find it in Browse public. Saving someone’s public clip adds a reference: no copy, and it doesn’t use your storage.',
+      'If the owner deletes it, it shows as unavailable.'] },
+  { id: 'ai', icon: 'sparkles', title: 'AI voice and privacy',
+    body: ['AI voice records a short burst while you hold push-to-talk, sends it to a third-party provider to convert, and plays the result into your mic.',
+      'While it’s on, your normal mic is muted from the cable so only converted speech goes through.'] },
+  { id: 'roles', icon: 'users', title: 'Can’t upload?',
+    body: ['New accounts can browse and save public clips. Uploading is turned on per role by the instance’s admin.'] }
+];
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+function freshUpload() { return { file: false, name: '', sel: null, cuts: [], tags: [], tagDraft: '', pub: false }; }
+function initialState() {
+  return {
+    sounds: clone(DEMO.sounds),
+    saved: DEMO.saved.slice(),
+    profiles: clone(DEMO.profiles),
+    active: 'p1',
+    newIds: [],
+    vol: {},
+    playing: [],
+    keybindsOn: true,
+    controllersOn: true,
+    cp: 'index',
+    settings: { output: 'default', monitor: 'default', input: 'mic', global: 100, sb: 100, mic: 100, vm: false, monMic: false },
+    upload: freshUpload(),
+    livepad: { source: '', armed: false, len: 30, captures: [], seq: 0, approved: [] },
+    view: { form: null, lib: 'board', panel: null, select: null, expanded: null, ctrlFor: null, pending: [], capture: null, search: '', pubSearch: '', mine: false, tags: [], fxClip: 'drumroll', headerHidden: false },
+    uploads: 0
+  };
+}
+var S = initialState();
+var timers = {};
+
+/* =====================================================================
+   HELPERS
+   ===================================================================== */
+function $(sel) { return document.querySelector(sel); }
+function h(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function has(a, v) { return a.indexOf(v) !== -1; }
+function without(a, v) { return a.filter(function (x) { return x !== v; }); }
+function prof() { return S.profiles.filter(function (p) { return p.id === S.active; })[0]; }
+function otherProf() { return S.profiles.filter(function (p) { return p.id !== S.active; })[0]; }
+function snd(id) { return S.sounds[id]; }
+function onBoard(id) { return has(prof().board, id); }
+function isSaved(id) { return has(S.saved, id); }
+function isPlaying(id) { return has(S.playing, id); }
+function ensureSaved(id) { if (!isSaved(id)) S.saved.push(id); }
+function ensureOnBoard(id) { ensureSaved(id); if (!onBoard(id)) prof().board.push(id); }
+function boardFirst() { var p = prof(); if (!p.board.length) p.board.push('drumroll'); return p.board[0]; }
+function ic(name, size, cls) {
+  var s = size || 16;
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 ' + (cls || '') + '" aria-hidden="true">' + (ICONS[name] || '') + '</svg>';
+}
+function toast(msg) {
+  var box = $('#toasts');
+  var t = document.createElement('div');
+  t.className = 'popover rounded-lg px-3 py-2 text-sm shadow-xl';
+  t.textContent = msg;
+  box.appendChild(t);
+  setTimeout(function () { t.remove(); }, 3600);
+}
+function announce(msg) { var l = $('#live'); l.textContent = ''; setTimeout(function () { l.textContent = msg; }, 30); }
+
+/* =====================================================================
+   SMALL COMPONENTS (same classes as the app's components)
+   ===================================================================== */
+// components/Toggle.tsx
+function toggle(id, on, act, label, sm, disabled) {
+  var track = sm ? 'h-5 w-9' : 'h-6 w-11';
+  var knob = sm ? (on ? 'h-3.5 w-3.5 translate-x-[18px]' : 'h-3.5 w-3.5 translate-x-1') : (on ? 'h-4 w-4 translate-x-6' : 'h-4 w-4 translate-x-1');
+  return '<button type="button" id="' + id + '" role="switch" aria-checked="' + !!on + '" aria-label="' + h(label) + '"' + (disabled ? ' disabled' : '') +
+    ' data-act="toggle" data-v="' + act + '" class="relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed ' +
+    track + ' ' + (on ? 'bg-accent' : 'bg-white/15') + '"><span class="inline-block transform rounded-full bg-white shadow transition-transform duration-200 ' + knob + '"></span></button>';
+}
+// components/Select.tsx (dark custom dropdown)
+var SELECTS = {
+  output:   { get: function () { return S.settings.output; },  set: function (v) { S.settings.output = v; }, opts: function () { return [{ items: DEMO.outputs }]; } },
+  monitor:  { get: function () { return S.settings.monitor; }, set: function (v) { S.settings.monitor = v; }, opts: function () { return [{ items: DEMO.outputs }]; } },
+  input:    { get: function () { return S.settings.input; },   set: function (v) { S.settings.input = v; },   opts: function () { return [{ items: DEMO.inputs }]; } },
+  cp:       { get: function () { return S.cp; }, set: function (v) { S.cp = v; return 'cp'; }, opts: function () { return [{ items: [['index', 'Valve Index'], ['quest', 'Meta Quest / Touch']] }]; } },
+  vfx:      { get: function () { return ''; }, set: function (v) { prof().micFx.push(v); return 'mic_fx'; }, opts: function () { return [{ items: DEMO.effects.map(function (e) { return [e, e]; }) }]; }, placeholder: 'Add effect…' },
+  cfxclip:  { get: function () { return S.view.fxClip; }, set: function (v) { S.view.fxClip = v; }, opts: function () { return [{ items: S.saved.map(function (k) { return [k, snd(k).name]; }) }]; } },
+  cfx:      { get: function () { return ''; }, set: function (v) { var p = prof(); (p.clipFx[S.view.fxClip] = p.clipFx[S.view.fxClip] || []).push(v); return 'clip_fx'; }, opts: function () { return [{ items: DEMO.effects.map(function (e) { return [e, e]; }) }]; }, placeholder: 'Add effect…' },
+  aivoice:  { get: function () { return prof().ai.voice; }, set: function (v) { prof().ai.voice = v; }, opts: function () { return [{ items: [['Neutral', 'Neutral'], ['Deeper', 'Deeper'], ['Higher', 'Higher'], ['Custom', 'Custom…']] }]; } },
+  aiengine: { get: function () { return prof().ai.engine; }, set: function (v) { prof().ai.engine = v; }, opts: function () { return [{ items: [['free', 'RVC⚡ZERO (Free)'], ['elevenlabs', 'ElevenLabs'], ['respeecher', 'Respeecher']] }]; } },
+  lpsource: { get: function () { return S.livepad.source; }, set: function (v) { S.livepad.source = v; S.livepad.armed = false; return 'lp_source'; }, opts: function () { return DEMO.livepadSources; }, placeholder: 'Choose a source…' },
+  lplimit:  { get: function () { return '250'; }, set: function () {}, opts: function () { return [{ items: [['250', '250 MB'], ['500', '500 MB'], ['1024', '1 GB']] }]; } }
+};
+function selectHtml(name, cls, label) {
+  var sel = SELECTS[name], cur = sel.get(), groups = sel.opts(), curLabel = '';
+  groups.forEach(function (g) { g.items.forEach(function (it) { if (it[0] === cur && cur !== '') curLabel = it[1]; }); });
+  var open = S.view.select === name;
+  var menu = '';
+  if (open) {
+    menu = '<div class="popover absolute left-0 right-0 top-full mt-1 z-[60] min-w-[12rem] max-h-64 overflow-y-auto rounded-lg p-1 shadow-xl" role="listbox" aria-label="' + h(label) + '">' +
+      groups.map(function (g) {
+        return (g.group ? '<div class="px-2.5 pt-2 pb-1 text-xs font-medium text-muted/70">' + h(g.group) + '</div>' : '') +
+          g.items.map(function (it) {
+            var on = it[0] === cur;
+            return '<button type="button" role="option" aria-selected="' + on + '" data-act="sel-pick" data-sel="' + name + '" data-v="' + h(it[0]) + '" class="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition ' +
+              (on ? 'bg-accent/15 text-white' : 'text-muted hover:bg-white/5 hover:text-white') + '"><span class="truncate">' + h(it[1]) + '</span>' + (on ? ic('check', 14, 'text-accent') : '') + '</button>';
+          }).join('');
+      }).join('') + '</div>';
+  }
+  return '<div class="relative" data-select-root="' + name + '"><button type="button" id="sel-' + name + '" aria-label="' + h(label) + '" aria-haspopup="listbox" aria-expanded="' + open + '" data-act="sel-open" data-sel="' + name + '" class="input flex items-center justify-between gap-2 text-left disabled:opacity-50 disabled:pointer-events-none ' + (cls || '') + '">' +
+    '<span class="truncate">' + (curLabel ? h(curLabel) : '<span class="text-muted">' + h(sel.placeholder || 'Choose…') + '</span>') + '</span>' + ic('chevron-down', 14, 'text-muted') + '</button>' + menu + '</div>';
+}
+// components/Tags.tsx TagChips
+function tagChips(tags) {
+  return '<div class="flex flex-wrap gap-1">' + tags.map(function (t) { return '<span class="inline-flex items-center rounded-full bg-white/10 px-2.5 py-1 text-xs text-muted">' + h(t) + '</span>'; }).join('') + '</div>';
+}
+// HeaderControls HeaderButton
+function headerButton(id, icon, title) {
+  var active = S.view.panel === id;
+  return '<button type="button" id="btn-' + id + '" title="' + title + '" aria-label="' + title + '" aria-haspopup="dialog" aria-expanded="' + active + '" data-act="panel" data-v="' + id + '" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border transition ' +
+    (active ? 'border-accent/40 bg-accent/15 text-white' : 'border-white/10 bg-white/[0.04] text-muted hover:bg-white/[0.08] hover:text-white') + '">' + ic(icon, 16) + '</button>';
+}
+function popPanel(id, align, width, body) {
+  if (S.view.panel !== id) return '';
+  return '<div class="absolute ' + (align === 'right' ? 'right-0' : 'left-0') + ' mt-2 z-40 popover rounded-xl shadow-xl overflow-x-hidden ' + width + ' max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto p-3" id="pop-' + id + '" role="dialog" aria-label="' + id + '">' + body + '</div>';
+}
+// Dashboard AddTabButton
+function addTab(id, icon, label, active, act, val) {
+  return '<button type="button" id="' + id + '" aria-pressed="' + active + '" data-act="' + act + '" data-v="' + val + '" class="flex-1 flex items-center justify-center gap-2 rounded-xl border px-4 py-3 font-medium transition ' +
+    (active ? 'border-accent bg-accent/10 text-white' : 'border-white/10 text-muted hover:bg-white/5 hover:text-white') + '">' + ic(icon, 18) + '<span>' + label + '</span></button>';
+}
+
+/* =====================================================================
+   HEADER (SiteHeader + AppHeader)
+   ===================================================================== */
+function header() {
+  var p = prof();
+  var indicators = '';
+  if (S.livepad.armed) indicators += '<span class="chip text-red-300" title="Livepad is recording">' + ic('circle', 10, 'text-red-500 fill-red-500 animate-pulse xl:mr-0.5') + '<span class="sr-only xl:not-sr-only">Livepad</span></span>';
+  if (p.ai.on) indicators += '<span class="chip text-violet-300">' + ic('sparkles', 11, 'xl:mr-0.5') + '<span class="sr-only xl:not-sr-only">AI voice</span></span>';
+  if (p.micFx.length && S.settings.vm) indicators += '<span class="chip text-sky-300">' + ic('wand-sparkles', 11, 'xl:mr-0.5') + '<span class="sr-only xl:not-sr-only">Effects</span></span>';
+  var hide = S.view.headerHidden && !TOUR.on && !HUB.open;
+  return '<header class="sticky top-0 z-20 border-b border-white/5 bg-black/30 backdrop-blur-xl transition-transform duration-300 ' + (hide ? '-translate-y-full' : 'translate-y-0') + '">' +
+    '<div class="max-w-[1800px] mx-auto px-4 py-2.5 grid grid-cols-[auto_1fr_auto] items-center gap-4">' +
+      '<div class="flex items-center gap-2">' +
+        '<a href="#" class="font-semibold tracking-tight flex items-center gap-2" data-act="noop"><img src="' + LOGO + '" alt="Soundboard logo" width="32" height="32" class="h-8 w-8"><span class="hidden lg:inline">Soundboard</span></a>' +
+        '<div class="relative group">' +
+          '<button type="button" id="help-btn" data-act="hub" aria-label="Guides and tips" aria-haspopup="dialog" aria-expanded="' + HUB.open + '" class="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/15 bg-white/[0.04] text-muted transition hover:bg-white/[0.1] hover:text-white hover:border-accent/50">' + ic('circle-help', 14) + '</button>' +
+          '<span role="tooltip" class="pointer-events-none absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md popover px-2 py-1 text-[11px] text-white opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100">Guides &amp; tips</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="hidden sm:flex items-center justify-center"><div class="flex items-center gap-2">' +
+        '<div class="shrink-0 overflow-hidden rounded-full bg-white/10 h-1.5 w-16 md:w-28 mr-1" aria-hidden="true"><div id="meter-bar" class="h-full bg-emerald-500 transition-[width] duration-75" style="width:0%"></div></div>' +
+        '<div class="relative">' + headerButton('voice', 'wand-sparkles', 'Voice changer') + popPanel('voice', 'left', 'w-[23rem]', voicePanel()) + '</div>' +
+        '<div class="relative">' + headerButton('ai', 'sparkles', 'AI voice') + popPanel('ai', 'left', 'w-[23rem]', aiPanel()) + '</div>' +
+        '<div class="relative">' + headerButton('fx', 'sliders-horizontal', 'Sound Effects') + popPanel('fx', 'left', 'w-[34rem]', fxPanel()) + '</div>' +
+        '<div class="relative">' + headerButton('osc', 'layout-grid', 'VRChat avatar panel') + popPanel('osc', 'left', 'w-[34rem]', oscPanel()) + '</div>' +
+      '</div></div>' +
+      '<div class="flex items-center justify-end gap-1.5 lg:gap-2">' + indicators +
+        '<div class="relative"><button type="button" id="btn-profiles" data-act="panel" data-v="profiles" aria-haspopup="dialog" aria-expanded="' + (S.view.panel === 'profiles') + '" class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 h-9 text-sm text-muted transition hover:bg-white/[0.08] hover:text-white max-w-[10rem]"><span class="truncate">' + h(p.name) + '</span>' + ic('chevron-down', 14) + '</button>' +
+          popPanel('profiles', 'right', 'w-64', profilesPanel()) + '</div>' +
+        '<div class="relative">' + headerButton('settings', 'settings', 'Settings') + popPanel('settings', 'right', 'w-[21rem]', settingsPanel()) + '</div>' +
+        '<div class="flex flex-col items-start gap-1 lg:min-w-[12rem] max-w-[16rem]">' +
+          '<div class="flex items-center text-sm w-full"><div class="relative w-full"><button type="button" data-act="noop" class="flex w-full items-center gap-3 rounded-full p-0.5 pr-2 transition hover:bg-white/[0.06]"><div class="h-7 w-7 shrink-0 rounded-full bg-white/5 border border-white/10"></div><span class="text-muted hidden lg:inline max-w-[8rem] truncate">' + h(DEMO.user.name) + '</span>' + ic('chevron-down', 14, 'text-muted ml-auto') + '</button></div></div>' +
+          '<div class="hidden lg:block w-full" title="Upload storage"><div class="flex justify-between text-[10px] text-muted leading-none mb-0.5"><span class="text-white/80">' + DEMO.user.storageUsed + '</span><span>' + DEMO.user.storageMax + '</span></div><div class="w-full h-1 bg-white/[0.08] rounded-full overflow-hidden"><div class="h-full bg-accent-grad transition-[width] duration-500" style="width:' + DEMO.user.storagePct + '%"></div></div></div>' +
+        '</div>' +
+      '</div>' +
+    '</div></header>';
+}
+function banner() {
+  return '<div class="max-w-[1800px] mx-auto px-4 mt-3 flex flex-col gap-2"><div class="flex items-start gap-2.5 rounded-xl border px-4 py-2.5 text-sm border-accent/30 bg-accent/10 text-white">' + ic('info', 16, 'text-accent mt-0.5') +
+    '<div class="min-w-0 flex-1"><span>Prototype with example data. Nothing plays or saves. Press the <strong>?</strong> next to the logo for guides.</span> <button type="button" data-act="reset" class="font-medium text-accent hover:underline">Reset demo</button></div></div></div>';
+}
+
+/* ---------------- header panels ---------------- */
+function settingsPanel() {
+  var s = S.settings;
+  function vol(key, label) {
+    return '<div class="flex items-center gap-3"><span class="text-sm shrink-0 w-24">' + label + '</span><input type="range" min="0" max="200" step="1" value="' + s[key] + '" data-in="vol" data-k="' + key + '" aria-label="' + label + '" class="flex-1 accent-accent"><span id="vol-' + key + '" class="text-xs text-muted w-10 text-right tabular-nums">' + s[key] + '%</span></div>';
+  }
+  return '<div class="space-y-3 text-sm"><h3 class="font-medium">Settings</h3>' +
+    '<label class="block"><span class="flex items-center gap-1.5 text-xs text-muted mb-1">' + ic('volume-2', 12) + ' Output device</span>' + selectHtml('output', 'w-full', 'Output device') + '</label>' +
+    '<label class="block"><span class="flex items-center gap-1.5 text-xs text-muted mb-1">' + ic('headphones', 12) + ' Monitor device</span>' + selectHtml('monitor', 'w-full', 'Monitor device') + '</label>' +
+    '<label class="block"><span class="flex items-center gap-1.5 text-xs text-muted mb-1">' + ic('mic', 12) + ' Input device (mic)</span>' + selectHtml('input', 'w-full', 'Input device') + '</label>' +
+    '<div class="space-y-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">' + vol('global', 'Global') + vol('sb', 'Soundboard') + vol('mic', 'Mic') +
+      '<p class="text-[11px] text-muted">Above 100% may distort on your speakers; the Virtual Mic has a limiter.</p></div>' +
+    '<div class="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">' +
+      '<div class="flex items-center justify-between gap-3"><div class="min-w-0"><span class="block">Virtual Mic mode</span><span class="text-xs text-muted">Mix mic + soundboard into a cable as your in-game mic.</span></div>' + toggle('set-vm', s.vm, 'vm', 'Virtual Mic mode') + '</div>' +
+      '<div class="flex items-center justify-between gap-3"><div class="min-w-0"><span class="block">Monitor my mic</span><span class="text-xs text-muted">Hear your own mic on the monitor device.</span></div>' + toggle('set-monmic', s.monMic, 'monMic', 'Monitor my mic', false, !s.vm) + '</div>' +
+      (s.vm && s.output !== 'cable' ? '<p class="flex items-start gap-2 text-xs text-amber-300">' + ic('triangle-alert', 14, 'mt-0.5') + 'Output isn’t a virtual cable, so games won’t hear the mix.</p>' : '') +
+    '</div>' +
+    '<div class="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-xs"><span class="text-muted">Stream Deck</span><span class="text-emerald-300">Connected</span></div>' +
+  '</div>';
+}
+function effectCards(list, removeAct) {
+  if (!list.length) return '<p class="text-xs text-muted">No effects yet.</p>';
+  return '<div class="space-y-2">' + list.map(function (e, i) {
+    return '<div class="rounded-lg border border-white/10 bg-white/[0.03] p-2"><div class="flex items-center justify-between gap-2 text-sm"><span>' + h(e) + '</span><button type="button" data-act="' + removeAct + '" data-i="' + i + '" class="btn-ghost text-xs !px-1.5" aria-label="Remove ' + h(e) + '">' + ic('x', 14) + '</button></div>' +
+      '<div class="mt-2 flex items-center gap-2 text-xs text-muted"><span class="w-12">Mix</span><input type="range" min="0" max="1" step="0.01" value="0.6" class="flex-1 accent-accent" aria-label="Mix"></div></div>';
+  }).join('') + '</div>';
+}
+function voicePanel() {
+  var p = prof();
+  return '<div class="space-y-3 text-sm"><h3 class="font-medium flex items-center gap-2">' + ic('wand-sparkles', 14) + 'Voice changer</h3>' +
+    '<p class="text-xs text-muted">Real-time effects on your mic, saved with the active profile.</p>' +
+    effectCards(p.micFx, 'mic-fx-remove') +
+    '<div>' + selectHtml('vfx', 'w-full', 'Add effect') + '</div>' +
+    (S.settings.vm ? '' : '<p class="flex items-start gap-2 text-xs text-amber-300">' + ic('triangle-alert', 14, 'mt-0.5') + 'Effects run on your mic only while Virtual Mic mode is on.</p>') + '</div>';
+}
+function aiPanel() {
+  var a = prof().ai;
+  return '<div class="space-y-3 text-sm"><div class="flex items-center justify-between gap-3"><h3 class="font-medium flex items-center gap-2">' + ic('sparkles', 14) + 'AI voice</h3>' + toggle('ai-toggle', a.on, 'ai', 'AI voice') + '</div>' +
+    '<label class="block"><span class="block text-xs text-muted mb-1">Engine</span>' + selectHtml('aiengine', 'w-full', 'Engine') + '</label>' +
+    '<label class="block"><span class="block text-xs text-muted mb-1">Voice</span>' + selectHtml('aivoice', 'w-full', 'Voice') + '</label>' +
+    '<p class="flex items-start gap-2 text-xs text-amber-300">' + ic('triangle-alert', 14, 'mt-0.5') + 'Your recorded speech is sent to a third-party AI provider to convert.</p>' +
+    '<p class="text-xs text-muted">Push-to-talk and replay buttons appear on the main page while AI voice is on.</p></div>';
+}
+function fxPanel() {
+  var list = prof().clipFx[S.view.fxClip] || [];
+  return '<div class="space-y-3 text-sm"><h3 class="font-medium flex items-center gap-2">' + ic('sliders-horizontal', 14) + 'Sound Effects</h3>' +
+    '<p class="text-xs text-muted">Effects for one clip, applied every time it plays.</p>' +
+    '<label class="block"><span class="block text-xs text-muted mb-1">Clip</span>' + selectHtml('cfxclip', 'w-full', 'Clip') + '</label>' +
+    effectCards(list, 'clip-fx-remove') +
+    '<div>' + selectHtml('cfx', 'w-full', 'Add effect') + '</div></div>';
+}
+function oscPanel() {
+  var b = prof().board;
+  var cells = '';
+  for (var i = 0; i < 15; i++) {
+    var id = b[i];
+    cells += '<div class="flex aspect-square items-center justify-center rounded-lg border p-1 text-center text-[11px] ' + (id ? 'border-accent/40 bg-accent/10 text-white' : 'border-white/10 bg-white/[0.03] text-muted/60') + '">' + (id ? h(snd(id).name) : (i + 1)) + '</div>';
+  }
+  return '<div class="space-y-3 text-sm"><h3 class="font-medium flex items-center gap-2">' + ic('layout-grid', 14) + 'VRChat avatar panel <span class="chip">Experimental</span></h3>' +
+    '<p class="text-xs text-muted">Drag actions onto the keys of the panel worn on your avatar. Saved per profile.</p>' +
+    '<p class="text-xs text-emerald-300">Connected — 15-key panel</p>' +
+    '<div class="grid grid-cols-5 gap-1.5">' + cells + '</div></div>';
+}
+function profilesPanel() {
+  return '<div class="flex flex-col gap-0.5">' + S.profiles.map(function (p) {
+    var on = p.id === S.active;
+    return '<button type="button" id="prof-' + p.id + '" data-act="profile" data-id="' + p.id + '" class="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm ' + (on ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]') + '">' +
+      (on ? ic('star', 12, 'text-accent fill-accent') : '<span class="w-3 shrink-0"></span>') + '<span class="truncate ' + (on ? 'text-white' : 'text-muted') + '">' + h(p.name) + '</span></button>';
+  }).join('') + '</div>' +
+  '<div class="mt-1 border-t border-white/10 pt-1.5"><div class="flex items-center gap-1"><input class="input flex-1 min-w-0 h-7 px-2 py-0 text-sm" placeholder="New profile name…" aria-label="New profile name" disabled></div><div class="px-1 pt-1 text-[10px] text-muted">' + S.profiles.length + ' / 5 profiles</div></div>';
+}
+
+/* =====================================================================
+   MAIN (Dashboard)
+   ===================================================================== */
+function addCard() {
+  var f = S.view.form;
+  var body = '';
+  if (f === 'upload') body = uploadForm();
+  if (f === 'youtube') body = youtubeForm();
+  if (f === 'browse') body = browseForm();
+  return '<section class="card"><div class="flex gap-2 flex-wrap">' +
+    addTab('ft-upload', 'upload', 'Upload a sound', f === 'upload', 'form', 'upload') +
+    addTab('ft-youtube', 'youtube', 'Import from YouTube', f === 'youtube', 'form', 'youtube') +
+    addTab('ft-browse', 'search', 'Browse public', f === 'browse', 'form', 'browse') +
+    '</div>' + (f ? '<div class="mt-4 pt-4 border-t border-white/10">' + body + '</div>' : '') + '</section>';
+}
+function uploadForm() {
+  var u = S.upload;
+  var top = '<p class="text-sm text-muted mb-4">Add an .mp3 to your board. Give it a name, then trim it and set its volume before it lands.</p>' +
+    '<div class="grid gap-4 sm:grid-cols-2 items-stretch">' +
+      '<label class="flex flex-col"><span class="block text-xs text-muted mb-1">Audio file</span><button type="button" id="up-file" data-act="up-pick" class="input w-full flex-1 flex items-center text-left text-sm"><span class="mr-3 rounded-md bg-white/10 px-3 py-1 text-white text-xs">Choose File</span><span class="truncate ' + (u.file ? '' : 'text-muted') + '">' + (u.file ? 'victory-scream.mp3' : 'No file chosen') + '</span></button></label>' +
+      '<label class="flex flex-col"><span class="block text-xs text-muted mb-1">Clip name</span><input id="up-name" class="input w-full flex-1" data-in="up-name" value="' + h(u.name) + '" placeholder="My epic clip" maxlength="200"></label>' +
+    '</div>';
+  if (!u.file) return top;
+  var bars = '';
+  for (var i = 0; i < 96; i++) {
+    var hgt = Math.round(14 + 80 * Math.abs(Math.sin(i * 0.31) * Math.cos(i * 0.07 + 1)));
+    bars += '<span class="flex-1 rounded-sm bg-accent/70" style="height:' + hgt + '%"></span>';
+  }
+  var overlays = u.cuts.map(function (c) { return '<span class="pointer-events-none absolute inset-y-1 rounded bg-red-500/30 ring-1 ring-red-400/70" style="left:' + (c[0] * 100) + '%;width:' + ((c[1] - c[0]) * 100) + '%"></span>'; }).join('') +
+    (u.sel ? '<span class="pointer-events-none absolute inset-y-1 rounded bg-accent/25 ring-1 ring-accent" style="left:' + (u.sel[0] * 100) + '%;width:' + ((u.sel[1] - u.sel[0]) * 100) + '%"></span>' : '');
+  var dur = (4.2 * (1 - 0.15 * u.cuts.length)).toFixed(1);
+  var tagsBox = '<div id="up-tags" class="rounded-lg border bg-white/[0.03] p-2 transition-colors ' + (u.tags.length ? 'border-white/10' : 'border-amber-400/40') + '"><div class="flex flex-wrap items-center gap-1.5">' + ic('tag', 13, 'text-muted') +
+    u.tags.map(function (t) { return '<span class="inline-flex items-center gap-1 rounded-full bg-accent/20 px-2.5 py-1 text-xs text-white">' + h(t) + '<button type="button" data-act="up-tag-remove" data-v="' + h(t) + '" aria-label="Remove tag ' + h(t) + '" class="text-white/60 hover:text-white">' + ic('x', 12) + '</button></span>'; }).join('') +
+    (u.tags.length < 3 ? '<input id="up-tag" data-in="up-tag" value="' + h(u.tagDraft) + '" placeholder="Add a tag…" aria-label="Add a tag" class="flex-1 min-w-[6rem] bg-transparent px-1 py-0.5 text-sm outline-none">' : '') +
+    '</div></div>';
+  return top + '<div class="mt-4 space-y-3">' +
+    '<div id="up-editor" class="space-y-2"><div class="flex items-center justify-between gap-2 flex-wrap text-xs text-muted"><span>Drag to select a part, then cut it. ' + dur + 's kept.</span><span>Space plays · Del cuts</span></div>' +
+      '<div id="up-wave" data-drag="wave" role="slider" aria-label="Waveform: drag to select a part, Delete cuts it" aria-valuetext="' + (u.sel ? 'part selected' : 'nothing selected') + '" tabindex="0" class="relative flex h-24 cursor-crosshair select-none touch-none items-center gap-[2px] rounded-xl border border-white/10 bg-black/30 px-2">' + bars + overlays + '</div>' +
+      '<div class="flex items-center gap-2"><button type="button" id="up-cut" data-act="up-cut" class="btn-ghost text-xs"' + (u.sel ? '' : ' disabled') + '>' + ic('scissors', 14, 'mr-1') + 'Cut selection</button>' +
+      '<div class="flex items-center gap-2 flex-1 min-w-0">' + ic('volume-2', 14, 'text-muted') + '<input type="range" min="0" max="1" step="0.01" value="0.8" class="flex-1 min-w-0 accent-accent" aria-label="Clip volume"></div></div></div>' +
+    '<div class="grid gap-3 sm:grid-cols-2 items-start"><div><span class="block text-xs text-muted mb-1">Tags</span>' + tagsBox + (u.tags.length ? '' : '<p class="mt-1 text-xs text-amber-300">Add at least one tag.</p>') + '</div>' +
+      '<div class="flex items-center gap-3 sm:pt-6">' + toggle('up-pub', u.pub, 'pub', 'Share this clip publicly') + '<span class="text-sm">Share this clip publicly</span></div></div>' +
+    '<div class="flex items-center justify-end gap-2"><button type="button" data-act="up-cancel" class="btn-ghost">Cancel</button><button type="button" id="up-save" data-act="up-save" class="btn-primary"' + (u.tags.length ? '' : ' disabled') + '>' + ic('check', 16, 'mr-1') + 'Save clip</button></div>' +
+  '</div>';
+}
+function youtubeForm() {
+  return '<p class="text-sm text-muted mb-4">Paste a YouTube link. The server converts it, then you trim it like an upload.</p>' +
+    '<div class="grid gap-4 sm:grid-cols-2"><label class="flex flex-col"><span class="block text-xs text-muted mb-1">YouTube URL</span><input class="input w-full" placeholder="https://www.youtube.com/watch?v=…"></label>' +
+    '<label class="flex flex-col"><span class="block text-xs text-muted mb-1">Clip name</span><input class="input w-full" placeholder="My epic clip"></label></div>' +
+    '<div class="mt-3 flex justify-end"><button type="button" data-act="yt-import" class="btn-primary">' + ic('youtube', 16, 'mr-1') + 'Import</button></div>';
+}
+function browseForm() {
+  var q = S.view.pubSearch.trim().toLowerCase();
+  var ids = Object.keys(S.sounds).filter(function (k) { var s = S.sounds[k]; return s.pub && !s.mine && (!q || s.name.toLowerCase().indexOf(q) !== -1 || s.owner.toLowerCase().indexOf(q) !== -1); });
+  return '<div class="flex items-center justify-between gap-3 mb-3 flex-wrap"><p class="text-sm text-muted">Preview clips others shared and save them to your library.</p>' +
+    '<div class="relative">' + ic('search', 14, 'absolute left-2.5 top-1/2 -translate-y-1/2 text-muted') + '<input id="pub-search" data-in="pub-search" value="' + h(S.view.pubSearch) + '" class="input !py-1 text-xs pl-8 w-52" placeholder="Search name or author" aria-label="Search public clips"></div></div>' +
+    '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">' + ids.map(function (k) {
+      var s = snd(k), saved = isSaved(k);
+      return '<div class="card flex flex-col gap-2 !p-3"><div class="flex"><button type="button" data-act="play" data-id="' + k + '" data-via="preview" class="btn-primary flex-1 text-left min-w-0">' + ic(isPlaying(k) ? 'square' : 'play', 16, 'mr-1') + '<span class="truncate">' + h(s.name) + '</span></button></div>' +
+        tagChips(s.tags) + '<div class="flex items-center justify-between gap-2 text-[11px] text-muted/70"><span class="truncate">by ' + h(s.owner) + '</span>' +
+        (saved ? '<span class="inline-flex items-center gap-1 text-emerald-300">' + ic('check', 12) + 'Saved</span>' : '<button type="button" id="pub-add-' + k + '" data-act="pub-save" data-id="' + k + '" class="btn-ghost text-xs !px-2 text-accent" title="Save to your library" aria-label="Save ' + h(s.name) + '">' + ic('plus', 14) + '</button>') +
+        '</div></div>';
+    }).join('') + '</div>';
+}
+function aiSection() {
+  var a = prof().ai;
+  if (!a.on) return '';
+  return '<section class="card space-y-3"><div class="flex items-center gap-2 font-medium">' + ic('sparkles', 16, 'text-violet-300') + 'AI voice <span class="chip">' + h(a.voice) + '</span></div>' +
+    '<div class="flex items-center gap-2 flex-wrap"><button type="button" id="ai-ptt" data-act="ai-ptt" class="btn-primary">' + ic('mic', 16, 'mr-1') + 'Hold to talk</button><button type="button" data-act="ai-replay" class="btn-ghost">Replay last</button>' +
+    '<span class="text-xs text-muted">Bind push-to-talk to a key or controller to talk hands-free.</span></div></section>';
+}
+function librarySection() {
+  var v = S.view.lib;
+  var head = '<div class="flex items-center justify-between gap-4 mb-4 flex-wrap"><div class="flex items-center gap-2 flex-wrap">' +
+    addTab('lt-board', 'layout-grid', 'Board', v === 'board', 'lib', 'board') +
+    addTab('lt-saved', 'bookmark', 'Saved', v === 'saved', 'lib', 'saved') +
+    addTab('lt-livepad', 'radio', 'Livepad', v === 'livepad', 'lib', 'livepad') +
+    '<span class="chip text-emerald-300" title="Valve Index controller status">' + ic('gamepad-2', 12, 'mr-1') + 'SteamVR connected</span></div>' +
+    '<div class="flex items-center gap-4 flex-wrap">' +
+      '<label class="flex items-center gap-2.5 text-sm select-none">' + ic('keyboard', 15, S.keybindsOn ? 'text-accent' : 'text-muted') + '<span class="' + (S.keybindsOn ? '' : 'text-muted') + '">Keybinds ' + (S.keybindsOn ? 'on' : 'off') + '</span>' + toggle('kb-toggle', S.keybindsOn, 'keybinds', 'Toggle all keybinds') + '</label>' +
+      '<label class="flex items-center gap-2.5 text-sm select-none">' + ic('gamepad-2', 15, S.controllersOn ? 'text-accent' : 'text-muted') + '<span class="' + (S.controllersOn ? '' : 'text-muted') + '">Controller ' + (S.controllersOn ? 'on' : 'off') + '</span>' + toggle('ctrl-toggle', S.controllersOn, 'controllers', 'Toggle all controller binds') + '</label>' +
+      '<div class="flex items-center gap-2 text-sm select-none"><span class="text-muted">Controllers</span><div class="min-w-[9rem]" id="cp-select">' + selectHtml('cp', '!py-1.5 text-xs min-w-[9rem]', 'Controller profile') + '</div></div>' +
+    '</div></div>';
+  var body = v === 'board' ? boardTab() : v === 'saved' ? savedTab() : livepadTab();
+  return '<section>' + head + body + '</section>';
+}
+var GRID = 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 items-start';
+function boardTab() {
+  var p = prof(), n = p.board.length;
+  return '<div class="flex items-center justify-between gap-2 mb-3 flex-wrap"><p class="text-sm text-muted">' + (n ? n + ' sound' + (n === 1 ? '' : 's') + ' on your board.' : 'Nothing on your board yet — add clips from the Saved tab.') + '</p>' +
+    '<div class="flex items-center gap-1.5 flex-wrap"><div class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] p-1">' +
+      '<button type="button" id="cancel-all" data-act="cancel-all" class="btn-ghost text-xs disabled:opacity-50"' + (S.playing.length ? '' : ' disabled') + ' title="Stop every sound that’s currently playing">' + ic('square', 14, 'mr-1') + 'Cancel all</button>' +
+      '<span class="h-4 w-px bg-white/10" aria-hidden="true"></span><button type="button" class="btn-ghost text-xs" data-act="noop">' + ic('keyboard', 14, 'mr-1') + 'Esc</button>' +
+      '<span class="h-4 w-px bg-white/10" aria-hidden="true"></span><button type="button" class="btn-ghost text-xs" data-act="noop">' + ic('gamepad-2', 14, 'mr-1') + 'Set controller</button>' +
+    '</div>' + (n > 1 ? '<button type="button" class="btn-ghost text-xs" data-act="noop" title="Drag cards to change their order">' + ic('list-ordered', 14, 'mr-1') + 'Reorder</button>' : '') + '</div></div>' +
+    (n ? '<div class="' + GRID + '">' + p.board.map(function (id) { return soundCard(id, 'board'); }).join('') + '</div>' : '');
+}
+function savedTab() {
+  var q = S.view.search.trim().toLowerCase();
+  var pool = [];
+  S.saved.forEach(function (k) { snd(k).tags.forEach(function (t) { if (!has(pool, t)) pool.push(t); }); });
+  pool.sort();
+  var list = S.saved.filter(function (k) {
+    var s = snd(k);
+    if (S.view.mine && !s.mine) return false;
+    if (S.view.tags.length && !S.view.tags.some(function (t) { return has(s.tags, t); })) return false;
+    if (q && s.name.toLowerCase().indexOf(q) === -1 && s.owner.toLowerCase().indexOf(q) === -1) return false;
+    return true;
+  });
+  var bar = '<div class="flex flex-wrap items-center gap-1.5 mb-3"><div class="relative mr-1">' + ic('search', 14, 'absolute left-2.5 top-1/2 -translate-y-1/2 text-muted') +
+    '<input id="search" data-in="search" value="' + h(S.view.search) + '" class="input !py-1 text-xs pl-8 w-52" placeholder="Search name or author" aria-label="Search saved clips"></div>' +
+    '<button type="button" aria-pressed="' + S.view.mine + '" data-act="mine" class="rounded-full px-2.5 py-0.5 text-[11px] transition mr-1 ' + (S.view.mine ? 'bg-accent/20 text-white' : 'bg-white/10 text-muted hover:text-white') + '">My uploads</button>' +
+    ic('tag', 13, 'text-muted') +
+    pool.map(function (t) { var on = has(S.view.tags, t); return '<button type="button" id="tag-' + h(t) + '" aria-pressed="' + on + '" data-act="tag" data-v="' + h(t) + '" class="rounded-full px-2.5 py-0.5 text-[11px] transition ' + (on ? 'bg-accent/20 text-white' : 'bg-white/10 text-muted hover:text-white') + '">' + h(t) + '</button>'; }).join('') +
+    (S.view.tags.length ? '<button type="button" data-act="tag-clear" class="text-[11px] text-muted hover:text-white ml-1">clear</button>' : '') + '</div>';
+  return bar + (list.length ? '<div class="' + GRID + '">' + list.map(function (k) { return soundCard(k, 'saved'); }).join('') + '</div>' : '<p class="text-muted text-sm">No saved clips match the current filters.</p>');
+}
+function vrChips(v, off) {
+  return '<span class="inline-flex flex-wrap items-center gap-1 ' + (off ? 'line-through opacity-60' : '') + '">' + v.split(' + ').map(function (a) { return '<span class="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-white">' + h(a) + '</span>'; }).join('<span class="text-muted">+</span>') + '</span>';
+}
+function bindStack(id, edit) {
+  var p = prof(), key = p.keys[id], ctrl = p.ctrl[id] && p.ctrl[id][S.cp];
+  var cap = S.view.capture === id;
+  var keyOff = key && !S.keybindsOn, ctrlOff = ctrl && !S.controllersOn;
+  var keyLine, ctrlLine;
+  if (edit) {
+    keyLine = (key && !cap ? toggle('kt-' + id, S.keybindsOn, 'keybinds', 'Toggle keybind', true) : '') +
+      '<button type="button" id="bkey-' + id + '" data-act="key-capture" data-id="' + id + '" class="btn-ghost flex-1 text-xs min-w-0 !justify-start ' + (cap ? 'text-accent' : '') + '" title="Click, then hold one or more keys together and release">' + ic('keyboard', 14, 'mr-1') + '<span class="truncate ' + (keyOff ? 'line-through text-muted' : '') + '">' + (cap ? 'Hold keys…' : key ? h(key) : 'Set keybind') + '</span></button>' +
+      (key && !cap ? '<button type="button" data-act="key-clear" data-id="' + id + '" class="btn-ghost text-xs !px-1.5 shrink-0" title="Clear">×</button>' : '');
+    ctrlLine = (ctrl ? toggle('ct-' + id, S.controllersOn, 'controllers', 'Toggle controller bind', true) : '') +
+      '<button type="button" id="bctrl-' + id + '" data-act="ctrl-open" data-id="' + id + '" class="btn-ghost flex-1 text-xs min-w-0 !justify-start" title="Choose inputs to bind">' + ic('gamepad-2', 14, 'mr-1') + (ctrl ? vrChips(ctrl, ctrlOff) : '<span class="truncate">Set controller</span>') + '</button>' +
+      (ctrl ? '<button type="button" data-act="ctrl-clear" data-id="' + id + '" class="btn-ghost text-xs !px-1.5 shrink-0" title="Clear">×</button>' : '');
+  } else {
+    keyLine = '<span class="inline-flex flex-1 items-center gap-1 min-w-0 rounded-md bg-white/5 px-2 py-1 text-xs ' + (keyOff ? 'line-through text-muted/60' : 'text-muted') + '" title="Keyboard bind">' + ic('keyboard', 11) + '<span class="truncate">' + (key ? h(key) : '—') + '</span></span>';
+    ctrlLine = '<span class="inline-flex flex-1 flex-wrap items-center gap-1 min-w-0 rounded-md bg-white/5 px-2 py-1 text-xs ' + (ctrlOff ? 'line-through text-muted/60 opacity-70' : 'text-muted') + '" title="Controller bind">' + ic('gamepad-2', 11) + (ctrl ? vrChips(ctrl) : '<span>—</span>') + '</span>';
+  }
+  return '<div class="flex flex-col gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] p-1.5"><div class="flex items-center gap-1.5 min-w-0">' + keyLine + '</div><div class="flex items-center gap-1.5 min-w-0">' + ctrlLine + '</div></div>';
+}
+function soundCard(id, view) {
+  var s = snd(id), exp = S.view.expanded === id, isNew = has(S.newIds, id), playing = isPlaying(id), board = onBoard(id);
+  var vol = S.vol[id] == null ? 0.8 : S.vol[id];
+  var out = '<div id="' + (view === 'board' ? 'bc-' : 'sc-') + id + '" class="card flex flex-col gap-2 relative ' + (isNew ? 'ring-2 ring-lime-400/70 shadow-[0_0_0_3px_rgba(163,230,53,0.12)]' : '') + '">' +
+    (isNew ? '<span class="absolute -top-2 -right-2 z-10 rounded-full bg-lime-400 px-2 py-0.5 text-[10px] font-semibold text-black shadow">New</span>' : '') +
+    '<div class="flex"><button type="button" id="' + (view === 'board' ? 'bplay-' : 'splay-') + id + '" data-act="play" data-id="' + id + '" data-via="' + (view === 'board' ? 'click' : 'preview') + '" class="btn-primary flex-1 text-left min-w-0 ' + (playing ? 'rounded-r-none' : '') + '">' + ic('play', 16, 'mr-1') + '<span class="truncate">' + h(s.name) + '</span></button>' +
+      (playing ? '<button type="button" data-act="stop" data-id="' + id + '" class="btn-primary rounded-l-none border-l border-black/30 px-2" title="Stop all instances of this clip" aria-label="Stop clip">' + ic('x', 14) + '</button>' : '') + '</div>';
+  if (view === 'board' && !exp) out += bindStack(id, false);
+  if (view === 'saved') {
+    out += (s.tags.length ? tagChips(s.tags) : '') +
+      '<div class="flex items-center gap-1.5 text-[11px] text-muted/70 min-w-0"><span class="truncate">by ' + h(s.owner) + '</span><span aria-hidden="true">·</span>' +
+      (s.pub ? '<span class="inline-flex items-center gap-1 shrink-0">' + ic('globe', 11) + ' Public</span>' : '<span class="inline-flex items-center gap-1 shrink-0">' + ic('lock', 11) + ' Private</span>') + '</div>';
+  }
+  out += '<div class="flex items-center gap-2 mt-1"><div class="flex items-center gap-2 flex-1 min-w-0" title="Volume ' + Math.round(vol * 100) + '%">' + ic('volume-2', 14, 'text-muted') +
+    '<input type="range" min="0" max="1" step="0.01" value="' + vol + '" data-in="cardvol" data-id="' + id + '" class="flex-1 min-w-0 accent-accent" aria-label="Volume">' +
+    (exp ? '<span class="shrink-0 text-xs text-muted w-8 text-right">' + Math.round(vol * 100) + '</span>' : '') + '</div>';
+  if (!exp) {
+    out += '<button type="button" data-act="card-fx" data-id="' + id + '" class="btn-ghost text-xs !px-2 shrink-0" title="Sound effects" aria-label="Sound effects">' + ic('sliders-vertical', 14) + '</button>' +
+      '<button type="button" id="bedit-' + id + '" data-act="expand" data-id="' + id + '" class="btn-ghost text-xs !px-2 shrink-0" title="Edit" aria-label="Edit card">' + ic('pencil', 14) + '</button>' +
+      '<button type="button" id="' + (board ? (view === 'board' ? 'bremove-' : 'sremove-') : 'sadd-') + id + '" data-act="' + (board ? 'board-remove' : 'board-add') + '" data-id="' + id + '" class="btn-ghost text-xs !px-2 shrink-0 ' + (board ? '' : 'text-accent') + '" title="' + (board ? 'Remove from board (keeps it in Saved)' : 'Add to your board') + '" aria-label="' + (board ? 'Remove from board' : 'Add to board') + '">' + ic(board ? 'x' : 'plus', 14) + '</button>';
+  }
+  out += '</div>';
+  if (exp) {
+    out += '<div class="text-xs text-muted break-words">' + h(s.file) + '</div>' + (s.tags.length ? tagChips(s.tags) : '') + bindStack(id, true) +
+      (s.mine
+        ? '<div class="flex items-center justify-between mt-1"><button type="button" data-act="pub-toggle" data-id="' + id + '" class="btn-ghost text-xs" title="Toggle public">' + ic(s.pub ? 'globe' : 'lock', 14) + '<span class="ml-1">' + (s.pub ? 'Public' : 'Private') + '</span></button><button type="button" data-act="noop" class="btn-danger text-xs" title="Delete the file">' + ic('trash-2', 14) + '</button></div>'
+        : '<div class="flex items-center justify-end mt-1"><button type="button" data-act="noop" class="btn-ghost text-xs">' + ic('trash-2', 14, 'mr-1') + ' Remove from Saved</button></div>') +
+      '<div class="flex items-center justify-between gap-2 mt-1 pt-2 border-t border-white/5"><button type="button" data-act="expand" data-id="' + id + '" class="btn-ghost text-xs !px-2" title="Done editing" aria-label="Collapse card">' + ic('check', 14) + '</button>' +
+      '<button type="button" id="' + (board ? (view === 'board' ? 'bremove-' : 'sremove-') : 'sadd-') + id + '" data-act="' + (board ? 'board-remove' : 'board-add') + '" data-id="' + id + '" class="btn-ghost text-xs !px-2 ' + (board ? '' : 'text-accent') + '" aria-label="' + (board ? 'Remove from board' : 'Add to board') + '">' + ic(board ? 'x' : 'plus', 14) + '</button></div>';
+  }
+  return out + '</div>';
+}
+function livepadTab() {
+  var lp = S.livepad;
+  var used = lp.captures.reduce(function (n, c) { return n + c.len * 0.094; }, 0);
+  var status = lp.armed ? ic('circle', 12, 'text-red-500 fill-red-500 animate-pulse') : ic('circle', 12, 'text-muted');
+  return '<div class="space-y-4"><div class="card p-3 space-y-2.5"><div class="flex items-center gap-x-4 gap-y-2 flex-wrap">' +
+      '<div class="basis-[30rem] min-w-[14rem] text-sm">' + selectHtml('lpsource', 'w-full', 'Livepad source') + '</div>' +
+      '<label class="flex flex-1 min-w-[12rem] items-center gap-2 text-sm"><span class="text-muted">Length</span><input type="range" min="1" max="120" value="' + lp.len + '" data-in="lp-len" aria-label="Capture length" class="flex-1 min-w-0 accent-accent"><span id="lp-len-out" class="w-9 text-right tabular-nums">' + lp.len + 's</span></label>' +
+      '<label class="flex items-center gap-2 text-sm select-none">' + status + '<span class="' + (lp.armed ? '' : 'text-muted') + '">' + (lp.armed ? 'Recording' : 'Off') + '</span>' + toggle('lp-arm', lp.armed, 'arm', 'Arm Livepad', false, !lp.source) + '</label>' +
+      '<button type="button" id="lp-capture" data-act="lp-capture" class="btn-primary"' + (lp.armed ? '' : ' disabled') + '>' + ic('radio', 16, 'mr-1.5') + 'Capture</button>' +
+    '</div><div class="flex items-center justify-between gap-x-4 gap-y-2 flex-wrap text-sm"><div class="flex shrink-0 items-center gap-2"><span class="whitespace-nowrap text-xs text-muted">Temp ' + used.toFixed(1) + ' MB of</span>' + selectHtml('lplimit', '!py-1 text-xs min-w-[6rem]', 'Temp limit') + '</div>' +
+      '<p class="text-xs text-muted">Captures are temporary and deleted when the app closes.</p></div></div>' +
+    (lp.captures.length ? '<div class="' + GRID + '">' + lp.captures.map(function (c) {
+      var pl = isPlaying('lp:' + c.id);
+      return '<div class="card p-3 space-y-2" id="lpc-' + c.id + '"><div class="flex"><button type="button" data-act="lp-play" data-id="' + c.id + '" class="btn-primary flex-1 text-left min-w-0">' + ic(pl ? 'square' : 'play', 16, 'mr-1') + '<span class="truncate">' + h(c.name) + '</span></button></div>' +
+        '<div class="flex items-center gap-1.5 text-[11px] text-muted"><span>' + c.len + 's</span>' + (c.saved ? '<span class="chip text-emerald-300">Saved</span>' : '') + '</div>' +
+        '<div class="flex items-center justify-end gap-1"><button type="button" id="lp-save-' + c.id + '" data-act="lp-save" data-id="' + c.id + '" class="btn-ghost text-xs !px-2"' + (c.saved ? ' disabled' : '') + ' title="Save to your library">' + ic('bookmark', 14, 'mr-1') + 'Save</button>' +
+        '<button type="button" data-act="lp-delete" data-id="' + c.id + '" class="btn-ghost text-xs !px-2" aria-label="Delete capture">' + ic('trash-2', 14) + '</button></div></div>';
+    }).join('') + '</div>' : '<p class="text-sm text-muted">No captures yet.</p>') + '</div>';
+}
+// Simplified VrBindPicker (the app's is a full-screen drag-flow builder)
+function ctrlModal() {
+  var id = S.view.ctrlFor;
+  if (!id) return '';
+  return '<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" data-backdrop="ctrl"><div role="dialog" aria-modal="true" aria-labelledby="ctrl-title" class="popover rounded-2xl shadow-xl w-full max-w-lg p-4 space-y-3">' +
+    '<div class="flex items-center justify-between"><h3 id="ctrl-title" class="font-medium flex items-center gap-2">' + ic('gamepad-2', 16) + 'Controller bind · ' + h(snd(id).name) + '</h3><button type="button" data-act="ctrl-cancel" class="btn-ghost text-xs !px-1.5" aria-label="Close">' + ic('x', 14) + '</button></div>' +
+    '<p class="text-xs text-muted">' + (S.cp === 'index' ? 'Valve Index' : 'Meta Quest / Touch') + ' · pick the buttons to hold together. The real builder also does release edges, sequences and long presses.</p>' +
+    '<div class="grid grid-cols-2 sm:grid-cols-5 gap-1.5">' + DEMO.vrInputs[S.cp].map(function (inp) {
+      var on = has(S.view.pending, inp + ' ↓');
+      return '<button type="button" data-act="ctrl-input" data-v="' + h(inp) + '" aria-pressed="' + on + '" class="rounded-lg border px-2 py-2 text-xs transition ' + (on ? 'border-accent bg-accent/15 text-white' : 'border-white/10 bg-white/[0.03] text-muted hover:text-white') + '">' + h(inp) + ' ↓</button>';
+    }).join('') + '</div>' +
+    '<div class="flex items-center justify-between gap-2"><div class="min-h-[1.5rem] text-xs">' + (S.view.pending.length ? vrChips(S.view.pending.join(' + ')) : '<span class="text-muted">Nothing picked yet.</span>') + '</div>' +
+    '<div class="flex gap-2"><button type="button" data-act="ctrl-cancel" class="btn-ghost text-xs">Cancel</button><button type="button" id="ctrl-save" data-act="ctrl-save" class="btn-primary text-xs"' + (S.view.pending.length ? '' : ' disabled') + '>Save bind</button></div></div>' +
+  '</div></div>';
+}
+
+/* =====================================================================
+   RENDER
+   ===================================================================== */
+function saveFocus() {
+  var a = document.activeElement;
+  if (!a || !a.id) return null;
+  var f = { id: a.id };
+  try { if (typeof a.selectionStart === 'number') { f.s = a.selectionStart; f.e = a.selectionEnd; } } catch (e) { /* not a text field */ }
+  return f;
+}
+function restoreFocus(f) {
+  if (!f) return;
+  var el = document.getElementById(f.id);
+  if (!el || el === document.activeElement) return;
+  el.focus({ preventScroll: true });
+  try { if (typeof f.s === 'number') el.setSelectionRange(f.s, f.e); } catch (e) { /* not a text field */ }
+}
+function render() {
+  var f = saveFocus();
+  $('#app').innerHTML = header() + banner() + '<main class="max-w-[1800px] mx-auto px-4 py-10"><div class="space-y-8">' + addCard() + aiSection() + librarySection() + '</div></main>' + ctrlModal();
+  restoreFocus(f);
+  renderOverlay();
+}
+
+/* =====================================================================
+   ACTIONS — every UI change goes through update(event); guides listen to
+   the same events, so guided and free clicking take the same path.
+   ===================================================================== */
+function ev(type, data) { return { type: type, data: data || {} }; }
+function update(e) { render(); tourCheck(e || null); }
+
+function startPlaying(id, secs) {
+  clearTimeout(timers[id]);
+  if (!isPlaying(id)) S.playing.push(id);
+  timers[id] = setTimeout(function () { S.playing = without(S.playing, id); render(); }, (secs || 2.5) * 1000);
+}
+function play(id, via) {
+  if (!snd(id)) return;
+  startPlaying(id, Math.min(snd(id).dur, 3));
+  update(ev('play', { id: id, via: via || 'click' }));
+}
+function pickDemoFile() { S.upload.file = true; S.upload.name = 'Victory scream'; S.upload.sel = null; S.upload.cuts = []; }
+function setKey(id, chord) { prof().keys[id] = chord; S.view.capture = null; update(ev('bind_key', { id: id })); toast('Keybind set to ' + chord + '.'); }
+function capById(id) { return S.livepad.captures.filter(function (c) { return c.id === id; })[0]; }
+function captureLivepad(quiet) {
+  var lp = S.livepad;
+  if (!lp.armed) { toast('Livepad isn’t armed.'); return; }
+  lp.seq += 1;
+  var d = new Date(), pad = function (n) { return ('0' + n).slice(-2); };
+  var label = '';
+  DEMO.livepadSources.forEach(function (g) { g.items.forEach(function (it) { if (it[0] === lp.source) label = it[1]; }); });
+  lp.captures.unshift({ id: 'c' + lp.seq, name: label + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()), len: lp.len, saved: false });
+  if (!quiet) update(ev('lp_capture'));
+}
+function runBridge(kind) {
+  var p = prof();
+  if (kind === 'hotkey') {
+    var k = p.board.filter(function (id) { return p.keys[id]; })[0];
+    if (k) { play(k, 'global'); toast('Global hotkey ' + p.keys[k] + ' → ' + snd(k).name + ' (while a game had focus).'); } else toast('Set a keybind on a Board clip first.');
+  } else if (kind === 'vr') {
+    var v = p.board.filter(function (id) { return p.ctrl[id] && p.ctrl[id][S.cp]; })[0];
+    if (v) { play(v, 'vr'); toast('Controller bind ' + p.ctrl[v][S.cp] + ' → ' + snd(v).name + '.'); } else toast('Set a controller bind on a Board clip first.');
+  } else {
+    var first = p.board[0];
+    if (first) { play(first, kind); toast((kind === 'deck' ? 'Stream Deck key' : 'Avatar panel key 1') + ' → ' + snd(first).name + '.'); } else toast('This Board is empty.');
+  }
+}
+
+var ACT = {
+  noop: function () {},
+  reset: function () { Object.keys(timers).forEach(function (k) { clearTimeout(timers[k]); }); S = initialState(); HUB.done = []; tourStop(); render(); toast('Demo reset.'); },
+  hub: function () { HUB.open ? hubClose() : hubOpen(); },
+  panel: function (d) { S.view.panel = S.view.panel === d.v ? null : d.v; S.view.select = null; update(ev('panel')); },
+  form: function (d) { S.view.form = S.view.form === d.v ? null : d.v; update(ev('form')); },
+  lib: function (d) { S.view.lib = d.v; S.view.expanded = null; update(ev('lib')); },
+  'sel-open': function (d) { S.view.select = S.view.select === d.sel ? null : d.sel; update(); },
+  'sel-pick': function (d) {
+    var type = SELECTS[d.sel].set(d.v);
+    S.view.select = null;
+    update(ev(type || 'select', { sel: d.sel, v: d.v }));
+    var b = $('#sel-' + d.sel); if (b) b.focus({ preventScroll: true });
+  },
+  toggle: function (d) {
+    if (d.v === 'keybinds') S.keybindsOn = !S.keybindsOn;
+    if (d.v === 'controllers') S.controllersOn = !S.controllersOn;
+    if (d.v === 'vm') { S.settings.vm = !S.settings.vm; if (!S.settings.vm) S.settings.monMic = false; }
+    if (d.v === 'monMic') S.settings.monMic = !S.settings.monMic;
+    if (d.v === 'ai') { prof().ai.on = !prof().ai.on; if (prof().ai.on) S.settings.monMic = S.settings.vm; }
+    if (d.v === 'pub') S.upload.pub = !S.upload.pub;
+    if (d.v === 'arm') {
+      var lp = S.livepad;
+      if (!lp.armed && lp.source.indexOf('app-') === 0 && !has(lp.approved, lp.source)) { lp.approved.push(lp.source); toast('Desktop app asks once: “Allow Soundboard to record this app?” → Allow'); }
+      lp.armed = !lp.armed;
+    }
+    update(ev('toggle', { v: d.v }));
+  },
+  play: function (d) { isPlaying(d.id) ? ACT.stop(d) : play(d.id, d.via); },
+  stop: function (d) { clearTimeout(timers[d.id]); S.playing = without(S.playing, d.id); update(ev('stop')); },
+  'cancel-all': function () { Object.keys(timers).forEach(function (k) { clearTimeout(timers[k]); }); S.playing = []; update(ev('cancel')); },
+  'board-add': function (d) { ensureOnBoard(d.id); S.newIds = without(S.newIds, d.id); update(ev('board_add', { id: d.id })); },
+  'board-remove': function (d) { prof().board = without(prof().board, d.id); if (S.view.expanded === d.id) S.view.expanded = null; update(ev('board_remove', { id: d.id })); },
+  expand: function (d) { S.view.expanded = S.view.expanded === d.id ? null : d.id; S.view.capture = null; update(ev('expand')); },
+  'card-fx': function (d) { S.view.fxClip = d.id; ensureSaved(d.id); S.view.panel = 'fx'; S.view.headerHidden = false; update(ev('panel')); window.scrollTo({ top: 0, behavior: 'smooth' }); },
+  'key-capture': function (d) { S.view.capture = S.view.capture === d.id ? null : d.id; held = []; update(); },
+  'key-clear': function (d) { delete prof().keys[d.id]; update(); },
+  'ctrl-open': function (d) { S.view.ctrlFor = d.id; S.view.pending = []; update(); var f = $('[data-act="ctrl-input"]'); if (f) f.focus(); },
+  'ctrl-input': function (d) { var a = d.v + ' ↓'; S.view.pending = has(S.view.pending, a) ? without(S.view.pending, a) : S.view.pending.concat([a]); update(); },
+  'ctrl-save': function () { var p = prof(), id = S.view.ctrlFor; p.ctrl[id] = p.ctrl[id] || {}; p.ctrl[id][S.cp] = S.view.pending.join(' + '); S.view.ctrlFor = null; update(ev('bind_ctrl', { id: id })); var b = $('#bctrl-' + id); if (b) b.focus(); },
+  'ctrl-cancel': function () { var id = S.view.ctrlFor; S.view.ctrlFor = null; update(); var b = $('#bctrl-' + id); if (b) b.focus(); },
+  'ctrl-clear': function (d) { var c = prof().ctrl[d.id]; if (c) delete c[S.cp]; update(); },
+  mine: function () { S.view.mine = !S.view.mine; update(); },
+  tag: function (d) { S.view.tags = has(S.view.tags, d.v) ? without(S.view.tags, d.v) : S.view.tags.concat([d.v]); update(ev('tag')); },
+  'tag-clear': function () { S.view.tags = []; update(); },
+  'pub-toggle': function (d) { snd(d.id).pub = !snd(d.id).pub; update(); },
+  'up-pick': function () { pickDemoFile(); update(ev('upload_pick')); },
+  'up-cut': function () { if (!S.upload.sel) return; S.upload.cuts.push(S.upload.sel); S.upload.sel = null; update(ev('upload_cut')); },
+  'up-tag-remove': function (d) { S.upload.tags = without(S.upload.tags, d.v); update(); },
+  'up-cancel': function () { S.upload = freshUpload(); update(); },
+  'up-save': function () {
+    var u = S.upload;
+    if (!u.file || !u.tags.length) return;
+    S.uploads += 1;
+    var id = 'up' + S.uploads;
+    S.sounds[id] = { name: u.name.trim() || 'Untitled clip', file: 'victory-scream.mp3', tags: u.tags.slice(), owner: DEMO.user.name, mine: true, pub: u.pub, dur: 3 };
+    S.saved.push(id); S.newIds.push(id);
+    S.upload = freshUpload(); S.view.form = null; S.view.lib = 'saved'; S.view.tags = []; S.view.search = '';
+    update(ev('upload_save', { id: id }));
+    toast('Saved to your library.');
+  },
+  'yt-import': function () { toast('Example only: the server would download and convert this, then open the editor.'); },
+  'pub-save': function (d) { ensureSaved(d.id); S.newIds.push(d.id); update(ev('save_public', { id: d.id })); toast('Saved “' + snd(d.id).name + '” to your library.'); },
+  profile: function (d) { if (d.id === S.active) return; S.active = d.id; S.view.expanded = null; S.view.capture = null; update(ev('profile')); toast('Switched to ' + prof().name + '.'); },
+  'mic-fx-remove': function (d) { prof().micFx.splice(Number(d.i), 1); update(); },
+  'clip-fx-remove': function (d) { var l = prof().clipFx[S.view.fxClip]; if (l) l.splice(Number(d.i), 1); update(); },
+  'ai-ptt': function () { toast('Recording… then converted and played into your mic (example).'); update(ev('ai_ptt')); },
+  'ai-replay': function () { toast('Replayed the last conversion (example).'); },
+  'lp-capture': function () { captureLivepad(); },
+  'lp-play': function (d) { var key = 'lp:' + d.id; if (isPlaying(key)) { S.playing = without(S.playing, key); update(); return; } startPlaying(key, 3); update(ev('lp_play')); },
+  'lp-save': function (d) {
+    var c = capById(d.id);
+    if (!c || c.saved) return;
+    S.uploads += 1;
+    var id = 'lp' + S.uploads;
+    S.sounds[id] = { name: c.name, file: c.name + '.mp3', tags: ['livepad'], owner: DEMO.user.name, mine: true, pub: false, dur: 3 };
+    S.saved.push(id); S.newIds.push(id); c.saved = true;
+    update(ev('lp_save'));
+    toast('Saved to your library. In the app, Save opens the editor for name and tags first.');
+  },
+  'lp-delete': function (d) { S.livepad.captures = S.livepad.captures.filter(function (c) { return c.id !== d.id; }); update(); },
+  // guide hub + tour
+  'hub-close': function () { hubClose(); },
+  'hub-guide': function (d) { tourStart(d.v); },
+  'hub-info': function (d) { HUB.expanded = HUB.expanded === d.v ? null : d.v; renderOverlay(); var b = $('#info-' + d.v); if (b) b.focus(); },
+  'hub-try': function (d) { hubClose(true); runBridge(d.v); },
+  'tour-exit': function () { tourStop(true); },
+  'tour-skip': function () { tourNext(); }
+};
+
+/* =====================================================================
+   EVENTS
+   ===================================================================== */
+document.addEventListener('click', function (e) {
+  var el = e.target.closest('[data-act]');
+  // Outside clicks close an open dropdown / header panel, like the app's Popover.
+  if (S.view.select && !e.target.closest('[data-select-root]')) { S.view.select = null; if (!el) { render(); return; } }
+  if (S.view.panel && !e.target.closest('#pop-' + S.view.panel) && !e.target.closest('#btn-' + S.view.panel) && !e.target.closest('#tour-card') && !e.target.closest('[data-act="card-fx"]')) {
+    S.view.panel = null;
+    if (!el) { update(ev('panel')); return; }
+  }
+  var bd = e.target.closest('[data-backdrop]');
+  if (bd && !e.target.closest('[role="dialog"]')) {
+    if (bd.dataset.backdrop === 'hub') hubClose(); else ACT['ctrl-cancel']();
+    return;
+  }
+  if (!el || el.disabled) return;
+  if (el.tagName === 'A') e.preventDefault();
+  var fn = ACT[el.dataset.act];
+  if (fn) fn(el.dataset, el, e);
+});
+document.addEventListener('input', function (e) {
+  var el = e.target, k = el.dataset && el.dataset.in;
+  if (!k) return;
+  // Sliders update in place: re-rendering mid-drag would drop the thumb.
+  if (k === 'vol') { S.settings[el.dataset.k] = Number(el.value); var o = $('#vol-' + el.dataset.k); if (o) o.textContent = el.value + '%'; }
+  else if (k === 'cardvol') { S.vol[el.dataset.id] = Number(el.value); }
+  else if (k === 'lp-len') { S.livepad.len = Number(el.value); var lo = $('#lp-len-out'); if (lo) lo.textContent = el.value + 's'; }
+  else if (k === 'search') { S.view.search = el.value; update(); }
+  else if (k === 'pub-search') { S.view.pubSearch = el.value; update(); }
+  else if (k === 'up-name') { S.upload.name = el.value; }
+  else if (k === 'up-tag') { S.upload.tagDraft = el.value; }
+});
+// Waveform drag-select (mouse, touch and pen)
+var drag = null;
+function waveX(e) { return Math.max(0, Math.min(1, (e.clientX - drag.r.left) / drag.r.width)); }
+document.addEventListener('pointerdown', function (e) {
+  var w = e.target.closest('[data-drag="wave"]');
+  if (!w) return;
+  drag = { r: w.getBoundingClientRect() };
+  drag.x0 = waveX(e);
+  S.upload.sel = [drag.x0, Math.min(1, drag.x0 + 0.01)];
+  render();
+});
+document.addEventListener('pointermove', function (e) {
+  if (!drag) return;
+  var x = waveX(e);
+  S.upload.sel = [Math.min(drag.x0, x), Math.max(drag.x0, x)];
+  render();
+});
+document.addEventListener('pointerup', function () {
+  if (!drag) return;
+  drag = null;
+  var s = S.upload.sel;
+  // A tap (no drag) selects a small span around the point.
+  if (s && s[1] - s[0] < 0.03) { var c = (s[0] + s[1]) / 2; S.upload.sel = [Math.max(0, c - 0.08), Math.min(1, c + 0.08)]; }
+  update(ev('upload_select'));
+});
+function isTyping(t) { return t && ((t.tagName === 'INPUT' && t.type !== 'range') || t.tagName === 'TEXTAREA' || t.isContentEditable); }
+function chordOf(keys) {
+  var order = ['Ctrl', 'Alt', 'Shift', 'Win'];
+  return keys.slice().sort(function (a, b) {
+    var ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia === -1 ? 9 : ia) - (ib === -1 ? 9 : ib);
+  }).join('+');
+}
+function keyName(e) {
+  var m = { Control: 'Ctrl', Meta: 'Win', ' ': 'Space' };
+  if (m[e.key]) return m[e.key];
+  return e.key.length === 1 ? e.key.toUpperCase() : e.key;
+}
+var held = [];
+document.addEventListener('keydown', function (e) {
+  if (S.view.capture) {
+    if (e.key === 'Escape' && !held.length) { e.preventDefault(); S.view.capture = null; update(); return; }
+    e.preventDefault();
+    var n = keyName(e);
+    if (!has(held, n)) held.push(n);
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (S.view.select) { var s = S.view.select; S.view.select = null; update(); var b = $('#sel-' + s); if (b) b.focus(); return; }
+    if (S.view.ctrlFor) { ACT['ctrl-cancel'](); return; }
+    if (HUB.open) { hubClose(); return; }
+    if (TOUR.on) { tourStop(true); return; }
+    if (S.view.panel) { var p = S.view.panel; S.view.panel = null; update(ev('panel')); var pb = $('#btn-' + p); if (pb) pb.focus(); return; }
+    return;
+  }
+  if (e.key === 'Enter' && e.target.id === 'up-tag') {
+    e.preventDefault();
+    var t = S.upload.tagDraft.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 32);
+    if (t && !has(S.upload.tags, t) && S.upload.tags.length < 3) S.upload.tags.push(t);
+    S.upload.tagDraft = '';
+    update(ev('upload_tag'));
+    return;
+  }
+  if (e.target.id === 'up-wave') {
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); ACT['up-cut'](); return; }
+    if (e.key === 'Enter') { e.preventDefault(); S.upload.sel = [0.42, 0.58]; update(ev('upload_select')); return; }
+  }
+  if (isTyping(e.target) || HUB.open || e.repeat) return;
+  if (['Control', 'Alt', 'Shift', 'Meta'].indexOf(e.key) !== -1) return;
+  if (!S.keybindsOn) return;
+  var parts = [];
+  if (e.ctrlKey) parts.push('Ctrl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  if (e.metaKey) parts.push('Win');
+  parts.push(keyName(e));
+  var chord = chordOf(parts), pr = prof();
+  var hit = pr.board.filter(function (id) { return pr.keys[id] === chord; })[0];
+  if (hit) { e.preventDefault(); play(hit, 'key'); }
+});
+document.addEventListener('keyup', function () {
+  if (S.view.capture && held.length) { var id = S.view.capture; var chord = chordOf(held); held = []; setKey(id, chord); }
+});
+// Hide-on-scroll header, like SiteHeader (kept visible during guides).
+var lastY = 0;
+window.addEventListener('scroll', function () {
+  var y = window.scrollY;
+  var hide = y > lastY && y > 80 && !S.view.panel && !TOUR.on;
+  if (hide !== S.view.headerHidden) {
+    S.view.headerHidden = hide;
+    var hd = $('header');
+    if (hd) { hd.classList.toggle('-translate-y-full', hide); hd.classList.toggle('translate-y-0', !hide); }
+  }
+  lastY = y;
+  positionTour();
+}, { passive: true });
+window.addEventListener('resize', positionTour);
+// Output meter animation while anything plays
+setInterval(function () {
+  var bar = $('#meter-bar');
+  if (bar) bar.style.width = S.playing.length ? (35 + Math.random() * 55).toFixed(0) + '%' : '0%';
+}, 90);
+
+/* =====================================================================
+   GUIDE HUB — centered window with interactive guides + info items
+   ===================================================================== */
+var HUB = { open: false, expanded: null, done: [] };
+function hubOpen() {
+  if (TOUR.on) tourStop(false);
+  HUB.open = true;
+  S.view.panel = null; S.view.select = null;
+  render();
+  var f = $('#hub-title'); if (f) f.focus();
+}
+function hubClose(keepFocus) {
+  HUB.open = false;
+  render();
+  if (!keepFocus) { var b = $('#help-btn'); if (b) b.focus(); }
+}
+function hubHtml() {
+  var guides = GUIDES.map(function (g) {
+    var done = has(HUB.done, g.id);
+    return '<button type="button" id="guide-' + g.id + '" data-act="hub-guide" data-v="' + g.id + '" class="flex h-full flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:border-accent/40 hover:bg-white/[0.06]">' +
+      '<div class="flex items-center justify-between gap-2"><span class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-accent/15 text-accent">' + ic(g.icon, 18) + '</span>' +
+      (done ? '<span class="chip text-emerald-300">' + ic('circle-check', 12) + 'Done</span>' : '<span class="chip">' + g.steps.length + ' steps</span>') + '</div>' +
+      '<div class="font-medium text-white">' + h(g.title) + '</div><div class="text-sm text-muted">' + h(g.summary) + '</div>' +
+      '<div class="mt-auto flex items-center gap-1.5 pt-1 text-xs text-accent">' + ic('mouse-pointer-click', 14) + (done ? 'Show me again' : 'Show me') + '</div></button>';
+  }).join('');
+  var infos = INFO.map(function (it) {
+    var open = HUB.expanded === it.id;
+    return '<div class="rounded-xl border bg-white/[0.03] transition ' + (open ? 'sm:col-span-2 lg:col-span-3 border-accent/40' : 'border-white/10') + '">' +
+      '<button type="button" id="info-' + it.id + '" data-act="hub-info" data-v="' + it.id + '" aria-expanded="' + open + '" aria-controls="info-body-' + it.id + '" class="flex w-full items-center gap-3 p-3 text-left">' +
+        '<span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.06] text-muted">' + ic(it.icon, 16) + '</span><span class="flex-1 text-sm font-medium text-white">' + h(it.title) + '</span>' + ic('chevron-down', 16, 'text-muted transition-transform ' + (open ? 'rotate-180' : '')) + '</button>' +
+      (open ? '<div id="info-body-' + it.id + '" class="space-y-2 px-3 pb-3 text-sm text-muted">' + it.body.map(function (p) { return '<p>' + h(p) + '</p>'; }).join('') +
+        (it.action ? '<button type="button" data-act="hub-try" data-v="' + it.action.run + '" class="btn-ghost text-xs mt-1">' + ic('mouse-pointer-click', 14, 'mr-1') + h(it.action.label) + '</button>' : '') + '</div>' : '') +
+    '</div>';
+  }).join('');
+  return '<div class="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-6" data-backdrop="hub">' +
+    '<div role="dialog" aria-modal="true" aria-labelledby="hub-title" class="popover flex max-h-[min(88vh,56rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl shadow-xl">' +
+      '<div class="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-6 sm:py-4"><div><h2 id="hub-title" tabindex="-1" class="text-lg font-semibold tracking-tight outline-none">Guides &amp; tips</h2><p class="text-sm text-muted">Pick a guide to be shown around, or open a tip.</p></div>' +
+        '<button type="button" data-act="hub-close" class="btn-ghost text-xs !px-2" aria-label="Close guides">' + ic('x', 16) + '</button></div>' +
+      '<div class="overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 sm:py-5 space-y-6">' +
+        '<section><h3 class="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted">' + ic('book-open', 14) + 'Show me how</h3><div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">' + guides + '</div></section>' +
+        '<section><h3 class="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted">' + ic('lightbulb', 14) + 'Good to know</h3><div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">' + infos + '</div></section>' +
+      '</div>' +
+    '</div></div>';
+}
+// Keep Tab inside the guide window while it's open.
+document.addEventListener('keydown', function (e) {
+  if (!HUB.open || e.key !== 'Tab') return;
+  var box = $('#overlay [role="dialog"]');
+  if (!box) return;
+  var f = box.querySelectorAll('button:not([disabled]), [tabindex="-1"]');
+  var first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  else if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+});
+
+/* =====================================================================
+   TOUR — overlay walkthrough that moves on by itself
+   ===================================================================== */
+var TOUR = { on: false, guide: null, i: 0, ctx: {}, done: false, preparing: false, timer: null };
+var ADVANCE_MS = 700; // pause on the green "done" state before the next step
+function curGuide() { return GUIDES.filter(function (g) { return g.id === TOUR.guide; })[0]; }
+function curStep() { var g = curGuide(); return g ? g.steps[TOUR.i] : null; }
+function tourStart(id) {
+  HUB.open = false;
+  TOUR.on = true; TOUR.guide = id; TOUR.i = 0;
+  S.view.headerHidden = false;
+  stepStart();
+}
+function stepStart() {
+  clearTimeout(TOUR.timer);
+  var st = curStep();
+  TOUR.ctx = {}; TOUR.done = false; TOUR.preparing = true;
+  S.view.select = null; S.view.capture = null; S.view.ctrlFor = null;
+  if (st.prepare) st.prepare(TOUR.ctx);
+  TOUR.preparing = false;
+  render();
+  var t = tourTarget();
+  if (t) {
+    t.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    if (t.matches('button, input, [tabindex]')) t.focus({ preventScroll: true });
+  }
+  announce(curGuide().title + ', step ' + (TOUR.i + 1) + ' of ' + curGuide().steps.length + '. ' + st.title + '. ' + st.text);
+  setTimeout(positionTour, 350);
+}
+function tourCheck(e) {
+  if (!TOUR.on || TOUR.done || TOUR.preparing) return;
+  var st = curStep(), ok = false;
+  if (st.on && e && e.type === st.on && (!st.match || st.match(e.data, TOUR.ctx))) ok = true;
+  if (!ok && st.check && st.check(TOUR.ctx)) ok = true;
+  if (!ok) return;
+  TOUR.done = true;
+  renderOverlay();
+  announce('Done.');
+  TOUR.timer = setTimeout(tourNext, ADVANCE_MS);
+}
+function tourNext() {
+  clearTimeout(TOUR.timer);
+  var g = curGuide();
+  if (!g) return;
+  if (TOUR.i + 1 < g.steps.length) { TOUR.i += 1; stepStart(); return; }
+  if (!has(HUB.done, g.id)) HUB.done.push(g.id);
+  tourStop(false);
+  toast(g.title + ' — all done!');
+  hubOpen();
+  var b = $('#guide-' + g.id); if (b) b.focus();
+}
+function tourStop(focusHelp) {
+  clearTimeout(TOUR.timer);
+  TOUR.on = false; TOUR.guide = null;
+  render();
+  if (focusHelp) { var b = $('#help-btn'); if (b) b.focus(); }
+}
+function tourTarget() {
+  var st = TOUR.on && curStep();
+  if (!st) return null;
+  var sel = typeof st.target === 'function' ? st.target(TOUR.ctx) : st.target;
+  var el = null;
+  try { el = document.querySelector(sel); } catch (err) { el = null; }
+  return el && el.getClientRects().length ? el : null;
+}
+function tourHtml() {
+  var g = curGuide(), st = curStep(), n = g.steps.length;
+  var dots = g.steps.map(function (x, i) { return '<span class="h-1.5 rounded-full transition-all ' + (i < TOUR.i || (i === TOUR.i && TOUR.done) ? 'w-1.5 bg-emerald-400' : i === TOUR.i ? 'w-4 bg-accent' : 'w-1.5 bg-white/20') + '"></span>'; }).join('');
+  var hidden = !tourTarget();
+  return '<div id="tour-ring" class="tour-ring pointer-events-none fixed z-[65] rounded-xl transition-all duration-200 ' + (TOUR.done ? 'ok' : '') + '"' + (hidden ? ' hidden' : '') + '></div>' +
+    '<div id="tour-card" class="fixed z-[75] w-[min(20rem,calc(100vw-1.5rem))] rounded-xl border border-white/10 bg-black/60 p-3 text-sm shadow-xl backdrop-blur-md transition-[top,left] duration-200">' +
+      '<div class="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted"><span>' + h(g.title) + ' · ' + (TOUR.i + 1) + '/' + n + '</span>' +
+        '<button type="button" data-act="tour-exit" class="rounded-md p-0.5 text-muted hover:bg-white/10 hover:text-white" aria-label="Stop the guide">' + ic('x', 14) + '</button></div>' +
+      '<div class="flex items-center gap-1.5 font-medium text-white">' + (TOUR.done ? ic('circle-check', 16, 'text-emerald-400') : '') + h(st.title) + '</div>' +
+      '<p class="mt-0.5 text-muted">' + h(st.text) + '</p>' +
+      (hidden ? '<p class="mt-1 text-xs text-amber-300">This control isn’t shown at this screen size.</p>' : '') +
+      '<div class="mt-2 flex items-center justify-between gap-2"><div class="flex items-center gap-1">' + dots + '</div>' +
+        (TOUR.done ? '' : '<button type="button" data-act="tour-skip" class="text-[11px] text-muted hover:text-white">Skip step</button>') + '</div>' +
+    '</div>';
+}
+function renderOverlay() {
+  var o = $('#overlay');
+  if (HUB.open) o.innerHTML = hubHtml();
+  else if (TOUR.on) o.innerHTML = tourHtml();
+  else o.innerHTML = '';
+  positionTour();
+}
+function positionTour() {
+  if (!TOUR.on) return;
+  var ring = $('#tour-ring'), card = $('#tour-card');
+  if (!card) return;
+  var t = tourTarget();
+  var vw = window.innerWidth, vh = window.innerHeight, gap = 14, m = 12;
+  var cw = card.offsetWidth, ch = card.offsetHeight;
+  if (!t) {
+    if (ring) ring.hidden = true;
+    card.style.left = Math.max(m, (vw - cw) / 2) + 'px';
+    card.style.top = (vh - ch - 24) + 'px';
+    return;
+  }
+  var r = t.getBoundingClientRect(), pad = 6;
+  ring.hidden = false;
+  ring.style.left = (r.left - pad) + 'px'; ring.style.top = (r.top - pad) + 'px';
+  ring.style.width = (r.width + pad * 2) + 'px'; ring.style.height = (r.height + pad * 2) + 'px';
+  // Prefer below, then above, then right, then left; always clamp on screen.
+  var x, y;
+  if (r.bottom + pad + gap + ch <= vh - m) { y = r.bottom + pad + gap; x = r.left + r.width / 2 - cw / 2; }
+  else if (r.top - pad - gap - ch >= m) { y = r.top - pad - gap - ch; x = r.left + r.width / 2 - cw / 2; }
+  else if (r.right + pad + gap + cw <= vw - m) { x = r.right + pad + gap; y = r.top + r.height / 2 - ch / 2; }
+  else if (r.left - pad - gap - cw >= m) { x = r.left - pad - gap - cw; y = r.top + r.height / 2 - ch / 2; }
+  else { x = (vw - cw) / 2; y = vh - ch - m; }
+  card.style.left = Math.max(m, Math.min(x, vw - cw - m)) + 'px';
+  card.style.top = Math.max(m, Math.min(y, vh - ch - m)) + 'px';
+}
+
+render();
+</script>
+</body>
+</html>

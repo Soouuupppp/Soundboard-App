@@ -45,6 +45,10 @@ pnpm workspace (`pnpm-workspace.yaml`), package manager pinned to `pnpm@9.12.3`.
 Versions across all four `package.json` files are kept in lockstep
 (currently **1.5.2**), plus the Stream Deck manifest's `"Version"` (`1.5.2.0`).
 
+Current release: **1.5.2b** (docs + a small header fix). App/package versions remain
+**1.5.2** and the Stream Deck manifest remains **1.5.2.0**. Only the web app needs a
+rebuild (header layout, task 3); the desktop app, native helpers and Stream Deck plugin don't.
+
 ## Stack
 
 - **web/** — Next.js 15 (App Router), Tailwind (glassy dark UI), Auth.js v5 /
@@ -445,7 +449,9 @@ both **device-local** (no DB/schema change):
 - **Navbar (1.4.2 tweaks)** — `components/AppHeader.tsx` right cluster is
   Profile · Settings cog · user menu; the avatar pins left with the name/chevron
   floating right (`UserMenu.tsx`); the upload-storage quota is its own `QuotaBar.tsx`
-  beneath the username band.
+  beneath the username band. **Responsive (1.5.2b):** the username, quota bar and logo
+  text show from `lg`, the Livepad / AI voice / Effects chip labels from `xl` (icon-only
+  below, label kept as `sr-only`), so the header no longer overflows phones and tablets.
 - **Saved tab (1.4.2)** — a name/author **search** box leads the filter row; a
   just-uploaded / just-saved clip gets a **lime "New" highlight** (cleared on hover or
   when added to a board). **A tag is required** to upload / import / save (UI-gated:
@@ -833,6 +839,14 @@ keys talk to the desktop app over OSC/OSCQuery (`electron/vrchat-osc.js`). Keys 
 the app per profile (new `profile.oscLayout` column) through a navbar editor, with pages; the
 Stream Deck and the panel share one action dispatch (`lib/remote-actions.ts`). Owner-reported
 working in VRChat against a local stack (2026-11-14).
+
+**1.5.2b shipped** (docs + header fix, versions stay 1.5.2): a rewritten root `README.md`
+(features by browser vs desktop, Saved → Board workflow, a Mermaid architecture diagram,
+audio routing, corrected self-hosting and local-dev steps), a standalone interactive
+prototype `docs/soundboard-guide.html` (the real app's look on example data, with six
+auto-advancing walkthroughs and info items behind a `?` button; rebuilt by
+`docs/build-guide.mjs`), and a header fix so the navbar no longer overflows phones and
+tablets. Only the web app needs a rebuild.
 
 ### Tasks — 1.3.1 (UX compaction + Quest support — ✅ shipped)
 
@@ -4339,6 +4353,258 @@ the three modes look to a friend, and manual ports with `--osc`.
 When you start a fresh batch of work, add a checklist here (task + a **Progress**
 field: `Not started` → `In progress` → `✅ Done`) and keep design decisions
 locked with the owner recorded inline.
+
+### Tasks — 1.5.2b (Documentation refresh + interactive guide mockup)
+
+Docs-only release on **`ver/1.5.2b`**. Owner decisions below are **locked**:
+keep all four package versions at **1.5.2** and the Stream Deck manifest at
+**1.5.2.0**. This is a documentation revision label, not a package-version bump.
+The only runtime change is task 3 (header layout, added after planning), so only the
+web app needs a rebuild.
+
+1. **Project introduction README** — Rewrite the root `README.md` as an inviting,
+   visually organized introduction to the project. Lead with what Soundboard is
+   and a clear breakdown of its features, explain the Saved → Board → playback
+   workflow and how the web app, desktop wrapper, and bridges fit together
+   (global keyboard input, OpenVR controllers, native Livepad capture, Stream Deck,
+   and the experimental VRChat OSC avatar panel). Distinguish browser features
+   from desktop-only integrations. Introduce the public instance at
+   **https://soundboard.soouuupppp.com**, followed by self-hosting and local
+   development instructions. Check setup commands against the current repo and
+   link to component documentation for deeper technical details.
+   **Locked presentation:** GitHub-native Markdown using the existing logo,
+   feature/availability tables, and a simple Mermaid architecture diagram;
+   no new banner or screenshot. Put the public instance before setup instructions.
+   **Progress: ✅ Done** *(rewrote the root `README.md`: centered logo + tagline + links (public
+   instance, Windows desktop releases, interactive guide), a "Try it now" section before setup, a
+   feature table with Browser vs Windows desktop columns (Chromium-only items marked), an ASCII
+   Saved → Board workflow, a Mermaid diagram (server, page, desktop app, bridges; thick lines for
+   audio) plus a bridge table, an Audio routing section (cable ends, Monitor, capture-only Virtual
+   Mic vs Livepad native capture, AI disclosure), the guide link with download-and-open-locally
+   instructions, Self-hosting (Discord app, an env table, `pnpm up` / `pnpm dev` / `pnpm down`,
+   automatic schema + the user / whitelisted / admin roles, data dirs, HTTPS reverse proxy), Local
+   development (`docker compose up -d db`, explicit shell env for `pnpm db:migrate` + `pnpm dev:web`
+   on 3000, PowerShell note, yt-dlp/ffmpeg), AUTH_DISABLED with a warning callout, Electron source
+   launch in PowerShell and POSIX, a repository map and the license + author line. Fixed stale
+   claims: the Discord redirect is on 5050 for Docker, Quest controllers are supported, uploads land
+   in Saved (not auto-placed on the Board), three seeded roles, single-mic Virtual Mic with a Monitor.
+   Commands and env names checked against `package.json`, `.env.example`, `docker-compose.yml`,
+   `scripts/docker-rebuild.mjs`, `web/src/db/migrate.ts` and `web/src/lib/storage.ts`; nothing was run.
+   The Mermaid diagram wasn't previewed on GitHub.)*
+
+2. **Interactive soundboard and modular guide prototype** — Create a standalone
+   interactive artifact mockup of the soundboard, informed by the current app's
+   layout. A **`?` button at the top left of the navigation** opens a modular
+   guide with a topic picker and short, replayable walkthroughs. Cover **Board /
+   Saved, uploads, binds and bridges, audio routing / voice effects, Livepad,
+   and profiles**. Users can choose a topic independently, move through its
+   walkthrough, close the guide, and reopen/replay it through `?`. Use simulated
+   state for demonstration. **Locked: prototype only**; do not implement the
+   guide in the production app or require real authentication, hardware,
+   recording, uploads, or a rebuilt app to explore it.
+   **Locked delivery and interaction:** a standalone HTML file committed to the
+   repo, with highlighted controls and guided demo actions rather than only
+   explanation cards. Match the current dark UI. Demo state is temporary and
+   resets on reload; no separate chat artifact is required.
+   **Owner revision (2026-11-15, locked, replaces the side-panel design above):** the
+   prototype must look and feel **exactly like the real app** (it's a sandbox for tuning the
+   guide, and later other UI, on example data without rebuilding the app). The `?` is a small
+   round button **right of the logo** with a hover/focus tooltip. It opens a **centered (both
+   axes) window** with a responsive grid (1 / 2 / 3 columns from phone up) of **interactive
+   guides** and **expandable info items**. Guides run as a **pure overlay** (highlight ring +
+   a floating text box on a dark blurred background, placed a little away from the control);
+   there is **no Next button: each step advances by itself** once the action is detected. A
+   small "Skip step" and × stay available.
+   **Progress: ✅ Done** *(rewrote `docs/soundboard-guide.html` with the app's own Tailwind
+   classes copied from `AppHeader`, `HeaderControls`, `SiteHeader`, `UserMenu`, `QuotaBar`,
+   `ProfileSwitcher`, `Toggle`, `Select`, `Popover`, `SettingsPanel`, `LivepadPanel`,
+   `NoticeBanners` and the `Dashboard` add card, tabs, bind stack and `SoundCard`. New
+   `docs/build-guide.mjs` fills three generated blocks so the HTML stays one file: CSS compiled
+   by the web workspace's Tailwind with `web/tailwind.config.ts` + `globals.css` against the
+   HTML, the lucide-react icons it names, and the logo. Example data (`DEMO`) and guide content
+   (`GUIDES` with target / prepare / event-or-check per step, `INFO` with optional "Try it"
+   actions) sit at the top of the script for editing. Six guides (32 steps) and eleven info
+   items. The Play font loads from Google Fonts (the file's only network request; system font
+   offline). Checked in the browser pane at 1024px, ~600px and 375px: no console errors, all six
+   guides advance through every step on real clicks, key presses, dropdown picks and waveform
+   drags, Escape closes the window or guide and returns focus to `?`, and steps whose control is
+   hidden at phone width show a note instead of a ring. **Found:** the real header overflowed
+   phones and tablets (fixed in task 3, mirrored here).
+   Not checked: a real screen reader, Firefox/Safari, a wide desktop window above 1024px.)*
+
+3. **Header no longer overflows phones and tablets** *(UI bug, owner request 2026-11-15, added
+   after planning; this is the release's only runtime change)*. Found while building the guide
+   prototype: the header was wider than the screen from 320px up to ~830px, so the page scrolled
+   sideways. The user/quota block had `min-w-[12rem]` at every width even though its name and
+   quota bar are hidden on phones, and on tablets the centre controls appear while the username,
+   quota bar, logo text and the Livepad / AI voice / Effects chip labels all still showed.
+   **Locked:** keep every control; drop text until there's room. Username, quota bar and the 12rem
+   floor from `lg`; the "Soundboard" logo text from `lg`; chip labels from `xl` (icon-only below,
+   label kept for screen readers, tooltip unchanged); right cluster right-aligned with a tighter
+   gap below `lg`.
+   **Progress: ✅ Done** *(`AppHeader.tsx`: right cluster `justify-end gap-1.5 lg:gap-2`, user stack
+   `lg:min-w-[12rem]`, `QuotaBar` `hidden lg:block`, logo text `hidden lg:inline`. `UserMenu.tsx`:
+   name `hidden lg:inline`. `LivepadRecordingIndicator.tsx` / `VoiceChangerIndicators.tsx`: labels in
+   `sr-only xl:not-sr-only`, icon margin `xl:mr-1.5`. Mirrored in the prototype. Measured in the
+   prototype at 320–1440px, with and without all three chips: no overflow from 375px up; below
+   375px with all three chips on it still needs 369px. `tsc --noEmit` clean. Not checked in the
+   running app or on a real phone.)*
+
+#### Implementation plan — 1.5.2b (approved by owner 2026-11-15)
+
+Implement the prototype first, then finish the README with its concrete file
+link. Keep the two task progress fields above **Not started** until implementation
+begins. The paths below are repo-relative; no machine paths belong in tracked docs.
+
+**Research findings / reference files (read-only):**
+- `web/src/components/AppHeader.tsx`, `HeaderControls.tsx`, and
+  `web/src/app/globals.css`: logo left; output meter and voice/AI/FX/OSC controls
+  center; profiles, settings, user/quota right; dark glass surfaces and lavender
+  accents. Prototype adds `?` immediately before the logo, at the far left.
+- `web/src/components/Dashboard.tsx`: Upload / YouTube / Browse public form tabs
+  above Board / Saved / Livepad; compact sound cards with expandable editing.
+  Upload completion selects Saved, not Board.
+- `web/src/components/ProfileSwitcher.tsx`, `ProfileProvider.tsx`, and
+  `web/src/db/schema.ts`: Saved is shared across profiles; board placements,
+  binds, voice/AI settings, per-clip FX, and OSC layouts belong to profiles.
+- `electron/hotkeys.js`, `vr-controllers.js`, `audio-capture.js`,
+  `streamdeck-bridge.js`, `vrchat-osc.js`, and `preload.js`: respectively
+  passthrough keyboard observation, OpenVR edges, WASAPI Livepad capture,
+  Stream Deck named pipe, local OSC/OSCQuery, and IPC to the web UI.
+- `package.json`, `web/package.json`, `.env.example`, `docker-compose.yml`,
+  `scripts/docker-rebuild.mjs`, `web/Dockerfile`, `electron/README.md`, and
+  `avatar-panel/README.md`: setup and integration references. Root `pnpm dev`
+  runs the Docker rebuild helper; `pnpm dev:web` runs Next.js. Docker uses 5050,
+  while Next.js dev defaults to 3000. The current README confuses these paths.
+- `web/src/db/migrate.ts` reads `process.env` without loading an env file, and
+  seeds `user`, `whitelisted`, and `admin` (default `user` cannot upload).
+  Documentation must follow these current facts rather than older role summaries.
+- Settled capture/schema memories checked: Virtual Mic uses capture devices /
+  cables; native app/playback capture is Livepad-only. Bootstrap SQL applies
+  the schema on server startup. No decision is reopened by this release.
+- The public website could not be read through the research tool; use repo
+  sources for feature accuracy and do not claim live deployment verification.
+
+**Task 2 — standalone prototype**
+
+Files to create: `docs/soundboard-guide.html` only. Reuse the existing logo by
+embedding its data in this file so downloading just the HTML still works.
+Use inline CSS, classic JavaScript, and inline icons; no CDN, framework, package
+install, fetch, module import, server, storage permission, or production imports.
+
+1. Build a responsive header and dashboard using a small set of fictional clips,
+   tags, two profiles, a demo user/quota display, and explicitly simulated bridge
+   statuses. Label the artifact as an interactive prototype. Play/stop controls
+   show visual playback only; do not open audio or recording devices.
+2. Implement a small in-memory state object and shared render/action functions
+   for tabs, Saved membership, profile board placements, play/cancel, settings,
+   FX, and temp captures. Guide steps call the same actions as the visible UI.
+   Simulate file selection/import with sample data, not real file/network access.
+3. Define guide content as data: topic id/title, step text, target id, view/panel
+   preparation, expected demo action, and completion predicate. Add a topic picker,
+   step count, Back, Next/Skip, topic menu, replay, Finish, and Close. Prepare
+   each step's targets deterministically so replay, Back, switching topics, or
+   changing views never leaves the tour stranded. Require the demonstrated action
+   for completion, with a visible Skip option to keep exploration unblocked.
+4. Include these short modules (roughly 3–5 steps each):
+   - **Board / Saved:** find a tagged clip, expand its editor, promote it to the
+     active board, play it, and cancel; removing it from Board keeps it in Saved.
+   - **Uploads:** select a sample MP3, name/tag it, demonstrate a waveform cut,
+     and save to Saved. Explain that YouTube is admin-gated; public clips are
+     saved references. Neither action uploads or converts actual audio.
+   - **Binds and bridges:** set a sample keyboard chord and toggle binds; select
+     Index or Quest and demonstrate a down/up sequence. Provide selectable bridge
+     explanations/demos for global hotkeys, OpenVR, Stream Deck, native Livepad,
+     and the experimental PC-only VRChat avatar panel, including simulated
+     triggering/state feedback. Keep Virtual Mic routing distinct from capture.
+   - **Audio routing / voice effects:** choose mock output/monitor/input devices,
+     toggle Virtual Mic, demonstrate volume and mic monitoring, add a mic effect
+     and a separate clip effect, and show AI PTT as simulated third-party
+     conversion. Explain the cable's playback/recording ends and the game's mic.
+   - **Livepad:** choose a simulated source, arm, snapshot a selected duration,
+     inspect a temp card, then save it to Saved. Explain the rolling buffer,
+     ephemeral captures, desktop capture approvals, and browser source limits.
+   - **Profiles:** switch between two profiles; show different board/bind/FX
+     choices while keeping Saved shared. Distinguish these profiles from the
+     device-local Index / Quest controller selection.
+5. Use a non-modal guide side panel with a target outline and short anchored
+   callout. Keep the highlighted control clickable: a full-page modal would
+   make background controls inert. Scroll targets into view, remeasure after
+   layout changes, clamp callouts, and use an in-flow panel on narrow screens.
+   Use semantic buttons/labels, visible focus, keyboard access, Escape-to-close,
+   focus return to `?`, polite step announcements, and reduced-motion support.
+   Closing clears highlights/tour state; reopening shows the topic picker.
+
+Risks: mock behavior drifting from production, layout clipping, or topic order
+dependencies. Address with source-derived labels, explicit simulation indicators,
+stable target ids, deterministic preparation, and shared action handlers. Keep
+explanations concise; do not recreate production DSP, encoders, or bind engines.
+
+Verification during implementation: open the file directly with no server and
+network offline; finish every topic, skip/back/replay, switch topics out of order,
+close/reopen, and reload to verify reset. Check Saved/Board and profile invariants,
+keyboard-only use, Escape/focus return, reduced motion, desktop and 375px layouts,
+and callout positioning after scroll/resize. Check for console errors, unintended
+requests, and hardware permission prompts. Record what was actually verified.
+
+**Task 1 — README rewrite**
+
+Files to edit: `README.md`; update task progress in `AGENTS.md` as work completes.
+Existing logo: `web/src/app/logo.png` (read-only). Keep deeper component docs in
+`electron/README.md`, `avatar-panel/README.md`, and `docs/voice-changer-research.md`
+as linked references rather than duplicating them.
+
+1. Arrange the README as logo/title and short introduction → public-instance CTA
+   → features/availability table → Saved-to-Board workflow → app/bridge diagram
+   and concise bridge table → interactive guide link → self-hosting → local
+   development → repository map / deeper documentation → license/credits.
+2. Include upload/YouTube/clip editing/tags/public sharing, keyboard and Index /
+   Quest binds, Virtual Mic, DSP/AI voice and clip FX, Livepad, profiles, Stream
+   Deck, and experimental PC-only VRChat. Distinguish browser support from the
+   Windows desktop integrations and avoid presenting optional services as
+   guaranteed public-instance capabilities.
+3. Use a simple fenced Mermaid diagram for web app/server/storage, the desktop
+   wrapper's remote web UI, and local bridges. Show control traffic separately
+   from the audio path; bridges trigger the web mixer rather than acting as an
+   alternate sound server. Explain that Virtual Mic requires an externally
+   installed cable, and native Livepad capture is a separate path.
+4. Fix setup instructions against current scripts: pnpm 9.12.3, Docker Compose,
+   environment setup and matching database credentials, localhost:5050 auth URLs
+   and Discord callback for Docker, persistent upload/DB directories, and HTTPS /
+   reverse proxy for remote hosting. Provide a separate localhost:3000 Next.js
+   development path with a host-reachable database URL, migrations via
+   `pnpm db:migrate`, `pnpm dev:web`, and yt-dlp/ffmpeg for host-side import.
+   Supply environment variables explicitly in the host-dev shell for both the
+   migration and Next.js commands: the migration does not load `.env`, and the
+   web workspace cannot assume the root Compose env file is loaded. Set the
+   host-dev uploads directory explicitly as well. Explain the
+   rebuild helper's purpose without requiring the reader to use it to view docs.
+5. Include local-only auth-disabled testing and Electron source launch with an
+   explicit server URL, with valid PowerShell syntax plus a POSIX equivalent.
+   Keep the existing warning that auth-disabled makes reachable visitors admins.
+   Link desktop/native build instructions rather than making native builds a
+   prerequisite for browser use. Preserve license and author attribution.
+6. Link `docs/soundboard-guide.html` with instructions to download/open locally:
+   GitHub shows HTML source rather than running this file. Do not imply this
+   release deploys the prototype or adds `?` to the live app.
+
+Verification during implementation: review rendered Markdown, feature matrix,
+diagram and relative links; audit commands/env names against source without
+running builds or migrations. Correct stale Index-only/input-count and auto-board
+claims. Review the diff for real local paths, private data, and accidental version
+or runtime changes. Run `git diff --check`; no lint, build, or app typecheck is
+needed for Markdown plus an isolated HTML artifact.
+
+**Shared constraints:** no schema/bootstrap, middleware/CSP, Electron IPC, runtime
+UI, deployment, workflow, lockfile, or version changes. No commit/push/publish.
+*(Runtime UI later allowed for task 3's header fix only, by owner request.)*
+
+**External references:**
+- [GitHub diagram support](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams)
+  confirms fenced Mermaid in Markdown; keep syntax simple for GitHub rendering.
+- [MDN modal dialog behavior](https://developer.mozilla.org/en-US/docs/Web/API/HTMLDialogElement/showModal)
+  confirms that `showModal()` makes the rest of the document inert; the actionable
+  walkthrough therefore uses a non-modal surface.
 
 ## Conventions
 - Match the existing concise, comment-the-why style. The audio files in

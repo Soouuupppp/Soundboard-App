@@ -12,15 +12,15 @@ export function LivepadRecordingIndicator() {
   if (waitingFor) {
     return (
       <span className="chip text-amber-300" title={`Livepad is waiting for ${waitingFor} and isn't recording`}>
-        <Circle size={10} className="mr-1.5 text-amber-400" />
-        Livepad waiting
+        <Circle size={10} className="xl:mr-1.5 text-amber-400" />
+        <span className="sr-only xl:not-sr-only">Livepad waiting</span>
       </span>
     );
   }
   return (
     <span className="chip text-red-300" title="Livepad is recording your selected source">
-      <Circle size={10} className="mr-1.5 text-red-500 fill-red-500 animate-pulse" />
-      Livepad
+      <Circle size={10} className="xl:mr-1.5 text-red-500 fill-red-500 animate-pulse" />
+      <span className="sr-only xl:not-sr-only">Livepad</span>
     </span>
   );
 }

@@ -42,7 +42,7 @@ export function AppHeader({
       {/* Left — logo */}
       <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
         <Image src={logo} alt="Soundboard logo" width={32} height={32} priority className="h-8 w-8" />
-        <span className="hidden sm:inline">Soundboard</span>
+        <span className="hidden lg:inline">Soundboard</span>
       </Link>
 
       {/* Center — audio controls (collapse on small screens) */}
@@ -52,17 +52,20 @@ export function AppHeader({
 
       {/* Right cluster — Profile · Settings cog · user/quota stack, grouped
           together (the user/quota band is left-aligned: name beside the avatar,
-          quota bar spanning beneath). */}
-      <div className="flex items-center gap-2">
+          quota bar spanning beneath). Below sm the center column is hidden, so
+          this lands in the 1fr column: right-align it there. The name, quota bar
+          (and its 12rem floor) and the status-chip labels only appear once there's
+          room (lg / xl); below that the header overflowed phones and tablets. */}
+      <div className="flex items-center justify-end gap-1.5 lg:gap-2">
         <LivepadRecordingIndicator />
         <VoiceChangerIndicators />
         <ProfileSwitcher />
         <SettingsControl panel={panel} toggle={toggle} close={close} />
-        <div className="flex flex-col items-start gap-1 min-w-[12rem] max-w-[16rem]">
+        <div className="flex flex-col items-start gap-1 lg:min-w-[12rem] max-w-[16rem]">
           <div className="flex items-center text-sm w-full">
             <UserMenu name={name} image={image} isAdmin={isAdmin} signOutAction={signOutAction} />
           </div>
-          <QuotaBar className="hidden sm:block w-full" />
+          <QuotaBar className="hidden lg:block w-full" />
         </div>
       </div>
     </div>
