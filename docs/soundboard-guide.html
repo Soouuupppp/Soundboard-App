@@ -2262,7 +2262,9 @@ function selectHtml(name, cls, label) {
   var open = S.view.select === name;
   var menu = '';
   if (open) {
-    menu = '<div class="popover absolute left-0 right-0 top-full mt-1 z-[60] min-w-[12rem] max-h-64 overflow-y-auto rounded-lg p-1 shadow-xl" role="listbox" aria-label="' + h(label) + '">' +
+    // Moved to <body> and placed by placeMenus() after render, like the app's portalled Select
+    // (a parent popover's backdrop-filter / overflow would otherwise trap or clip it).
+    menu = '<div id="menu-' + name + '" data-select-root="' + name + '" data-menu-for="sel-' + name + '" class="popover fixed z-[60] overflow-y-auto rounded-lg p-1 shadow-xl" role="listbox" aria-label="' + h(label) + '">' +
       groups.map(function (g) {
         return (g.group ? '<div class="px-2.5 pt-2 pb-1 text-xs font-medium text-muted/70">' + h(g.group) + '</div>' : '') +
           g.items.map(function (it) {
@@ -2635,7 +2637,46 @@ function render() {
   var f = saveFocus();
   $('#app').innerHTML = header() + banner() + '<main class="max-w-[1800px] mx-auto px-4 py-10"><div class="space-y-8">' + addCard() + aiSection() + librarySection() + '</div></main>' + ctrlModal();
   restoreFocus(f);
+  placeFloating();
   renderOverlay();
+}
+
+/* Keep header popovers on screen and portal open dropdown menus to <body>, then place them
+   under (or above) their trigger, clamped to the viewport — like the app's Popover/Select. */
+var EDGE = 12;
+function placeFloating() {
+  var vw = window.innerWidth;
+  document.querySelectorAll('[id^="pop-"]').forEach(function (p) {
+    p.style.transform = '';
+    var r = p.getBoundingClientRect(), dx = 0;
+    if (r.right > vw - EDGE) dx = vw - EDGE - r.right;
+    if (r.left + dx < EDGE) dx = EDGE - r.left;
+    if (dx) p.style.transform = 'translateX(' + Math.round(dx) + 'px)';
+  });
+  var host = $('#menus');
+  if (!host) { host = document.createElement('div'); host.id = 'menus'; document.body.appendChild(host); }
+  host.innerHTML = '';
+  document.querySelectorAll('#app [role="listbox"][data-menu-for]').forEach(function (m) { host.appendChild(m); });
+  placeMenus();
+}
+function placeMenus() {
+  var vw = window.innerWidth, vh = window.innerHeight;
+  document.querySelectorAll('#menus [role="listbox"]').forEach(function (m) {
+    var t = document.getElementById(m.dataset.menuFor);
+    if (!t) { m.remove(); return; }
+    var r = t.getBoundingClientRect(), gap = 4;
+    var w = Math.min(Math.max(r.width, 192), vw - EDGE * 2);
+    var below = vh - EDGE - r.bottom - gap, above = r.top - EDGE - gap;
+    m.style.width = w + 'px';
+    m.style.zIndex = '70'; // above the guide's dimmed backdrop (ring 65), under its card (75)
+    m.style.maxHeight = '';
+    var want = Math.min(m.scrollHeight + 2, 256);
+    var up = below < want && above > below;
+    var h = Math.max(80, Math.min(want, up ? above : below));
+    m.style.maxHeight = h + 'px';
+    m.style.left = Math.max(EDGE, Math.min(r.left, vw - EDGE - w)) + 'px';
+    m.style.top = (up ? r.top - gap - Math.min(h, m.offsetHeight) : r.bottom + gap) + 'px';
+  });
 }
 
 /* =====================================================================
@@ -2779,7 +2820,7 @@ document.addEventListener('click', function (e) {
   var el = e.target.closest('[data-act]');
   // Outside clicks close an open dropdown / header panel, like the app's Popover.
   if (S.view.select && !e.target.closest('[data-select-root]')) { S.view.select = null; if (!el) { render(); return; } }
-  if (S.view.panel && !e.target.closest('#pop-' + S.view.panel) && !e.target.closest('#btn-' + S.view.panel) && !e.target.closest('#tour-card') && !e.target.closest('[data-act="card-fx"]')) {
+  if (S.view.panel && !e.target.closest('#pop-' + S.view.panel) && !e.target.closest('#btn-' + S.view.panel) && !e.target.closest('#tour-card') && !e.target.closest('[data-select-root]') && !e.target.closest('[data-act="card-fx"]')) {
     S.view.panel = null;
     if (!el) { update(ev('panel')); return; }
   }
@@ -2899,9 +2940,13 @@ window.addEventListener('scroll', function () {
     if (hd) { hd.classList.toggle('-translate-y-full', hide); hd.classList.toggle('translate-y-0', !hide); }
   }
   lastY = y;
-  positionTour();
 }, { passive: true });
-window.addEventListener('resize', positionTour);
+// Any scroll (the page, a popover, a list) moves menus, the ring and the card with it.
+document.addEventListener('scroll', function (e) {
+  if (e.target && e.target.closest && e.target.closest('#menus')) return; // scrolling inside a menu moves nothing
+  placeMenus(); positionTour();
+}, { passive: true, capture: true });
+window.addEventListener('resize', function () { placeFloating(); positionTour(); });
 // Output meter animation while anything plays
 setInterval(function () {
   var bar = $('#meter-bar');
@@ -3033,8 +3078,8 @@ function tourHtml() {
   var g = curGuide(), st = curStep(), n = g.steps.length;
   var dots = g.steps.map(function (x, i) { return '<span class="h-1.5 rounded-full transition-all ' + (i < TOUR.i || (i === TOUR.i && TOUR.done) ? 'w-1.5 bg-emerald-400' : i === TOUR.i ? 'w-4 bg-accent' : 'w-1.5 bg-white/20') + '"></span>'; }).join('');
   var hidden = !tourTarget();
-  return '<div id="tour-ring" class="tour-ring pointer-events-none fixed z-[65] rounded-xl transition-all duration-200 ' + (TOUR.done ? 'ok' : '') + '"' + (hidden ? ' hidden' : '') + '></div>' +
-    '<div id="tour-card" class="fixed z-[75] w-[min(20rem,calc(100vw-1.5rem))] rounded-xl border border-white/10 bg-black/60 p-3 text-sm shadow-xl backdrop-blur-md transition-[top,left] duration-200">' +
+  return '<div id="tour-ring" class="tour-ring pointer-events-none fixed z-[65] rounded-xl ' + (TOUR.done ? 'ok' : '') + '"' + (hidden ? ' hidden' : '') + '></div>' +
+    '<div id="tour-card" class="fixed z-[75] rounded-xl border border-white/10 bg-black/60 px-3 py-2.5 text-sm shadow-xl backdrop-blur-md" style="width:min(18rem,calc(100vw - 1.5rem))">' +
       '<div class="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted"><span>' + h(g.title) + ' · ' + (TOUR.i + 1) + '/' + n + '</span>' +
         '<button type="button" data-act="tour-exit" class="rounded-md p-0.5 text-muted hover:bg-white/10 hover:text-white" aria-label="Stop the guide">' + ic('x', 14) + '</button></div>' +
       '<div class="flex items-center gap-1.5 font-medium text-white">' + (TOUR.done ? ic('circle-check', 16, 'text-emerald-400') : '') + h(st.title) + '</div>' +
@@ -3056,7 +3101,7 @@ function positionTour() {
   var ring = $('#tour-ring'), card = $('#tour-card');
   if (!card) return;
   var t = tourTarget();
-  var vw = window.innerWidth, vh = window.innerHeight, gap = 14, m = 12;
+  var vw = window.innerWidth, vh = window.innerHeight, gap = 16, m = 12;
   var cw = card.offsetWidth, ch = card.offsetHeight;
   if (!t) {
     if (ring) ring.hidden = true;
@@ -3068,15 +3113,35 @@ function positionTour() {
   ring.hidden = false;
   ring.style.left = (r.left - pad) + 'px'; ring.style.top = (r.top - pad) + 'px';
   ring.style.width = (r.width + pad * 2) + 'px'; ring.style.height = (r.height + pad * 2) + 'px';
-  // Prefer below, then above, then right, then left; always clamp on screen.
-  var x, y;
-  if (r.bottom + pad + gap + ch <= vh - m) { y = r.bottom + pad + gap; x = r.left + r.width / 2 - cw / 2; }
-  else if (r.top - pad - gap - ch >= m) { y = r.top - pad - gap - ch; x = r.left + r.width / 2 - cw / 2; }
-  else if (r.right + pad + gap + cw <= vw - m) { x = r.right + pad + gap; y = r.top + r.height / 2 - ch / 2; }
-  else if (r.left - pad - gap - cw >= m) { x = r.left - pad - gap - cw; y = r.top + r.height / 2 - ch / 2; }
-  else { x = (vw - cw) / 2; y = vh - ch - m; }
-  card.style.left = Math.max(m, Math.min(x, vw - cw - m)) + 'px';
-  card.style.top = Math.max(m, Math.min(y, vh - ch - m)) + 'px';
+  var p = placeCard(r, pad, cw, ch, vw, vh, gap, m, t);
+  card.style.left = p.x + 'px';
+  card.style.top = p.y + 'px';
+}
+// Where the card may go. "Hard" = the target, its open menu and anything it opens below
+// (never covered). "Soft" adds the popover the target sits in (covered only if nothing else fits).
+function rectOf(el) { var r = el.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; }
+function grow(a, b) { return b ? { l: Math.min(a.l, b.l), t: Math.min(a.t, b.t), r: Math.max(a.r, b.r), b: Math.max(a.b, b.b) } : a; }
+function hits(c, a, g) { return c.l < a.r + g && c.r > a.l - g && c.t < a.b + g && c.b > a.t - g; }
+function placeCard(tr, pad, cw, ch, vw, vh, gap, m, t) {
+  var hard = { l: tr.left - pad, t: tr.top - pad, r: tr.right + pad, b: tr.bottom + pad };
+  document.querySelectorAll('#menus [role="listbox"]').forEach(function (el) { hard = grow(hard, rectOf(el)); });
+  var pop = t.closest('[id^="pop-"]');
+  if (!pop && t.id && t.id.indexOf('btn-') === 0) pop = document.getElementById('pop-' + t.id.slice(4));
+  var soft = pop && pop.getClientRects().length ? grow(hard, rectOf(pop)) : hard;
+  var cx = (tr.left + tr.right) / 2 - cw / 2, cy = (tr.top + tr.bottom) / 2 - ch / 2;
+  function clamp(x, y) { x = Math.max(m, Math.min(x, vw - cw - m)); y = Math.max(m, Math.min(y, vh - ch - m)); return { x: x, y: y, l: x, t: y, r: x + cw, b: y + ch }; }
+  function around(a) {
+    return [clamp(cx, a.b + gap), clamp(cx, a.t - gap - ch), clamp(a.r + gap, cy), clamp(a.l - gap - cw, cy)];
+  }
+  var boxes = soft === hard ? [hard] : [soft, hard];
+  for (var i = 0; i < boxes.length; i++) {
+    var c = around(boxes[i]);
+    for (var j = 0; j < c.length; j++) if (!hits(c[j], boxes[i], gap - 1) && !hits(c[j], hard, gap - 1)) return c[j];
+  }
+  // Nothing fits beside it: dock to the screen edge farther from the target.
+  var bottom = clamp((vw - cw) / 2, vh), top = clamp((vw - cw) / 2, 0);
+  var order = (tr.top + tr.bottom) / 2 < vh / 2 ? [bottom, top] : [top, bottom];
+  return !hits(order[0], hard, 0) ? order[0] : !hits(order[1], hard, 0) ? order[1] : order[0];
 }
 
 render();
